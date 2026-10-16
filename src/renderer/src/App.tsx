@@ -109,6 +109,30 @@ export default function App(): ReactNode {
     <div className="app">
       <aside className={collapsed ? 'sidebar collapsed' : 'sidebar'}>
         <div className="brand">
+          {/* 第五版（方案B）：窗口是无边框的，这三个点就是系统标题栏 */}
+          <div className="win-lights">
+            <button
+              type="button"
+              className="win-light win-close"
+              aria-label="关闭窗口"
+              title="关闭"
+              onClick={() => void api.winClose()}
+            />
+            <button
+              type="button"
+              className="win-light win-min"
+              aria-label="最小化窗口"
+              title="最小化"
+              onClick={() => void api.winMinimize()}
+            />
+            <button
+              type="button"
+              className="win-light win-max"
+              aria-label="最大化或还原窗口"
+              title="最大化 / 还原"
+              onClick={() => void api.winToggleMax()}
+            />
+          </div>
           <span className="brand-mark">Jw</span>
           {!collapsed ? <span>知识库</span> : null}
         </div>

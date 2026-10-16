@@ -364,6 +364,10 @@ export interface AppInfo {
   electron: string;
   node: string;
   sqlite: string;
+  /** 第五版：窗口系统材质（Windows 11 上是 'acrylic'，其它平台是 'none'）。 */
+  material?: string;
+  /** 第五版：Windows build 号，用来解释 material 该是什么。 */
+  windowsBuild?: number;
 }
 
 /** preload 暴露给渲染进程的接口。 */

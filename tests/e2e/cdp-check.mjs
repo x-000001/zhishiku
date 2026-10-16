@@ -857,7 +857,20 @@ try {
     detail: childBtnPick + ' | ' + String(childBtnState)
   });
 
-  await cdp.eval("(() => { const b = document.querySelector('.cat-child-btn'); if (b) b.click(); return true; })()");
+  await cdp.eval(`(() => {
+    const row = [...document.querySelectorAll('.tree-item')].find((el) => (el.innerText || '').includes('排序自检分类'));
+    if (row) row.click();
+    return true;
+  })()`);
+  await sleep(300);
+  const childClickState = await cdp.eval(`(() => {
+    const b = document.querySelector('.cat-child-btn');
+    if (!b) return 'no-btn';
+    const disabled = b.disabled;
+    const title = b.title;
+    b.click();
+    return JSON.stringify({ disabled, title });
+  })()`);
   await sleep(400);
   const childModal = await cdp.eval(`(() => {
     const modal = document.querySelector('.modal');
@@ -885,6 +898,7 @@ try {
   results.push({
     name: '工具栏建的子分类挂对了父分类，并且立刻出现在树上',
     ok:
+      String(childClickState).includes('"disabled":false') &&
       String(childModal).includes('新建子分类') &&
       childTyped === '工具栏子分类' &&
       !!toolbarChild &&
@@ -892,7 +906,9 @@ try {
       toolbarChild.parent_id === toolbarParent.id &&
       toolbarChildVisible === true,
     detail:
-      '弹窗=' +
+      '点击时=' +
+      String(childClickState) +
+      ' | 弹窗=' +
       String(childModal) +
       ' | 输入=' +
       String(childTyped) +
@@ -1158,6 +1174,68 @@ try {
     })()`
   );
   results.push({ name: '浅色主题能切回', ok: backOk === 'light', detail: String(backOk) });
+
+  // 第五版（方案B）：自绘标题栏 —— 无边框窗口 + 红黄绿三个点 + 顶栏拖拽区
+  const titlebar = await cdp.eval(
+    `(() => {
+      const region = (el) => { const cs = getComputedStyle(el); return cs.webkitAppRegion || cs.getPropertyValue('-webkit-app-region') || ''; };
+      const lights = [...document.querySelectorAll('.win-light')];
+      return JSON.stringify({
+        lights: lights.length,
+        labels: lights.map((b) => b.getAttribute('aria-label')).join('|'),
+        text: lights.map((b) => b.textContent.trim()).join(''),
+        chrome: window.outerHeight - window.innerHeight,
+        brandDrag: region(document.querySelector('.brand')),
+        topDrag: region(document.querySelector('.topbar')),
+        navDrag: region(document.querySelector('.nav-item'))
+      });
+    })()`
+  );
+  const tb = JSON.parse(String(titlebar));
+  results.push({
+    name: '自绘标题栏有红黄绿三个点，且没有文字节点',
+    ok: tb.lights === 3 && tb.text === '',
+    detail: `点数=${tb.lights} 文本="${tb.text}" 名字=${tb.labels}`
+  });
+  results.push({
+    name: '窗口确实是无边框的（系统标题栏高度≈0）',
+    ok: Math.abs(Number(tb.chrome)) <= 8,
+    detail: `outer-inner 高差=${tb.chrome}px`
+  });
+  results.push({
+    name: '顶栏是拖拽区、导航项不是（不然点不动）',
+    ok: tb.topDrag === 'drag' && tb.navDrag === 'no-drag',
+    detail: `topbar=${tb.topDrag} brand=${tb.brandDrag} nav=${tb.navDrag}`
+  });
+
+  const maxed = await cdp.eval(
+    `(async () => {
+       const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+       const before = window.innerWidth;
+       document.querySelector('.win-max').click();
+       await wait(800);
+       const after = window.innerWidth;
+       document.querySelector('.win-max').click();
+       await wait(800);
+       return JSON.stringify({ before, after, back: window.innerWidth });
+     })()`
+  );
+  const m = JSON.parse(String(maxed));
+  results.push({
+    name: '点绿点能最大化、再点能还原窗口',
+    ok: m.after >= m.before && m.back === m.before,
+    detail: `宽 ${m.before} → ${m.after} → ${m.back}`
+  });
+
+  // 亚克力：主进程真的调用了 setBackgroundMaterial 才回报 acrylic
+  const infoRaw = await cdp.eval("(async () => JSON.stringify(await window.api.invoke('app:info')))()");
+  const winInfo = JSON.parse(String(infoRaw));
+  const wantAcrylic = Number(winInfo.windowsBuild) >= 22000;
+  results.push({
+    name: '窗口系统材质与系统版本相符（Win11 要 acrylic）',
+    ok: winInfo.material === (wantAcrylic ? 'acrylic' : 'none'),
+    detail: `material=${winInfo.material} build=${winInfo.windowsBuild}`
+  });
 
   // H2：打包后的版本必须完全不联网 —— CSP 里只留 'self'，开发用的 ws:/localhost 必须被去掉
   const csp = await cdp.eval(

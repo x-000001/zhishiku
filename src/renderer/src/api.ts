@@ -64,6 +64,12 @@ export function pathForFile(file: File): string {
 export const api = {
   appInfo: () => call<AppInfo>('app:info'),
   integrity: () => call<string>('data:integrity'),
+
+  /** 第五版：自绘标题栏的三个点 */
+  winMinimize: () => call<boolean>('win:minimize'),
+  winToggleMax: () => call<boolean>('win:toggle-max'),
+  winClose: () => call<boolean>('win:close'),
+
   revealData: () => call<void>('data:reveal'),
   revealBackups: () => call<void>('backup:reveal'),
 

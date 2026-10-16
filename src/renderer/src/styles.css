@@ -4,70 +4,128 @@
    ============================================================ */
 
 :root {
-  /* 表面与文字 */
-  --bg: #f6f7f9;
+  /* 表面与文字（第五版：浅蓝灰底 + 白色毛玻璃面） */
+  --bg: #e9eef6;
   --bg-panel: #ffffff;
-  --bg-sunken: #f1f2f5;
-  --bg-hover: #f2f3f6;
-  --bg-active: #e8eaef;
-  --border: #e7e8ec;
-  --border-strong: #d6d9e0;
-  --text: #1b1c20;
-  --text-soft: #5c6270;
-  --text-faint: #8f95a3;
+  --bg-sunken: #eef1f7;
+  --bg-hover: #f2f4f9;
+  --bg-active: #e4e9f4;
+  --nav-hover: rgba(26, 26, 46, 0.05);
+  --border: #dfe4ee;
+  --border-strong: #c9d1e0;
+  --text: #1a1a2e;
+  --text-soft: rgba(26, 26, 46, 0.62);
+  --text-faint: rgba(26, 26, 46, 0.42);
 
-  /* 品牌与语义色 */
-  --brand: #5b5bd6;
-  --brand-soft: #eeeefc;
-  --brand-strong: #4a4ac0;
-  --ok: #17915c;
-  --warn: #c88a1a;
-  --danger: #d64541;
-  --p1: #d9534f;
-  --p2: #d99a20;
-  --p3: #9aa0b5;
+  /* 品牌与语义色（macOS 系统色；--brand 比 #007AFF 略深，
+     是为了白字按钮的对比度能到 4.5:1） */
+  --brand: #0a72e8;
+  --brand-soft: rgba(0, 122, 255, 0.12);
+  --brand-strong: #0059c8;
+  --ok: #1a8f45;
+  --warn: #b26a00;
+  --danger: #d92c25;
+  --p1: #ff453a;
+  --p2: #ff9500;
+  --p3: #97a0b5;
 
   /* 形状 */
   --radius: 12px;
   --radius-sm: 8px;
   --radius-xs: 6px;
   --radius-pill: 999px;
+  --radius-glass: 16px;
 
   /* 阴影与聚焦环 */
   --shadow: 0 1px 2px rgba(18, 20, 30, 0.05), 0 8px 24px rgba(18, 20, 30, 0.08);
   --shadow-sm: 0 1px 2px rgba(18, 20, 30, 0.06);
   --shadow-lg: 0 2px 6px rgba(18, 20, 30, 0.06), 0 24px 64px rgba(18, 20, 30, 0.18);
-  --ring: 0 0 0 3px rgba(91, 91, 214, 0.18);
+  --ring: 0 0 0 3px rgba(0, 122, 255, 0.2);
 
   /* 排版与节奏 */
   --font: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
   --dur: 140ms;
 
+  /* macOS 手感三条曲线（第五版）：
+     spring 过冲回弹（弹窗/面板/勾选）· smooth 平滑减速（悬停/过渡）· quick 快速响应（按下） */
+  --spring-ease: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --smooth-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --quick-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+
   --sidebar-w: 232px;
+
+  /* ============================================================
+     第五版：macOS 毛玻璃令牌（浅色）
+     —— 只新增变量，不改类名、不动 DOM
+     ============================================================ */
+  --bg-gradient: radial-gradient(1100px 620px at 8% -6%, rgba(118, 168, 255, 0.42), transparent 62%),
+    radial-gradient(920px 560px at 96% 2%, rgba(186, 152, 255, 0.34), transparent 60%),
+    radial-gradient(1000px 700px at 58% 108%, rgba(118, 214, 255, 0.32), transparent 62%),
+    linear-gradient(160deg, #eef3fa, #e6ecf7 55%, #e9eef8);
+  --glass-bg: rgba(255, 255, 255, 0.62);
+  --glass-border: rgba(255, 255, 255, 0.72);
+  --glass-shadow: 0 8px 32px rgba(31, 38, 135, 0.1), 0 1px 2px rgba(31, 38, 135, 0.06);
+  --glass-blur: 20px;
+
+  /* 阅读层（编辑器内容区永远不透明） */
+  --reading-bg: #ffffff;
+  --reading-text: #2c2c2e;
+
+  /* 强调色（macOS 系统色） */
+  --accent-blue: #007aff;
+  --accent-green: #34c759;
+  --accent-orange: #ff9500;
+  --accent-red: #ff3b30;
+  --accent-pink: #ff69b4;
+
+  /* 笔记高亮（半透明） */
+  --mark-yellow-bg: rgba(255, 235, 59, 0.5);
+  --mark-green-bg: rgba(76, 217, 100, 0.4);
+  --mark-pink-bg: rgba(255, 105, 180, 0.35);
 }
 
 [data-theme='dark'] {
-  --bg: #101114;
-  --bg-panel: #17181c;
-  --bg-sunken: #131418;
-  --bg-hover: #1e2025;
-  --bg-active: #26292f;
-  --border: #24262c;
-  --border-strong: #363941;
-  --text: #ecedf0;
-  --text-soft: #a3a8b3;
-  --text-faint: #6f7480;
-  --brand: #8b8bf2;
-  --brand-soft: #212236;
-  --brand-strong: #b0b0ff;
-  --ok: #37b877;
-  --warn: #e0a63a;
-  --danger: #f2706b;
+  /* 深色 = 偏蓝灰，不刺眼（第五版） */
+  --bg: #1a1a2e;
+  --bg-panel: #22242f;
+  --bg-sunken: #1c1e27;
+  --bg-hover: #2a2d3a;
+  --bg-active: #343849;
+  --nav-hover: rgba(255, 255, 255, 0.08);
+  --border: #2f3342;
+  --border-strong: #454b5e;
+  --text: #e8e8ed;
+  --text-soft: rgba(232, 232, 237, 0.62);
+  --text-faint: rgba(232, 232, 237, 0.42);
+  --brand: #0a84ff;
+  --brand-soft: rgba(10, 132, 255, 0.18);
+  --brand-strong: #4aa3ff;
+  --ok: #30d158;
+  --warn: #ff9f0a;
+  --danger: #ff453a;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.5), 0 24px 64px rgba(0, 0, 0, 0.6);
-  --ring: 0 0 0 3px rgba(139, 139, 242, 0.22);
+  --ring: 0 0 0 3px rgba(10, 132, 255, 0.28);
+
+  /* 第五版：毛玻璃令牌（深色） */
+  --bg-gradient: radial-gradient(1200px 700px at 12% -10%, rgba(79, 172, 254, 0.18), transparent 60%),
+    radial-gradient(1000px 700px at 88% 6%, rgba(140, 120, 255, 0.16), transparent 60%),
+    linear-gradient(135deg, #1e1e2f, #1a1a2e 55%, #16213e);
+  --glass-bg: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  --reading-bg: #1a1a2e;
+  --reading-text: #e0e0e5;
+  --accent-blue: #4facfe;
+  --accent-green: #43e97b;
+  --accent-orange: #ff9f0a;
+  --accent-red: #ff6b6b;
+  --accent-pink: #fa709a; /* 原稿里 --accent-orange 给的是这个粉色，改名归位 */
+  --mark-yellow-bg: rgba(255, 235, 59, 0.25);
+  --mark-green-bg: rgba(76, 217, 100, 0.25);
+  --mark-pink-bg: rgba(255, 105, 180, 0.25);
 }
 
 * {
@@ -87,6 +145,9 @@ body {
   line-height: 1.6;
   color: var(--text);
   background: var(--bg);
+  /* 第五版：整窗渐变底，毛玻璃面板才有东西可透 */
+  background-image: var(--bg-gradient);
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -2549,5 +2610,188 @@ label.field {
     transition: none !important;
     animation: none !important;
   }
+}
+
+/* ============================================================
+   第五版（阶段1）：macOS 毛玻璃 —— 色彩系统 + 渐变底 + 毛玻璃卡片
+   只加样式：不改 DOM、不改类名、不动任何业务逻辑。
+   令牌都在 :root / [data-theme='dark'] 里，后面阶段只复用不重定义。
+   ============================================================ */
+
+/* 应用外壳透明，露出 body 的整窗渐变 */
+.app,
+.main,
+.content {
+  background: transparent;
+}
+
+/* 毛玻璃基础类（阶段2-7 的侧栏 / 工具栏 / 弹窗 / Toast 直接复用） */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-glass);
+  box-shadow: var(--glass-shadow);
+}
+
+/* 卡片：毛玻璃 + 16px 大圆角（悬停浮起留到阶段3 做） */
+.card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  border-color: var(--glass-border);
+  border-radius: var(--radius-glass);
+  box-shadow: var(--glass-shadow);
+}
+
+/* ============================================================
+   第五版（阶段2）：侧栏毛玻璃 + macOS 导航交互 + 自绘标题栏（方案B）
+   新增的 DOM 只有 .brand 里的三个点，其余全是 CSS。
+   ============================================================ */
+
+/* ---- 窗口拖动：顶部两片是抓手，里面的控件必须排除，否则点不动 ---- */
+.brand,
+.topbar {
+  -webkit-app-region: drag;
+}
+.win-lights,
+.brand-mark,
+.nav-item,
+.nav-foot,
+.searchbox,
+.topbar .btn,
+.topbar button,
+.topbar input,
+.topbar kbd {
+  -webkit-app-region: no-drag;
+}
+
+/* ---- 自绘标题栏的三个点（macOS 红黄绿） ---- */
+.win-lights {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: 6px;
+  flex: 0 0 auto;
+}
+
+.win-light {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: default;
+  display: grid;
+  place-items: center;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+  transition: filter 0.15s var(--smooth-ease), transform 0.2s var(--spring-ease);
+}
+
+.win-light::before {
+  content: '';
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.win-close {
+  background: #ff5f57;
+}
+.win-min {
+  background: #febc2e;
+}
+.win-max {
+  background: #28c840;
+}
+
+/* 鼠标移进这组点，才浮出符号（和 macOS 一样） */
+.win-lights:hover .win-close::before {
+  content: '✕';
+}
+.win-lights:hover .win-min::before {
+  content: '–';
+}
+.win-lights:hover .win-max::before {
+  content: '＋';
+}
+
+.win-light:hover {
+  filter: brightness(1.06);
+}
+.win-light:active {
+  transform: scale(0.86);
+}
+.win-light:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* 侧栏收到 60px 时塞不下三个点，藏起来（顶栏照样能拖窗口） */
+.sidebar.collapsed .win-lights {
+  display: none;
+}
+
+/* ---- 侧栏 / 顶栏毛玻璃 ---- */
+.sidebar {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  border-right: 1px solid var(--glass-border);
+}
+
+.topbar {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.brand-mark {
+  background: linear-gradient(145deg, var(--brand) 0%, var(--accent-blue) 100%);
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+/* ---- 导航项：悬停微移 + 选中蓝色胶囊和左侧竖条 ---- */
+.nav-item {
+  position: relative;
+  transition: background 0.2s var(--smooth-ease), color 0.2s var(--smooth-ease),
+    transform 0.2s var(--smooth-ease);
+}
+
+.nav-item:hover {
+  background: var(--nav-hover);
+  color: var(--text);
+  transform: translateX(2px);
+}
+
+.nav-item.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+  box-shadow: none;
+  border: 1px solid transparent;
+  transform: translateX(0);
+  transition: background 0.25s var(--spring-ease), color 0.25s var(--spring-ease),
+    transform 0.25s var(--spring-ease);
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--brand);
+}
+
+.nav-item.active .count {
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--brand-strong);
 }
 

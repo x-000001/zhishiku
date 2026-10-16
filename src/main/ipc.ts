@@ -1,8 +1,10 @@
 import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import * as db from './db';
 import * as backup from './backup';
+import { backgroundMaterialName } from './material';
 import type { DataPaths } from './paths';
 import type {
   AppSettings,
@@ -63,7 +65,9 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
       version: app.getVersion(),
       electron: process.versions.electron ?? '',
       node: process.versions.node ?? '',
-      sqlite: sqliteVersion
+      sqlite: sqliteVersion,
+      material: backgroundMaterialName(),
+      windowsBuild: Number(os.release().split('.')[2] ?? '0')
     };
   });
 
@@ -409,4 +413,36 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
   handle('backup:reveal', () => shell.openPath(getPaths().backups));
   handle('data:reveal', () => shell.openPath(getPaths().root));
   handle('data:integrity', () => db.integrityCheck());
+
+  /* ---------------- 窗口控制（第五版：自绘标题栏的三个点） ---------------- */
+  /* 这几个要拿到"发消息的那个窗口"，所以不走上面的 handle（它把 event 吞了）。 */
+
+  const handleWindow = (channel: string, fn: (win: BrowserWindow) => unknown): void => {
+    has(channel);
+    ipcMain.handle(channel, (event): Result<unknown> => {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win) return { ok: false, error: '窗口不存在' };
+        return { ok: true, data: fn(win) };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[IPC] 窗口操作失败：', message);
+        return { ok: false, error: message };
+      }
+    });
+  };
+
+  handleWindow('win:minimize', (win) => {
+    win.minimize();
+    return true;
+  });
+  handleWindow('win:toggle-max', (win) => {
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+    return win.isMaximized();
+  });
+  handleWindow('win:close', (win) => {
+    win.close();
+    return true;
+  });
 }

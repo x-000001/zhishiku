@@ -1,6 +1,7 @@
 import { BrowserWindow, Menu, Notification, Tray, app, dialog, globalShortcut, nativeImage, net, protocol, screen, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { attachmentRelFromUrl } from '../shared/html';
 import {
@@ -15,6 +16,7 @@ import {
 } from './db';
 import { ensureDirs, resolveDataRoot, todayLocal, writeLocator, type DataPaths } from './paths';
 import { maybeDailyBackup } from './backup';
+import { setBackgroundMaterialName } from './material';
 import { registerIpc } from './ipc';
 
 let mainWindow: BrowserWindow | null = null;
@@ -100,8 +102,20 @@ function savedBounds(): Electron.Rectangle | null {
   return null;
 }
 
+/**
+ * 第五版（方案B 自绘标题栏）：Windows 11 才有系统级亚克力。
+ * 10.0.22621 起支持；拿 os.release() 的第三段（build 号）判断，
+ * 判断失败或调用失败都退回纯 CSS 渐变，不影响功能。
+ */
+function acrylicAvailable(): boolean {
+  if (process.platform !== 'win32') return false;
+  const build = Number(os.release().split('.')[2] ?? '0');
+  return Number.isFinite(build) && build >= 22000;
+}
+
 function createMainWindow(): BrowserWindow {
   const bounds = savedBounds();
+  const acrylic = acrylicAvailable();
   const win = new BrowserWindow({
     width: bounds?.width ?? 1280,
     height: bounds?.height ?? 820,
@@ -112,7 +126,12 @@ function createMainWindow(): BrowserWindow {
     show: false,
     title: 'Jw 知识库',
     icon: iconFor('app'),
-    backgroundColor: '#f5f6fa',
+    // 自绘标题栏：去掉系统边框，窗口拖动/关闭交给界面上的红黄绿三个点
+    frame: false,
+    titleBarStyle: 'hidden',
+    transparent: false,
+    // 亚克力要透出来，窗口底色必须是全透明；不支持时用不透明的浅色底兜底
+    backgroundColor: acrylic ? '#00000000' : '#e9eef6',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -122,6 +141,18 @@ function createMainWindow(): BrowserWindow {
     }
   });
 
+  if (acrylic) {
+    try {
+      win.setBackgroundMaterial('acrylic');
+      setBackgroundMaterialName('acrylic');
+    } catch {
+      /* Windows 10 及更早：没有这个材质，纯 CSS 渐变一样能看 */
+      setBackgroundMaterialName('none');
+    }
+  } else {
+    setBackgroundMaterialName('none');
+  }
+
   win.once('ready-to-show', () => win.show());
 
   win.on('close', (event) => {
@@ -130,7 +161,8 @@ function createMainWindow(): BrowserWindow {
       win.hide();
       return;
     }
-    const b = win.getBounds();
+    // 存"还原后"的尺寸：最大化状态下关窗口，下次不该直接铺满整屏（第五版）
+    const b = win.isMaximized() || win.isMinimized() ? win.getNormalBounds() : win.getBounds();
     setSetting('winBounds', JSON.stringify(b));
   });
 
