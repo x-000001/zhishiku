@@ -1,0 +1,165 @@
+================ 端到端自检结果 ================
+PASS  界面挂载完成（侧栏出现）
+PASS  preload 桥可用
+PASS  app:info 返回数据目录  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","dbPath":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data\\kb.db","attachmentsDir":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data\\attachments","backupsDir":"C:\\Use
+PASS  数据目录指向测试目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data
+PASS  SQLite 版本可读  —  3.53.4
+PASS  启动后完整性检查 ok  —  ok
+PASS  默认分类已建好（5 个）  —  分类数=5 工作/学习/生活/项目/资料收藏
+PASS  收集箱能存能读  —  open=2
+PASS  收集箱一键转笔记  —  note:1
+PASS  转出来的笔记能读回  —  把英语单词本搬进知识库
+PASS  收集箱一键转任务  —  task:1
+PASS  新建笔记  —  2
+PASS  手动保存留下版本点  —  版本数=1
+PASS  草稿单独存放（正文不变）  —  draft=草稿标题
+PASS  中文两字词能搜到（FTS 方案）  —  命中=2
+PASS  中文四字词能搜到  —  命中=1
+PASS  搜不到的词返回空而不是报错  —  命中=0
+PASS  标签能设置  —  测试,知识
+PASS  标签列表可读  —  2
+PASS  按标签筛选笔记  —  命中=1
+PASS  置顶生效  —  列表=2
+PASS  删除进回收站  —  回收站=1
+PASS  回收站能还原  —  列表=3
+PASS  任务按今天筛选  —  今天=3 标题=今天要做的第一件事|读书：深度工作第二章|每天重复的晨间阅读
+PASS  任务按接下来筛选  —  接下来=1
+PASS  勾掉普通任务不生成下一次  —  null
+PASS  勾掉重复任务会生成下一次  —  spawned=5
+PASS  重复任务生成了下一次、排在明天  —  下一跳=2026-10-17
+PASS  任务能行内改  —  ok
+PASS  首页数据能读  —  today=2026-10-16 待办=1
+PASS  首页统计了收集箱与最近笔记  —  待整理=1 最近笔记=3
+PASS  首页包含复习提醒结构  —  复习卡=0
+PASS  首页包含目标进度结构  —  目标=0
+PASS  设置能读  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","versionKeep":20,"theme":"light","notifyEnabled":true,"closeToTray":true}
+PASS  设置能改并持久化  —  versionKeep=5
+PASS  手动备份成功  —  手动_2026-10-16_132954
+PASS  备份列表可读  —  备份数=2
+PASS  备份目录里有快照且含 kb.db  —  2026-10-16_132954, 手动_2026-10-16_132954
+PASS  数据库文件落在数据目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.db
+PASS  附件目录已建好  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments
+PASS  页面 / 有实际内容  —  今日待办
+去任务页
+1
+今天要做的
+0
+已经逾期
+2
+今天已完成
+✓
+读书：深度工作第二章
+今天
+最近笔记
+去知识库
+📌
+知识管理测试笔记
+工作 · 刚刚 · 24 字
+📄
+待删测试
+未分类 · 刚刚 · 1 字
+�
+PASS  页面 /inbox 有实际内容  —  随手记一条
+💡 想法
+📖 待读
+🧹 待整理
+存进收集箱
+
+快捷键 Ctrl+Alt+Space 可以在任何地方呼出小窗口快速记录，存好自动进这里。
+
+待处理 · 1 条
+逐条清理
+💡 0
+📖 1
+🧹 0
+待处
+PASS  页面 /knowledge 有实际内容  —  分类
+＋
+🗂
+全部笔记
+📭
+未分类
+📁
+工作 (1)
+📁
+学习
+📁
+生活
+📁
+项目
+📁
+资料收藏
+🗑
+回收站
+＋
+全部笔记 · 3 篇
+🏷 标签
+📌
+知识管理测试笔记
+刚刚 · 24 字 · 工作
+�
+PASS  页面 /tasks 有实际内容  —  视图
+☀️
+今天
+3
+⚠️
+已逾期
+0
+📆
+接下来
+2
+📋
+全部
+5
+✅
+已完成
+2
+筛选
+· 点标题直接改
+· 点小圆点换优先级
+· 点日期改截止日
+· 回车快速加下一条
+☀️ 今天
+1 条 · 今天到期，连同已经
+PASS  页面 /plans 有实际内容  —  📅
+学习计划
+
+这里用来排学习方向、周期安排和日历视图，会和目标关联。
+
+第一版只留入口，具体界面在第二版补上。
+PASS  页面 /goals 有实际内容  —  🎯
+当前目标
+
+目标拆成关键结果、里程碑和任务，进度自动汇总。
+
+第一版只留入口，首页已经能显示目标进度。
+PASS  页面 /next 有实际内容  —  🚀
+下一阶段目标
+
+放目标池、路线图和启动条件，完成后归档复盘。
+
+第一版只留入口，具体界面在第二版补上。
+PASS  页面 /review 有实际内容  —  🔁
+复习与复盘
+
+间隔重复、错题难点、每日每周每月复盘。
+
+第一版只留入口，具体界面在第二版补上。
+PASS  页面 /settings 有实际内容  —  数据位置
+打开数据文件夹
+数据目录
+
+C:\Users\29785\Desktop\Jw的app\.e2e-data
+
+数据库文件
+
+C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.
+PASS  页面 /quick 有实际内容  —  回车存进收集箱，之后慢慢整理
+Esc 关闭
+PASS  深色主题能切换  —  dark|
+PASS  浅色主题能切回  —  light
+PASS  CSP 已收紧（打包版不联网）  —  default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:; connect-src 'self'
+------------------------------------------------
+合计 53 项，通过 53，失败 0
+截图目录：C:\Users\29785\Desktop\Jw的app\tests\e2e\shots
+应用进程：exit=null signal=SIGTERM

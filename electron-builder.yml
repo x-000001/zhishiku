@@ -1,0 +1,53 @@
+# 打包配置：生成可以装到 Windows 上、双击就能用的是 Jw 知识库。
+# 说明见 README.md「怎么打包」一节。
+appId: com.jw.knowledge-base
+productName: Jw知识库
+copyright: Copyright © 2026 Jw
+
+directories:
+  output: release
+  buildResources: resources
+
+# 只把编译产物带进包里；源码、测试、缓存一律不进安装包
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+
+# 图标与托盘图放成「外挂资源」，这样原生窗口图标能拿到真实文件路径
+# （主进程 resourcePath() 的第三个候选就是 process.resourcesPath）
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+  - from: resources/tray.png
+    to: tray.png
+
+# 本机 github.com 不可达，直接用已经下载好的 Electron，不再走 @electron/get
+electronDist: node_modules/electron/dist
+
+asar: true
+compression: normal
+
+win:
+  icon: resources/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # 用 resources/installer.nsh 里的空 customCheckAppRunning 替换默认实现：
+  # 默认那一步会用 nsExec 调 PowerShell，需要写临时文件，在部分机器上会弹
+  #   NSIS Error: Error writing temporary file
+  # 从而在安装窗口出现之前就直接失败（详见该文件头部说明）。
+  include: installer.nsh
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Jw知识库
+  artifactName: Jw知识库-安装包-${version}.${ext}
+  uninstallDisplayName: Jw知识库 ${version}
+  # 卸载时保留用户数据（D:\Jw知识库 与 %APPDATA%\Jw知识库 都不动），避免误删笔记
+  deleteAppDataOnUninstall: false

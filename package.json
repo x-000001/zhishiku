@@ -1,0 +1,40 @@
+{
+  "name": "jw-knowledge-base",
+  "version": "0.1.0",
+  "private": true,
+  "description": "私人工作学习知识库 —— 纯本地运行",
+  "author": "Jw",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:e2e": "node tests/e2e/cdp-check.mjs",
+    "test:kill": "node tests/e2e/kill-test.mjs",
+    "test:all": "npm run typecheck && npm run test:unit && npm run build && npm run test:e2e && npm run test:kill",
+    "pack": "electron-vite build && electron-builder --win --x64 --dir",
+    "dist": "electron-vite build && node .tools/build-installer.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^44.8.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^6.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language-data": "^6.5.2",
+    "@uiw/react-codemirror": "^4.25.12",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

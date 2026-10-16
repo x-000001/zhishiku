@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      connect-src 里的 ws: 与 http://localhost:* 只服务于开发时的热更新，
+      正式构建会在 electron.vite.config.ts 里被去掉，最终只剩 'self'（即完全不联网）。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:; connect-src 'self' ws: http://localhost:*"
+    />
+    <title>Jw 知识库</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

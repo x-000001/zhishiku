@@ -1,0 +1,25 @@
+# 依赖与构建产物
+node_modules/
+out/
+release/
+
+# 缓存（都在项目内，避免写到 C 盘）
+.npm-cache/
+.electron-cache/
+.eb-cache/
+
+# 测试产生的数据与浏览器缓存
+.e2e-data/
+.kill-data/
+.pack-data/
+.pack-ud/
+.dev-data/
+tests/e2e/ud/
+tests/e2e/ud-kill/
+.tools/check-packaged-ud/
+.tools/electron-smoke/
+
+# 日志
+*.log
+.pout.txt
+.perr.txt

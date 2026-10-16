@@ -1,0 +1,10 @@
+================ 强杀（断电）测试结果 ================
+PASS  强杀前：20 条收集箱 + 笔记 + 任务都写进去了  —  {"integrity":"ok","failed":"","log":["note:save={\"note\":{\"id\":1,\"category_id\":null,\"title\":\"强杀前保存的笔记\",\"content\":\"这段正文必须活下来。\",\"draft_title\":null,\"draft_content\":null,\"draft_at\":null,\"excerpt\":\"这段正文必
+PASS  强杀重启后：数据库完整性检查仍然 ok  —  ok
+PASS  强杀重启后：20 条收集箱一条不少  —  20
+PASS  强杀重启后：手动保存过的笔记还在
+PASS  强杀重启后：任务还在
+PASS  强杀重启后：没点保存的草稿也能找回
+------------------------------------------------------
+合计 6 项，通过 6，失败 0
+测试数据目录：C:\Users\29785\Desktop\Jw的app\.kill-data
