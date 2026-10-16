@@ -21,7 +21,8 @@ import type {
   ReviewGrade,
   ReviewSource,
   Task,
-  TaskFilter
+  TaskFilter,
+  TaskPriority
 } from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -211,7 +212,7 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
       title?: string;
       categoryId?: Id | null;
       due_at?: string | null;
-      priority?: number;
+      priority?: TaskPriority;
       repeat_rule?: Task['repeat_rule'];
     }) => {
       const item = db.listInbox('all').find((i) => i.id === p.id);
@@ -226,7 +227,7 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
           title,
           note: item.content,
           due_at: p.due_at ?? null,
-          priority: p.priority ?? 2,
+          priority: p.priority ?? 'normal',
           repeat_rule: p.repeat_rule ?? 'none'
         });
         ref = `task:${id}`;

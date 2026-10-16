@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { Empty, toast } from '../ui';
-import { relative } from '../format';
-import type { InboxItem, InboxKind, InboxStatus } from '../../../shared/types';
+import { PRIORITY_LABEL, PRIORITY_ORDER, relative } from '../format';
+import type { InboxItem, InboxKind, InboxStatus, TaskPriority } from '../../../shared/types';
 
 const KIND_LABEL: Record<InboxKind, string> = { idea: '想法', read: '待读', organize: '待整理' };
 const KIND_ICON: Record<InboxKind, string> = { idea: '💡', read: '📖', organize: '🧹' };
@@ -112,7 +112,7 @@ export default function Inbox(props: {
   const convert = async (
     item: InboxItem,
     target: 'note' | 'task' | 'goal' | 'plan',
-    extra: { due_at?: string | null; priority?: number; repeat_rule?: string } = {}
+    extra: { due_at?: string | null; priority?: TaskPriority; repeat_rule?: string } = {}
   ) => {
     try {
       const { ref } = await api.convertInbox({
@@ -120,7 +120,7 @@ export default function Inbox(props: {
         target,
         title: item.content,
         due_at: extra.due_at ?? null,
-        priority: extra.priority ?? 2,
+        priority: extra.priority ?? 'normal',
         repeat_rule: (extra.repeat_rule as 'none') ?? 'none'
       });
       setTaskFormFor(null);
@@ -445,20 +445,22 @@ export default function Inbox(props: {
 
 function TaskQuickForm(props: {
   onCancel: () => void;
-  onSubmit: (form: { due_at: string | null; priority: number; repeat_rule: string }) => void;
+  onSubmit: (form: { due_at: string | null; priority: TaskPriority; repeat_rule: string }) => void;
 }): ReactNode {
   const [due, setDue] = useState('');
-  const [priority, setPriority] = useState(2);
+  const [priority, setPriority] = useState<TaskPriority>('normal');
   const [repeat, setRepeat] = useState('none');
   return (
     <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
       <span className="muted">截止日</span>
       <input type="date" value={due} onChange={(e) => setDue(e.target.value)} />
       <span className="muted">优先级</span>
-      <select value={priority} onChange={(e) => setPriority(Number(e.target.value))}>
-        <option value={3}>高</option>
-        <option value={2}>中</option>
-        <option value={1}>低</option>
+      <select value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)}>
+        {PRIORITY_ORDER.map((p) => (
+          <option key={p} value={p}>
+            {PRIORITY_LABEL[p]}
+          </option>
+        ))}
       </select>
       <span className="muted">重复</span>
       <select value={repeat} onChange={(e) => setRepeat(e.target.value)}>

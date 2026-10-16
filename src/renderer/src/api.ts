@@ -121,7 +121,7 @@ export const api = {
     title?: string;
     categoryId?: Id | null;
     due_at?: string | null;
-    priority?: number;
+    priority?: Task['priority'];
     repeat_rule?: Task['repeat_rule'];
   }) => call<{ ref: string }>('inbox:convert', payload),
 

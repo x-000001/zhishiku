@@ -102,7 +102,7 @@ export default function Dashboard(props: {
                 >
                   ✓
                 </button>
-                <span className={`dot p${task.priority}`} />
+                <span className={`dot prio-${task.priority}`} />
                 <div className="grow">
                   <div className="title">{task.title}</div>
                   <div className="sub">
@@ -166,7 +166,7 @@ export default function Dashboard(props: {
               type="button"
               className="btn"
               onClick={() => {
-                void api.createTask({ title: '新任务', priority: 2 }).then(() => {
+                void api.createTask({ title: '新任务', priority: 'normal' }).then(() => {
                   props.navigate('/tasks');
                   toast('已加一条任务，记得改标题和截止日');
                 });

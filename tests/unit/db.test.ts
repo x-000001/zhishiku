@@ -403,10 +403,10 @@ describe('任务与重复规则', () => {
   });
 
   it('优先级与截止日能改', () => {
-    const id = db.createTask({ title: '改我', priority: 1 });
-    db.updateTask(id, { priority: 3, due_at: dayOffset(2) });
+    const id = db.createTask({ title: '改我', priority: 'normal' });
+    db.updateTask(id, { priority: 'urgent', due_at: dayOffset(2) });
     const t = db.listTasks({ view: 'all' }).find((x) => x.id === id)!;
-    expect(t.priority).toBe(3);
+    expect(t.priority).toBe('urgent');
     expect(t.due_at).toBe(dayOffset(2));
   });
 

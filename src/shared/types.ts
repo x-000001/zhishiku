@@ -89,6 +89,8 @@ export interface InboxItem {
 }
 
 export type TaskStatus = 'todo' | 'done';
+/** 任务优先级三档（v4 起，替代原来的数字 0-3） */
+export type TaskPriority = 'urgent' | 'important' | 'normal';
 export type RepeatRule = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly';
 
 export interface Task {
@@ -96,7 +98,7 @@ export interface Task {
   title: string;
   note: string;
   status: TaskStatus;
-  priority: number; // 0 无 / 1 低 / 2 中 / 3 高
+  priority: TaskPriority; // urgent 紧急 / important 重要 / normal 一般
   due_at: string | null; // YYYY-MM-DD 或 YYYY-MM-DD HH:mm（本地时间）
   remind_at: string | null; // 提醒时间，同样是本地时间串
   repeat_rule: RepeatRule;
@@ -123,6 +125,8 @@ export interface TaskFilter {
   view?: 'today' | 'all' | 'upcoming' | 'done' | 'overdue';
   /** 状态筛选：不传或 'all' = 全部（含已完成，勾完不消失），'todo' = 未完成，'done' = 已完成 */
   status?: 'all' | 'todo' | 'done';
+  /** 优先级筛选：不传或 'all' = 三档都看 */
+  priority?: TaskPriority | 'all';
   q?: string;
   goalId?: Id;
   /** 一次最多取多少条，默认 500、上限 2000（见 db.listTasks） */

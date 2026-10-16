@@ -173,7 +173,7 @@ describe('老库自动升级', () => {
     expect(columnNames('review_card')).toContain('lapses');
 
     const version = db.getRawDb().prepare('pragma user_version').get() as { user_version: number };
-    expect(Number(version.user_version)).toBe(3);
+    expect(Number(version.user_version)).toBe(4);
 
     // v3：笔记多了富文本正文和分类内排序位
     expect(columnNames('note')).toEqual(expect.arrayContaining(['content_html', 'sort_order']));
@@ -212,6 +212,14 @@ describe('老库自动升级', () => {
     expect(old!.remind_at).toBeNull();
     expect(old!.note).toBe('老备注');
     expect(old!.due_at).toBe('2026-01-02');
+    // v4：老库里的数字优先级（默认 2 = 中）转成三档文字，而且真的按文本存进库里
+    expect(old!.priority).toBe('important');
+    const rawPriority = db
+      .getRawDb()
+      .prepare('select priority, typeof(priority) as t from task where id = ?')
+      .get(old!.id) as { priority: string; t: string };
+    expect(rawPriority.priority).toBe('important');
+    expect(rawPriority.t).toBe('text');
     expect(db.listGoals().map((g) => g.title)).toContain('老目标');
     expect(db.integrityCheck()).toBe('ok');
   });
@@ -237,7 +245,7 @@ describe('老库自动升级', () => {
     expect(db.integrityCheck()).toBe('ok');
   });
 
-  it('第二版的库升到第三版：只补富文本与排序，已有内容不动', () => {
+  it('第二版的库升到最新：只补富文本与排序，已有内容不动', () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'jwkb-mig3-'));
     const paths = ensureDirs(root);
     db.openDatabase(paths);
@@ -255,7 +263,33 @@ describe('老库自动升级', () => {
     expect(note.content_html).toContain('<strong>老内容</strong>');
     expect(note.sort_order).toBeGreaterThanOrEqual(1);
     const version = db.getRawDb().prepare('pragma user_version').get() as { user_version: number };
-    expect(Number(version.user_version)).toBe(3);
+    expect(Number(version.user_version)).toBe(4);
+    expect(db.integrityCheck()).toBe('ok');
+  });
+
+  it('第三版的库升到第四版：数字优先级转成三档文字，重开不会降回去', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'jwkb-mig4-'));
+    const paths = ensureDirs(root);
+    db.openDatabase(paths);
+    const urgent = db.createTask({ title: '高优先级的老任务', priority: 'urgent' });
+    const normal = db.createTask({ title: '低优先级的老任务', priority: 'normal' });
+    // 伪装成「第三版写下的任务」：优先级塞回数字，版本号退回 3
+    db.getRawDb().exec(`update task set priority = 3 where id = ${urgent}`);
+    db.getRawDb().exec(`update task set priority = 1 where id = ${normal}`);
+    db.getRawDb().exec('pragma user_version = 3');
+    db.closeDatabase();
+
+    db.openDatabase(paths);
+
+    expect(db.listTasks({ view: 'all' }).find((t) => t.id === urgent)!.priority).toBe('urgent');
+    expect(db.listTasks({ view: 'all' }).find((t) => t.id === normal)!.priority).toBe('normal');
+    const version3 = db.getRawDb().prepare('pragma user_version').get() as { user_version: number };
+    expect(Number(version3.user_version)).toBe(4);
+
+    // 再开一次：已经转成文字的不会被 cast() 当 0 降成 normal
+    db.closeDatabase();
+    db.openDatabase(paths);
+    expect(db.listTasks({ view: 'all' }).find((t) => t.id === urgent)!.priority).toBe('urgent');
     expect(db.integrityCheck()).toBe('ok');
   });
 });

@@ -405,12 +405,20 @@ describe('复盘', () => {
     expect(db.getRetrospective('day', '2026-10-15')).toBeNull();
   });
 
-  it('优先级多了「无(0)」这一档，0 档照样能存能排', () => {
-    const none = db.createTask({ title: '没定优先级的事', priority: 0 });
-    const high = db.createTask({ title: '最要紧的事', priority: 3 });
+  it('优先级三档（紧急/重要/一般）能存能排', () => {
+    const normal = db.createTask({ title: '不急的事', priority: 'normal' });
+    const urgent = db.createTask({ title: '最要紧的事', priority: 'urgent' });
+    const important = db.createTask({ title: '挺重要的事', priority: 'important' });
     const list = db.listTasks({ view: 'all' });
-    expect(list.find((t) => t.id === none)!.priority).toBe(0);
-    expect(list.findIndex((t) => t.id === high)).toBeLessThan(list.findIndex((t) => t.id === none));
+    expect(list.find((t) => t.id === normal)!.priority).toBe('normal');
+    const idx = (id: number) => list.findIndex((t) => t.id === id);
+    expect(idx(urgent)).toBeLessThan(idx(important));
+    expect(idx(important)).toBeLessThan(idx(normal));
+    // 筛选某一档时只剩那一档
+    expect(db.listTasks({ view: 'all', priority: 'urgent' }).map((t) => t.title)).toEqual(['最要紧的事']);
+    // 老代码传数字也会被归一成三档文字
+    db.updateTask(normal, { priority: 3 as unknown as 'normal' });
+    expect(db.listTasks({ view: 'all' }).find((t) => t.id === normal)!.priority).toBe('urgent');
   });
 });
 

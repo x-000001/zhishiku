@@ -1,5 +1,5 @@
 ================ 强杀（断电）测试结果 ================
-PASS  强杀前：20 条收集箱 + 笔记 + 任务都写进去了  —  {"integrity":"ok","failed":"","log":["note:save={\"note\":{\"id\":1,\"category_id\":null,\"title\":\"强杀前保存的笔记\",\"content\":\"这段正文必须活下来。\",\"draft_title\":null,\"draft_content\":null,\"draft_at\":null,\"excerpt\":\"这段正文必
+PASS  强杀前：20 条收集箱 + 笔记 + 任务都写进去了  —  {"integrity":"ok","failed":"","log":["note:save={\"note\":{\"id\":1,\"category_id\":null,\"title\":\"强杀前保存的笔记\",\"content\":\"这段正文必须活下来。\",\"content_html\":\"<p>这段正文必须活下来。</p>\",\"sort_order\":1,\"draft_title\":null,\"dr
 PASS  强杀重启后：数据库完整性检查仍然 ok  —  ok
 PASS  强杀重启后：20 条收集箱一条不少  —  20
 PASS  强杀重启后：手动保存过的笔记还在

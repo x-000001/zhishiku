@@ -1,3 +1,5 @@
+import type { TaskPriority } from '../../shared/types';
+
 export function todayLocal(d = new Date()): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -42,13 +44,20 @@ export function relative(value: string | null | undefined): string {
   return fmtDateTime(value);
 }
 
-/** 优先级四档：0 无、1 低、2 中、3 高（PRD 5.4）。 */
-export const PRIORITY_LABEL: Record<number, string> = { 0: '无', 1: '低', 2: '中', 3: '高' };
-export const PRIORITY_ORDER: number[] = [3, 2, 1, 0];
+/** 任务优先级三档（优化项 5）：紧急 / 重要 / 一般。 */
+export const PRIORITY_LABEL: Record<string, string> = {
+  urgent: '紧急',
+  important: '重要',
+  normal: '一般'
+};
+/** 由高到低，排序与筛选按钮都按这个顺序走。 */
+export const PRIORITY_ORDER: TaskPriority[] = ['urgent', 'important', 'normal'];
 
-/** 点一下换下一档，循环顺序：无 → 低 → 中 → 高 → 无。 */
-export function nextPriority(current: number): number {
-  return (Number(current || 0) + 1) % 4;
+/** 点一下换下一档，循环顺序：紧急 → 重要 → 一般 → 紧急。 */
+export function nextPriority(current: TaskPriority | string | null | undefined): TaskPriority {
+  const list = PRIORITY_ORDER;
+  const i = list.indexOf(current as TaskPriority);
+  return list[(i + 1) % list.length] as TaskPriority;
 }
 
 export const REPEAT_LABEL: Record<string, string> = {

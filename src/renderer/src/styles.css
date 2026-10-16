@@ -476,6 +476,18 @@ label.field {
   background: var(--p3);
 }
 
+/* 任务优先级三档（优化项 5）：紧急红 / 重要橙 / 一般灰蓝。
+   目标池用的还是 .dot.p0..p3 那套数字档，两套互不影响。 */
+.dot.prio-urgent {
+  background: #d9534f;
+}
+.dot.prio-important {
+  background: #d99a20;
+}
+.dot.prio-normal {
+  background: #5b8def;
+}
+
 .muted {
   color: var(--text-faint);
   font-size: 12px;

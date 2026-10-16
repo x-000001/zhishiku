@@ -492,7 +492,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
                         >
                           ✓
                         </button>
-                        <span className={`dot p${t.priority}`} />
+                        <span className={`dot prio-${t.priority}`} />
                         <div className="grow">
                           <div className="title" style={t.status === 'done' ? { textDecoration: 'line-through' } : undefined}>
                             {t.title}

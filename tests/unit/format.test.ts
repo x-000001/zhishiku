@@ -1,27 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { PRIORITY_LABEL, PRIORITY_ORDER, fmtDate, nextPriority, todayLocal } from '../../src/renderer/src/format';
 
-describe('任务优先级四档（PRD 5.4）', () => {
-  it('四档标签齐全，0 是「无」', () => {
-    expect(Object.keys(PRIORITY_LABEL)).toHaveLength(4);
-    expect(PRIORITY_LABEL[0]).toBe('无');
-    expect(PRIORITY_LABEL[3]).toBe('高');
+describe('任务优先级三档（优化项 5）', () => {
+  it('三档标签齐全', () => {
+    expect(Object.keys(PRIORITY_LABEL)).toHaveLength(3);
+    expect(PRIORITY_LABEL.urgent).toBe('紧急');
+    expect(PRIORITY_LABEL.important).toBe('重要');
+    expect(PRIORITY_LABEL.normal).toBe('一般');
   });
 
-  it('点一下按 无 → 低 → 中 → 高 → 无 循环', () => {
-    expect(nextPriority(0)).toBe(1);
-    expect(nextPriority(1)).toBe(2);
-    expect(nextPriority(2)).toBe(3);
-    expect(nextPriority(3)).toBe(0);
+  it('点一下按 紧急 → 重要 → 一般 → 紧急 循环', () => {
+    expect(nextPriority('urgent')).toBe('important');
+    expect(nextPriority('important')).toBe('normal');
+    expect(nextPriority('normal')).toBe('urgent');
   });
 
-  it('越界的值也当「无」处理，不会跑出 0–3', () => {
-    expect(nextPriority(-1)).toBe(0);
-    expect(nextPriority(99)).toBe(0);
+  it('认不出来的值（老库里的数字、空值）当「一般」处理', () => {
+    expect(nextPriority('3')).toBe('urgent');
+    expect(nextPriority(2 as unknown as string)).toBe('urgent');
+    expect(nextPriority(null)).toBe('urgent');
+    expect(nextPriority(undefined)).toBe('urgent');
   });
 
-  it('展示顺序是高在前、无在最后', () => {
-    expect(PRIORITY_ORDER).toEqual([3, 2, 1, 0]);
+  it('展示顺序是紧急在前、一般在最后', () => {
+    expect(PRIORITY_ORDER).toEqual(['urgent', 'important', 'normal']);
   });
 });
 

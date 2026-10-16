@@ -139,7 +139,7 @@ const CHECK_SCRIPT = `(async () => {
     const converted = await inv('note:get', { id: noteId });
     rec('转出来的笔记能读回', !!converted && converted.title.includes('英语单词本'), converted && converted.title);
 
-    const convTask = await inv('inbox:convert', { id: openList[1].id, target: 'task', title: '读书：深度工作第二章', due_at: '2026-10-16', priority: 3, repeat_rule: 'none' });
+    const convTask = await inv('inbox:convert', { id: openList[1].id, target: 'task', title: '读书：深度工作第二章', due_at: '2026-10-16', priority: 'urgent', repeat_rule: 'none' });
     rec('收集箱一键转任务', /^task:\\d+$/.test(convTask.ref), convTask.ref);
     const taskIdFromInbox = Number(convTask.ref.split(':')[1]);
 
@@ -188,9 +188,9 @@ const CHECK_SCRIPT = `(async () => {
     const today = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const todayStr = today.getFullYear() + '-' + pad(today.getMonth() + 1) + '-' + pad(today.getDate());
-    const t1 = await inv('task:create', { title: '今天要做的第一件事', due_at: todayStr, priority: 3 });
-    const t2 = await inv('task:create', { title: '每天重复的晨间阅读', due_at: todayStr, priority: 2, repeat_rule: 'daily' });
-    await inv('task:create', { title: '下个月才做的事', due_at: '2026-11-30', priority: 1 });
+    const t1 = await inv('task:create', { title: '今天要做的第一件事', due_at: todayStr, priority: 'urgent' });
+    const t2 = await inv('task:create', { title: '每天重复的晨间阅读', due_at: todayStr, priority: 'important', repeat_rule: 'daily' });
+    await inv('task:create', { title: '下个月才做的事', due_at: '2026-11-30', priority: 'normal' });
     const todayTasks = await inv('task:list', { view: 'today' });
     rec('任务按今天筛选', todayTasks.length >= 2, '今天=' + todayTasks.length + ' 标题=' + todayTasks.map((t) => t.title).join('|'));
     const upcoming = await inv('task:list', { view: 'upcoming' });
@@ -202,9 +202,9 @@ const CHECK_SCRIPT = `(async () => {
     const afterRepeat = await inv('task:list', { view: 'all' });
     const spawnedTask = afterRepeat.find((t) => t.title.includes('晨间阅读') && t.status === 'todo');
     rec('重复任务生成了下一次、排在明天', !!spawnedTask && String(spawnedTask.due_at) > todayStr, spawnedTask ? '下一跳=' + spawnedTask.due_at : '没生成');
-    await inv('task:update', { id: t1, patch: { title: '今天要做的第一件事（改过）', priority: 1 } });
+    await inv('task:update', { id: t1, patch: { title: '今天要做的第一件事（改过）', priority: 'normal' } });
     const updated = await inv('task:list', { view: 'all' });
-    rec('任务能行内改', updated.some((t) => t.id === t1 && t.title.includes('改过') && t.priority === 1), 'ok');
+    rec('任务能行内改', updated.some((t) => t.id === t1 && t.title.includes('改过') && t.priority === 'normal'), 'ok');
 
     // ---- 优化项 4：勾完不消失 / 状态三档 / 批量删除 ----
     const todayAfter = await inv('task:list', { view: 'today' });
@@ -229,6 +229,35 @@ const CHECK_SCRIPT = `(async () => {
     rec('批量删除返回真正删掉的条数', removedCount === batchIds.length, '删了 ' + removedCount + '/' + batchIds.length);
     const leftAll = await inv('task:list', { view: 'all' });
     rec('批量删除后列表里没有它们了', batchIds.every((id) => !leftAll.some((t) => t.id === id)), '剩=' + leftAll.length);
+
+    // ---- 优化项 5：优先级三档（紧急 / 重要 / 一般）----
+    const pUrgent = await inv('task:create', { title: '明天要交的紧急事', priority: 'urgent' });
+    const pImportant = await inv('task:create', { title: '该推进的重要事', priority: 'important' });
+    const pNormal = await inv('task:create', { title: '有空再弄的一般事', priority: 'normal' });
+    const allPrio = await inv('task:list', { view: 'all' });
+    const findPrio = (id) => allPrio.find((t) => t.id === id);
+    rec(
+      '三档优先级都存在库里',
+      ['urgent', 'important', 'normal'].join(',') ===
+        [pUrgent, pImportant, pNormal].map((id) => (findPrio(id) || {}).priority).join(','),
+      [pUrgent, pImportant, pNormal].map((id) => (findPrio(id) || {}).priority).join(',')
+    );
+    const posOf = (id) => allPrio.findIndex((t) => t.id === id);
+    rec(
+      '排序是紧急在前、重要居中、一般在后',
+      posOf(pUrgent) < posOf(pImportant) && posOf(pImportant) < posOf(pNormal),
+      '位置=' + [posOf(pUrgent), posOf(pImportant), posOf(pNormal)].join(',')
+    );
+    const onlyUrgent = await inv('task:list', { view: 'all', priority: 'urgent' });
+    rec(
+      '按「紧急」筛选只剩紧急',
+      onlyUrgent.length > 0 && onlyUrgent.every((t) => t.priority === 'urgent'),
+      '紧急=' + onlyUrgent.length + ' 命中=' + onlyUrgent.length
+    );
+    // 老库的数字优先级会被归一成三档文字（这里直接塞数字试一次）
+    const legacyId = await inv('task:create', { title: '老代码传数字的任务', priority: 3 });
+    const legacyTask = (await inv('task:list', { view: 'all' })).find((t) => t.id === legacyId);
+    rec('后端会把老式数字优先级归一成三档文字', !!legacyTask && legacyTask.priority === 'urgent', String(legacyTask && legacyTask.priority));
 
     // ---- 首页 ----
     const dash = await inv('dash:overview');
@@ -325,7 +354,7 @@ const CHECK_SCRIPT = `(async () => {
     rec('周复盘和历史列表分开存', Array.isArray(retroList) && retroList.length === 1 && retroList[0].type === 'week', '周复盘=' + (retroList || []).length);
 
     // ---- 第二版：任务提醒时间 ----
-    const withRemind = await inv('task:create', { title: '提醒测试', due_at: todayStr, remind_at: todayStr + ' 09:30:00', priority: 2 });
+    const withRemind = await inv('task:create', { title: '提醒测试', due_at: todayStr, remind_at: todayStr + ' 09:30:00', priority: 'important' });
     const remindRow = (await inv('task:list', { view: 'all' })).find((t) => t.id === withRemind);
     rec('任务能存提醒时间', !!remindRow && String(remindRow.remind_at).includes('09:30'), 'remind_at=' + (remindRow && remindRow.remind_at));
 
@@ -558,6 +587,63 @@ try {
     detail: '选中行=' + pickedRows
   });
   await cdp.shot('tasks-multi');
+
+  // ---- 优化项 5：任务页的优先级标签颜色与筛选按钮 ----
+  const prioDots = await cdp.eval(`(() => {
+    const rows = [...document.querySelectorAll('.task-row')];
+    const out = { urgent: 0, important: 0, normal: 0, other: 0 };
+    for (const r of rows) {
+      const dot = r.querySelector('.dot');
+      if (!dot) continue;
+      const hit = ['urgent', 'important', 'normal'].find((k) => dot.classList.contains('prio-' + k));
+      if (hit) out[hit] += 1;
+      else out.other += 1;
+    }
+    return JSON.stringify(out);
+  })()`);
+  const dotObj = JSON.parse(String(prioDots));
+  results.push({
+    name: '任务前面的小圆点带三档颜色类名',
+    ok: dotObj.other === 0 && dotObj.urgent + dotObj.important + dotObj.normal > 0,
+    detail: String(prioDots)
+  });
+  const prioTabs = await cdp.eval(
+    "(() => [...document.querySelectorAll('button')].map((b) => (b.innerText || '').trim()).filter((t) => ['全部','紧急','重要','一般'].includes(t)).join('|'))()"
+  );
+  results.push({
+    name: '任务左右有优先级筛选按钮',
+    ok: /紧急/.test(String(prioTabs)) && /重要/.test(String(prioTabs)) && /一般/.test(String(prioTabs)),
+    detail: String(prioTabs).slice(0, 60)
+  });
+  const urgentOnly = await cdp.eval(`(async () => {
+    // 先保证今天视图里确实有紧急任务和不紧急的任务各一条，否则筛选无从体现
+    const d = new Date();
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const todayStr = d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    await window.api.invoke('task:create', { title: '界面自检的紧急任务', due_at: todayStr, priority: 'urgent' });
+    await window.api.invoke('task:create', { title: '界面自检的一般任务', due_at: todayStr, priority: 'normal' });
+    location.hash = '/__bounce';
+    await new Promise((r) => setTimeout(r, 250));
+    location.hash = '/tasks';
+    await new Promise((r) => setTimeout(r, 900));
+    const btn = [...document.querySelectorAll('button')].find((b) => (b.innerText || '').trim() === '紧急');
+    if (!btn) return 'no-btn';
+    btn.click();
+    return 'clicked';
+  })()`);
+  await sleep(700);
+  const urgentRows = await cdp.eval(`(() => {
+    const rows = [...document.querySelectorAll('.task-row')];
+    const allUrgent = rows.every((r) => { const d = r.querySelector('.dot'); return d && d.classList.contains('prio-urgent'); });
+    return JSON.stringify({ n: rows.length, allUrgent });
+  })()`);
+  const urgentObj = JSON.parse(String(urgentRows));
+  results.push({
+    name: '点「紧急」后列表里只剩紧急任务',
+    ok: urgentOnly === 'clicked' && urgentObj.n > 0 && urgentObj.allUrgent === true,
+    detail: String(urgentRows)
+  });
+  await cdp.shot('tasks-priority');
 
   // ---- 第三版：富文本编辑器的界面行为 ----
   await cdp.eval("location.hash = '/__bounce'; true");

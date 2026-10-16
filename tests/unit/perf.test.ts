@@ -51,7 +51,7 @@ beforeAll(() => {
       title: `第 ${i} 条任务`,
       // 一半是今天的（首页要汇总），一半散在后面
       due_at: i % 2 === 0 ? today : tomorrow,
-      priority: (i % 3) + 1,
+      priority: (['urgent', 'important', 'normal'] as const)[i % 3],
       status: i % 10 === 0 ? 'done' : 'todo'
     });
   }

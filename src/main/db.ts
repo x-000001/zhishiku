@@ -45,6 +45,7 @@ import type {
   Tag,
   Task,
   TaskFilter,
+  TaskPriority,
   TaskStatus
 } from '../shared/types';
 
@@ -232,7 +233,7 @@ CREATE TABLE IF NOT EXISTS task (
   title        TEXT NOT NULL,
   note         TEXT NOT NULL DEFAULT '',
   status       TEXT NOT NULL DEFAULT 'todo',
-  priority     INTEGER NOT NULL DEFAULT 2,
+  priority     TEXT NOT NULL DEFAULT 'normal',
   due_at       TEXT,
   remind_at    TEXT,
   repeat_rule  TEXT NOT NULL DEFAULT 'none',
@@ -375,7 +376,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
 );
 `;
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 /** 给老库补列：SQLite 没有 ADD COLUMN IF NOT EXISTS，先查表结构再决定。 */
 function addColumnIfMissing(table: string, column: string, decl: string): void {
@@ -471,6 +472,19 @@ function migrate(): void {
       database.exec('ROLLBACK');
       throw err;
     }
+  }
+  if (current < 4) {
+    // v3 → v4：任务优先级从数字（0 无 / 1 低 / 2 中 / 3 高）换成三档文字
+    // （urgent 紧急 / important 重要 / normal 一般）。列本身是 INTEGER 亲和性，
+    // 存文字没问题；用 typeof 守住幂等，重复打开不会把已经转好的又降回 normal。
+    run(
+      `update task set priority = case
+         when cast(priority as integer) >= 3 then 'urgent'
+         when cast(priority as integer) = 2 then 'important'
+         else 'normal'
+       end
+       where typeof(priority) <> 'text'`
+    );
   }
   if (current < SCHEMA_VERSION) {
     database.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
@@ -1121,11 +1135,20 @@ export function inboxOpenCount(): number {
 /* 任务                                                                */
 /* ------------------------------------------------------------------ */
 
+/** 老库里可能还留着数字优先级（没走过迁移的手工库），读出来一律归一成三档。 */
+function toPriority(value: unknown): TaskPriority {
+  if (value === 'urgent' || value === 'important' || value === 'normal') return value;
+  const n = Number(value);
+  if (n >= 3) return 'urgent';
+  if (n === 2) return 'important';
+  return 'normal';
+}
+
 function toTask(row: Task, today: string): Task {
   const due = row.due_at ? String(row.due_at).slice(0, 10) : null;
   return {
     ...row,
-    priority: Number(row.priority),
+    priority: toPriority(row.priority),
     overdue: !!(due && due < today && row.status === 'todo')
   };
 }
@@ -1157,6 +1180,10 @@ export function listTasks(filter: TaskFilter = {}): Task[] {
   }
   if (filter.status === 'todo') where.push("status = 'todo'");
   else if (filter.status === 'done') where.push("status = 'done'");
+  if (filter.priority && filter.priority !== 'all') {
+    where.push('priority = ?');
+    args.push(filter.priority);
+  }
   if (filter.goalId != null) {
     where.push('goal_id = ?');
     args.push(filter.goalId);
@@ -1173,7 +1200,8 @@ export function listTasks(filter: TaskFilter = {}): Task[] {
      order by case when status = 'done' then 1 else 0 end asc,
               case when due_at is null then 1 else 0 end asc,
               substr(due_at, 1, 10) asc,
-              priority desc, id desc
+              case priority when 'urgent' then 0 when 'important' then 1 else 2 end asc,
+              id desc
      limit ${limit}`,
     ...args
   );
@@ -1211,7 +1239,7 @@ export function createTask(input: Partial<Task> & { title: string }): Id {
     input.title.trim(),
     input.note ?? '',
     input.status ?? 'todo',
-    input.priority ?? 2,
+    toPriority(input.priority ?? 'normal'),
     input.due_at ?? null,
     input.remind_at ?? null,
     input.repeat_rule ?? 'none',
@@ -1241,7 +1269,8 @@ export function updateTask(id: Id, patch: Partial<Task>): void {
   for (const key of allowed) {
     if (patch[key] !== undefined) {
       fields.push(`${key} = ?`);
-      args.push(patch[key] as never);
+      // 优先级一律归一成三档文字：调用方传数字（老代码/外部脚本）也不会写进脏值
+      args.push((key === 'priority' ? toPriority(patch[key]) : patch[key]) as never);
     }
   }
   if (!fields.length) return;
@@ -1361,7 +1390,8 @@ export function dueTasksForNotice(): Task[] {
          (remind_at is not null and remind_at <> '' and remind_at <= ?)
          or (due_at is not null and substr(due_at, 1, 10) <= ?)
        )
-     order by substr(coalesce(remind_at, due_at), 1, 16) asc, priority desc`,
+     order by substr(coalesce(remind_at, due_at), 1, 16) asc,
+              case priority when 'urgent' then 0 when 'important' then 1 else 2 end asc`,
     nowMinute,
     today
   ).map((r) => toTask(r, today));
@@ -1444,7 +1474,8 @@ export function dashboard(): DashboardData {
     `select * from task
      where deleted_at is null and status = 'todo' and due_at is not null
        and substr(due_at, 1, 10) <= ?
-     order by substr(due_at, 1, 10) asc, priority desc, id desc
+     order by substr(due_at, 1, 10) asc,
+              case priority when 'urgent' then 0 when 'important' then 1 else 2 end asc, id desc
      limit 50`,
     today
   ).map((r) => toTask(r, today));

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { Empty, ConfirmDialog, toast } from '../ui';
-import { PRIORITY_LABEL, REPEAT_LABEL, fmtDate, fmtDateTime, nextPriority, relative, todayLocal } from '../format';
-import type { GoalSummary, Id, Task, TaskFilter } from '../../../shared/types';
+import { PRIORITY_LABEL, PRIORITY_ORDER, REPEAT_LABEL, fmtDate, fmtDateTime, nextPriority, relative, todayLocal } from '../format';
+import type { GoalSummary, Id, Task, TaskFilter, TaskPriority } from '../../../shared/types';
 
 const VIEWS: { key: NonNullable<TaskFilter['view']>; icon: string; label: string; hint: string }[] = [
   { key: 'today', icon: '☀️', label: '今天', hint: '今天到期，连同已经逾期的（完成的留在原地）' },
@@ -26,6 +26,8 @@ function isOverdue(task: Task): boolean {
 export default function Tasks(props: { refreshCount: () => void }): ReactNode {
   const [view, setView] = useState<NonNullable<TaskFilter['view']>>('today');
   const [status, setStatus] = useState<NonNullable<TaskFilter['status']>>('all');
+  const [prioFilter, setPrioFilter] = useState<NonNullable<TaskFilter['priority']>>('all');
+  const [newPrio, setNewPrio] = useState<TaskPriority>('normal');
   const [q, setQ] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -40,7 +42,12 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
   const load = useCallback(
     (which = view) => {
       return Promise.all([
-        api.listTasks({ view: which, status, q: q.trim() || undefined }),
+        api.listTasks({
+          view: which,
+          status,
+          priority: prioFilter,
+          q: q.trim() || undefined
+        }),
         api.taskCounts()
       ])
         .then(([rows, realCounts]) => {
@@ -59,13 +66,13 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
         .finally(() => setLoading(false));
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [view, status, q]
+    [view, status, prioFilter, q]
   );
 
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, status]);
+  }, [view, status, prioFilter]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 200);
@@ -99,7 +106,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
     try {
       await api.createTask({
         title,
-        priority: 2,
+        priority: newPrio,
         due_at: view === 'today' || view === 'overdue' ? todayLocal() : null
       });
       setDraft('');
@@ -212,6 +219,26 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
         </div>
         <div style={{ height: 10 }} />
         <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+          优先级
+        </div>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          {(['all', ...PRIORITY_ORDER] as (TaskPriority | 'all')[]).map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={prioFilter === p ? 'btn sm primary' : 'btn sm'}
+              onClick={() => {
+                setPrioFilter(p);
+                setPicked(new Set());
+                setSelected(null);
+              }}
+            >
+              {p === 'all' ? '全部' : PRIORITY_LABEL[p]}
+            </button>
+          ))}
+        </div>
+        <div style={{ height: 10 }} />
+        <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
           筛选
         </div>
         <input
@@ -224,7 +251,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
         <div style={{ height: 12 }} />
         <div className="muted" style={{ fontSize: 12, lineHeight: 1.9 }}>
           · 点标题直接改
-          <br />· 点小圆点换优先级
+          <br />· 点小圆点换优先级（紧急 / 重要 / 一般）
           <br />· 点日期改截止日
           <br />· 回车快速加下一条
         </div>
@@ -333,8 +360,8 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
                   </button>
                   <button
                     type="button"
-                    className={`dot p${task.priority}`}
-                    title={`优先级：${PRIORITY_LABEL[task.priority] ?? '中'}（点一下换一档）`}
+                    className={`dot prio-${task.priority}`}
+                    title={`优先级：${PRIORITY_LABEL[task.priority] ?? '一般'}（点一下换一档）`}
                     onClick={(e) => {
                       e.stopPropagation();
                       void patch(task.id, { priority: nextPriority(task.priority) });
@@ -422,6 +449,17 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
               }
             }}
           />
+          <select
+            value={newPrio}
+            title="新任务的优先级"
+            onChange={(e) => setNewPrio(e.target.value as TaskPriority)}
+          >
+            {PRIORITY_ORDER.map((p) => (
+              <option key={p} value={p}>
+                {PRIORITY_LABEL[p]}
+              </option>
+            ))}
+          </select>
           <button type="button" className="btn sm primary" onClick={() => void addTask()}>
             加上
           </button>
@@ -476,12 +514,13 @@ function TaskDrawer(props: {
         <label>优先级</label>
         <select
           value={task.priority}
-          onChange={(e) => props.onPatch({ priority: Number(e.target.value) })}
+          onChange={(e) => props.onPatch({ priority: e.target.value as TaskPriority })}
         >
-          <option value={3}>高</option>
-          <option value={2}>中</option>
-          <option value={1}>低</option>
-          <option value={0}>无</option>
+          {PRIORITY_ORDER.map((p) => (
+            <option key={p} value={p}>
+              {PRIORITY_LABEL[p]}
+            </option>
+          ))}
         </select>
       </div>
       <div className="field">
