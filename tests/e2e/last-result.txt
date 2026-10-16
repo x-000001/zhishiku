@@ -100,10 +100,10 @@ PASS  删父分类后子分类上提一级，没有跟着一起没  —  tmpSub.
 PASS  分类能上移，顺序真的换了  —  ["工作","学习","生活","项目","资料收藏","排序自检分类","待删子分类"] → ["工作","学习","生活","项目","资料收藏","待删子分类","排序自检分类"]
 PASS  设置能读  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","versionKeep":20,"theme":"light","notifyEnabled":true,"closeToTray":true}
 PASS  设置能改并持久化  —  versionKeep=5
-PASS  手动备份成功  —  手动_2026-10-16_182442
+PASS  手动备份成功  —  手动_2026-10-16_183542
 PASS  备份列表可读  —  备份数=2
 PASS  插图真的复制进了数据目录的附件夹（原件删了也不影响）  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments\2026-10\e2e-pixel.png
-PASS  备份目录里有快照且含 kb.db  —  2026-10-16_182442, 手动_2026-10-16_182442
+PASS  备份目录里有快照且含 kb.db  —  2026-10-16_183541, 手动_2026-10-16_183542
 PASS  数据库文件落在数据目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.db
 PASS  附件目录已建好  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments
 PASS  页面 / 有实际内容  —  今日待办
@@ -297,6 +297,9 @@ PASS  选中一个分类后「＋子分类」能点了，提示里带着这个�
 PASS  工具栏建的子分类挂对了父分类，并且立刻出现在树上  —  点击时={"disabled":false,"title":"在「排序自检分类」下新建子分类"} | 弹窗=在「排序自检分类」下新建子分类 | 输入=工具栏子分类 | parent_id=6 期望=6 | 界面上=true
 PASS  点开笔记后出现富文本工具栏  —  {"open":"clicked","bar":true,"btns":9,"editable":true}
 PASS  正文区是可编辑的富文本容器  —  {"open":"clicked","bar":true,"btns":9,"editable":true}
+PASS  第五版：编辑器工具条是毛玻璃（模糊 + 半透明底）  —  backdrop=blur(18px) saturate(1.8) 底色=rgba(255, 255, 255, 0.62)
+PASS  第五版：正文那块「纸」保持不透明（不跟着毛玻璃透）  —  正文底色=rgb(255, 255, 255)
+PASS  第五版：正文对比度够长读（≥ 12:1）  —  底色=rgb(255, 255, 255) 字色=rgb(44, 44, 46) 对比度=13.9:1
 PASS  工具栏能插入表格、光标进单元格后多出增删行列按钮  —  插入表格✕|table=true|rowBtn=2|colBtn=2
 PASS  选中文字点「加粗」真的会加粗  —  <p><b>界面自检正文</b></p>
 PASS  编辑器上的保存按钮能用  —  保存
@@ -307,8 +310,8 @@ PASS  深色主题能切换  —  dark|
 PASS  笔记编辑页有「保存」按钮  —  clicked/保存
 PASS  目标编辑页有「保存」按钮  —  保存
 PASS  任务详情抽屉里有「保存」按钮  —  保存
-PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 18:25:25
-PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 18:25:27
+PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 18:36:25
+PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 18:36:27
 PASS  浅色主题能切回  —  light
 PASS  自绘标题栏有红黄绿三个点，且没有文字节点  —  点数=3 文本="" 名字=关闭窗口|最小化窗口|最大化或还原窗口
 PASS  窗口确实是无边框的（系统标题栏高度≈0）  —  outer-inner 高差=6px
@@ -317,6 +320,6 @@ PASS  点绿点能最大化、再点能还原窗口  —  宽 1279 → 1536 → 
 PASS  窗口系统材质与系统版本相符（Win11 要 acrylic）  —  material=acrylic build=26200
 PASS  CSP 已收紧（打包版不联网）  —  default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: jw-att:; font-src 'self' data:; connect-src 'self'
 ------------------------------------------------
-合计 160 项，通过 160，失败 0
+合计 163 项，通过 163，失败 0
 截图目录：C:\Users\29785\Desktop\Jw的app\tests\e2e\shots
 应用进程：exit=null signal=SIGTERM

@@ -2945,3 +2945,55 @@ label.field {
   user-select: none;
 }
 
+/* ================= 第五版（阶段4）：编辑器工具条毛玻璃 + 正文区保持不透明 =================
+   思路：窗口的「铬」（标题、工具条、页脚）都做成毛玻璃，可以透出底下的壁纸；
+   但正在写字的那块「纸」必须不透明 —— 长时间阅读的对比度优先（浅色白底深灰字、
+   深色深底浅字，实测 ≥ 12:1）。所以正文面用 --reading-bg/--reading-text 这对
+   专门的阅读令牌，跟外壳的半透明令牌分开管。 */
+.kb-editor {
+  background: transparent;
+}
+
+.editor-head {
+  border-bottom-color: var(--glass-border);
+}
+
+.rt-toolbar {
+  background: var(--glass-bg);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  border-bottom: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 8px 24px -18px rgba(15, 23, 42, 0.5);
+}
+
+/* 工具条按钮：平时全透明，悬停淡蓝，选中（B / I / 列表这些生效时）是实心品牌色胶囊 */
+.rt-toolbar .tb {
+  background: transparent;
+  box-shadow: none;
+}
+
+.rt-toolbar .tb:hover {
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  color: var(--brand-strong);
+}
+
+.rt-toolbar .tb.on {
+  background: var(--brand);
+  color: #fff;
+  box-shadow: 0 4px 12px -5px color-mix(in srgb, var(--brand) 70%, transparent);
+}
+
+/* 「纸」：不透明阅读面。放在滚动容器上，预览比正文短时也不会露出壁纸 */
+.editor-body {
+  background: var(--reading-bg);
+  color: var(--reading-text);
+}
+
+/* 页脚（标签 / 附件数）：跟工具条同一层玻璃 */
+.editor-foot {
+  background: var(--glass-bg);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  border-top: 1px solid var(--glass-border);
+}
+

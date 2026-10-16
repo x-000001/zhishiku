@@ -1096,6 +1096,68 @@ try {
   results.push({ name: '正文区是可编辑的富文本容器', ok: es.editable === true, detail: String(editorState) });
   await cdp.shot('knowledge-rich');
 
+  // ---- 第五版阶段4：工具条毛玻璃 + 正文「纸」不透明（对比度优先） ----
+  const editorPaper = await cdp.eval(`(() => {
+    const bar = document.querySelector('.rt-toolbar');
+    const body = document.querySelector('.editor-body');
+    const ed = document.querySelector('.rt-editor');
+    if (!bar || !body || !ed) return JSON.stringify({ err: 'no-editor' });
+    const parse = (s) => {
+      const m = String(s).match(/rgba?\\(([^)]+)\\)/);
+      if (!m) return null;
+      const p = m[1].split(',').map((x) => parseFloat(x));
+      return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    };
+    const lum = (c) => {
+      const f = (v) => {
+        const x = v / 255;
+        return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+    };
+    const cs = getComputedStyle(bar);
+    const barBg = parse(cs.backgroundColor);
+    const bodyBg = parse(getComputedStyle(body).backgroundColor);
+    const fg = parse(getComputedStyle(ed).color);
+    let ratio = 0;
+    if (bodyBg && fg) {
+      const l1 = lum(bodyBg);
+      const l2 = lum(fg);
+      ratio = Math.round(((Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)) * 10) / 10;
+    }
+    return JSON.stringify({
+      blur: cs.backdropFilter || cs.webkitBackdropFilter,
+      barBg: cs.backgroundColor,
+      barAlpha: barBg ? barBg.a : null,
+      bodyBg: getComputedStyle(body).backgroundColor,
+      bodyAlpha: bodyBg ? bodyBg.a : null,
+      fg: getComputedStyle(ed).color,
+      ratio
+    });
+  })()`);
+  const paper = (() => {
+    try {
+      return JSON.parse(String(editorPaper));
+    } catch {
+      return { err: String(editorPaper) };
+    }
+  })();
+  results.push({
+    name: '第五版：编辑器工具条是毛玻璃（模糊 + 半透明底）',
+    ok: String(paper.blur).includes('blur') && typeof paper.barAlpha === 'number' && paper.barAlpha < 1,
+    detail: 'backdrop=' + paper.blur + ' 底色=' + paper.barBg + (paper.err ? ' err=' + paper.err : '')
+  });
+  results.push({
+    name: '第五版：正文那块「纸」保持不透明（不跟着毛玻璃透）',
+    ok: paper.bodyAlpha === 1,
+    detail: '正文底色=' + paper.bodyBg
+  });
+  results.push({
+    name: '第五版：正文对比度够长读（≥ 12:1）',
+    ok: Number(paper.ratio) >= 12,
+    detail: '底色=' + paper.bodyBg + ' 字色=' + paper.fg + ' 对比度=' + paper.ratio + ':1'
+  });
+
   const tableInUi = await cdp.eval(`(async () => {
     const btn = [...document.querySelectorAll('.rt-toolbar button')].find((b) => b.title === '插入表格');
     if (!btn) return 'no-btn';
