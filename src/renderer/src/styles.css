@@ -2795,3 +2795,153 @@ label.field {
   color: var(--brand-strong);
 }
 
+/* ============================================================
+   第五版（阶段3）：卡片/列表毛玻璃化 + 悬停浮起 + 拖动跟手与回弹
+   原则：backdrop-filter 只给容器层（外壳、卡片、三栏外框），
+   列表行这种「一屏几十个」的元素只用半透明背景，避免拖慢滚动。
+   ============================================================ */
+
+/* ---- 卡片：悬停浮起（平滑曲线），阴影加深 ---- */
+.card,
+.stat,
+.review-stage,
+.kb {
+  transition: transform 0.25s var(--smooth-ease), box-shadow 0.25s var(--smooth-ease),
+    background 0.2s var(--smooth-ease), border-color 0.2s var(--smooth-ease);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.16);
+  will-change: transform;
+}
+
+/* 首页 / 复习那种并排小卡片才放大 0.5%：整屏宽的大卡片只上浮，免得撑出横向滚动条 */
+.dash-grid > .card:hover,
+.dash-grid > * > .card:hover {
+  transform: translateY(-2px) scale(1.005);
+}
+
+[data-theme='dark'] .card:hover {
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* ---- 统计小格子：改成半透明内衬，跟着卡片一起透 ---- */
+.stat {
+  background: color-mix(in srgb, var(--bg-panel) 62%, transparent);
+  border-color: var(--glass-border);
+  border-radius: var(--radius);
+}
+
+.stat:hover {
+  border-color: color-mix(in srgb, var(--brand) 26%, var(--glass-border));
+}
+
+/* ---- 知识库三栏：外框与分类栏毛玻璃，正文/列表保持不透（阅读优先） ---- */
+.kb {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  border-color: var(--glass-border);
+  border-radius: var(--radius-glass);
+  box-shadow: var(--glass-shadow);
+}
+
+.kb-tree {
+  background: transparent;
+}
+
+.kb-list {
+  background: color-mix(in srgb, var(--bg-panel) 74%, transparent);
+}
+
+/* 复习的问答大卡 */
+.review-stage {
+  background: color-mix(in srgb, var(--bg-panel) 70%, transparent);
+  border-radius: var(--radius-glass);
+}
+
+/* ---- 列表行：过渡走平滑曲线；可拖动的笔记行给「抓住」的手型 ---- */
+.list-row,
+.task-row,
+.tree-item {
+  transition: background 0.18s var(--smooth-ease), box-shadow 0.18s var(--smooth-ease),
+    transform 0.18s var(--smooth-ease), border-color 0.18s var(--smooth-ease);
+}
+
+.list-row.drag-able {
+  cursor: grab;
+}
+
+.list-row.drag-able:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.1);
+}
+
+[data-theme='dark'] .list-row.drag-able:hover {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
+}
+
+/* ---- 拖动中：卡片「拿起来」——倾斜 + 重阴影，拖动期间必须没有过渡才跟手 ---- */
+.list-row.dragging {
+  position: relative;
+  z-index: 3;
+  opacity: 0.85;
+  transform: scale(1.03) rotate(1deg);
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.34);
+  cursor: grabbing;
+  transition: none;
+}
+
+/* ---- 落点：更粗的圆头高亮线 + 一条浅底，看得清会插到哪 ---- */
+.list-row.drop-before,
+.list-row.drop-after {
+  background: var(--brand-soft);
+}
+
+.list-row.drop-before::before,
+.list-row.drop-after::after {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+/* ---- 松手：落位的卡片弹一下（弹簧曲线） ---- */
+.list-row.drop-settling {
+  animation: jw-settle 0.4s var(--spring-ease);
+}
+
+@keyframes jw-settle {
+  0% {
+    transform: scale(1.03) rotate(1deg);
+  }
+  55% {
+    transform: scale(0.985);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* ---- 跟着指针走的「手中卡片」影像（JS 克隆一份，用 setDragImage 挂上） ---- */
+.drag-ghost {
+  position: fixed;
+  top: -1000px;
+  left: -1000px;
+  box-sizing: border-box;
+  background: var(--bg-panel);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+  transform: rotate(2deg);
+  opacity: 0.96;
+  pointer-events: none;
+}
+
+/* 拖动中不跟鼠标抢点击，也不参与选择 */
+.list-row.dragging *,
+.drag-ghost * {
+  user-select: none;
+}
+

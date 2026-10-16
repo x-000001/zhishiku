@@ -30,6 +30,8 @@ export default function Knowledge(props: {
   const [list, setList] = useState<NoteListItem[]>([]);
   const [dragId, setDragId] = useState<Id | null>(null);
   const [dropAt, setDropAt] = useState<{ id: Id; after: boolean } | null>(null);
+  /** 刚落位的卡片：40ms 内挂 .drop-settling，让它弹一下再归位（第五版阶段3） */
+  const [settlingId, setSettlingId] = useState<Id | null>(null);
   // 搜索或按标签筛出来的是一小撮子集，这时候拖动排序没有意义，关掉
   const canReorder = sel !== 'trash' && !q.trim() && tagId === null;
   const [openId, setOpenId] = useState<Id | null>(null);
@@ -422,10 +424,31 @@ export default function Knowledge(props: {
     if (!ids) return;
     // 先在本地摆好，拖动松手就能看到效果，再落库
     setList((prev) => applyOrder(prev, ids));
+    // 第五版阶段3：落位的那张弹一下（CSS 弹簧曲线），400ms 后摘掉类
+    setSettlingId(draggedId);
+    window.setTimeout(() => setSettlingId((cur) => (cur === draggedId ? null : cur)), 420);
     void api
       .reorderNotes(ids)
       .then(() => loadList())
       .catch((err: Error) => toast('排序保存失败：' + err.message));
+  };
+
+  /**
+   * 第五版阶段3：拖动时给指针一份「拿起来的卡片」影像（倾斜 + 重阴影），
+   * 比 Chromium 默认那层灰糊糊的截图更跟手。不支持就悄悄退回默认。
+   */
+  const liftDragImage = (row: HTMLElement, dt: DataTransfer): void => {
+    try {
+      const box = row.getBoundingClientRect();
+      const ghost = row.cloneNode(true) as HTMLElement;
+      ghost.classList.add('drag-ghost');
+      ghost.style.width = `${box.width}px`;
+      document.body.appendChild(ghost);
+      dt.setDragImage(ghost, 26, Math.min(box.height - 2, Math.max(14, box.height / 2)));
+      window.setTimeout(() => ghost.remove(), 0);
+    } catch {
+      /* 自绘拖动影像不可用时（老环境 / 合成事件）就用系统默认的 */
+    }
   };
 
   /** 优化项 7：分类排序——跟同一层的上/下一条换位（子分类各排各的）。 */
@@ -741,7 +764,9 @@ export default function Knowledge(props: {
                 className={[
                   'list-row',
                   openId === item.id ? 'selected' : '',
+                  canReorder ? 'drag-able' : '',
                   dragId === item.id ? 'dragging' : '',
+                  settlingId === item.id ? 'drop-settling' : '',
                   dropAt && dropAt.id === item.id ? (dropAt.after ? 'drop-after' : 'drop-before') : ''
                 ]
                   .filter(Boolean)
@@ -751,6 +776,7 @@ export default function Knowledge(props: {
                   e.dataTransfer.setData('text/note-id', String(item.id));
                   e.dataTransfer.effectAllowed = 'move';
                   setDragId(item.id);
+                  liftDragImage(e.currentTarget, e.dataTransfer);
                 }}
                 onDragEnd={() => {
                   setDragId(null);

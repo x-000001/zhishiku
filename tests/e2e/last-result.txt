@@ -100,10 +100,10 @@ PASS  删父分类后子分类上提一级，没有跟着一起没  —  tmpSub.
 PASS  分类能上移，顺序真的换了  —  ["工作","学习","生活","项目","资料收藏","排序自检分类","待删子分类"] → ["工作","学习","生活","项目","资料收藏","待删子分类","排序自检分类"]
 PASS  设置能读  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","versionKeep":20,"theme":"light","notifyEnabled":true,"closeToTray":true}
 PASS  设置能改并持久化  —  versionKeep=5
-PASS  手动备份成功  —  手动_2026-10-16_181211
+PASS  手动备份成功  —  手动_2026-10-16_182442
 PASS  备份列表可读  —  备份数=2
 PASS  插图真的复制进了数据目录的附件夹（原件删了也不影响）  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments\2026-10\e2e-pixel.png
-PASS  备份目录里有快照且含 kb.db  —  2026-10-16_181211, 手动_2026-10-16_181211
+PASS  备份目录里有快照且含 kb.db  —  2026-10-16_182442, 手动_2026-10-16_182442
 PASS  数据库文件落在数据目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.db
 PASS  附件目录已建好  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments
 PASS  页面 / 有实际内容  —  今日待办
@@ -283,6 +283,12 @@ PASS  笔记卡片可以拖动（卡片带 draggable、分类下能拿到 3 张�
 PASS  拖动后顺序立刻变了，卡片落在目标旁边  —  拖的「排序丙」→ 现在位置 1，目标「排序乙」在 2；顺序=排序甲|排序丙|排序乙
 PASS  重开后顺序还是拖完的样子（顺序真的落到库里了）  —  重开=排序甲|排序丙|排序乙
 PASS  列表上方有「拖动卡片可以调顺序」的提示  —  true
+PASS  第五版：可拖动的笔记行是「抓住」手型  —  cursor=grab
+PASS  第五版：拖动中的卡片倾斜浮起、且没有过渡（跟手）  —  transform=matrix(1.02984, 0.017976, -0.017976, 1.02984, 0, 0) transition=0s cursor=grabbing
+PASS  第五版：落点是 3px 品牌色圆头高亮线 + 目标行浅底  —  class=list-row drag-able drop-after 线高=3px 色=rgb(10, 114, 232)
+PASS  第五版：松手落位的卡片回弹一下（弹簧动画）  —  animation=jw-settle transform=matrix(0.98192, -0.00117254, 0.00117254, 0.98192, 0, 0)
+PASS  第五版：卡片是毛玻璃（backdrop-filter 带模糊）  —  backdrop-filter=blur(20px) saturate(1.8)
+PASS  第五版：鼠标移上去卡片浮起 translateY(-2px) scale(1.005)  —  hover 前=none hover 后 translateY=-2 scaleX=1.005
 PASS  每个分类行上都有「上移 / 下移」按钮  —  上移=8 下移=8
 PASS  非空分类点删除会提示「请先移动或删除笔记」，分类还在  —  clicked | 提示=该分类下还有笔记，请先移动或删除笔记 | 还在=true
 PASS  点「上移」之后分类真的往上挪了一位  —  ["工作 (1)","学习","生活","项目","资料收藏","待删子分类","排序自检分类 (3)","排序子分类"] → ["学习","工作 (1)","生活","项目","资料收藏","待删子分类","排序自检分类 (3)","排序子分类"]
@@ -301,8 +307,8 @@ PASS  深色主题能切换  —  dark|
 PASS  笔记编辑页有「保存」按钮  —  clicked/保存
 PASS  目标编辑页有「保存」按钮  —  保存
 PASS  任务详情抽屉里有「保存」按钮  —  保存
-PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 18:12:49
-PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 18:12:51
+PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 18:25:25
+PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 18:25:27
 PASS  浅色主题能切回  —  light
 PASS  自绘标题栏有红黄绿三个点，且没有文字节点  —  点数=3 文本="" 名字=关闭窗口|最小化窗口|最大化或还原窗口
 PASS  窗口确实是无边框的（系统标题栏高度≈0）  —  outer-inner 高差=6px
@@ -311,6 +317,6 @@ PASS  点绿点能最大化、再点能还原窗口  —  宽 1279 → 1536 → 
 PASS  窗口系统材质与系统版本相符（Win11 要 acrylic）  —  material=acrylic build=26200
 PASS  CSP 已收紧（打包版不联网）  —  default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: jw-att:; font-src 'self' data:; connect-src 'self'
 ------------------------------------------------
-合计 154 项，通过 154，失败 0
+合计 160 项，通过 160，失败 0
 截图目录：C:\Users\29785\Desktop\Jw的app\tests\e2e\shots
 应用进程：exit=null signal=SIGTERM

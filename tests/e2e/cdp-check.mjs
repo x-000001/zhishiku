@@ -753,6 +753,157 @@ try {
   results.push({ name: '列表上方有「拖动卡片可以调顺序」的提示', ok: dragHint === true, detail: String(dragHint) });
   await cdp.shot('knowledge-reorder');
 
+  // ---- 第五版阶段3：拖动跟手（拖动中无过渡 + 倾斜浮起）、落点线、松手回弹 ----
+  const dragFeel = await cdp.eval(`(async () => {
+    const rows = [...document.querySelectorAll('.kb-list-body .list-row')];
+    if (rows.length < 2) return JSON.stringify({ err: 'few:' + rows.length });
+    const src = rows[0];
+    const dst = rows[1];
+    const dt = new DataTransfer();
+    const cursorHover = getComputedStyle(src).cursor;
+    src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+    await new Promise((r) => setTimeout(r, 90)); // 等 React 把 .dragging 挂上
+    const cs = getComputedStyle(src);
+    const box = dst.getBoundingClientRect();
+    const init = { bubbles: true, dataTransfer: dt, clientX: box.left + 10, clientY: box.bottom - 3 };
+    dst.dispatchEvent(new DragEvent('dragover', init));
+    await new Promise((r) => setTimeout(r, 90)); // 等落点线挂上
+    const pseudo = dst.className.includes('drop-after') ? '::after' : '::before';
+    const pcs = getComputedStyle(dst, pseudo);
+    const info = {
+      cursorHover,
+      dragging: src.className.includes('dragging'),
+      transform: cs.transform,
+      duration: cs.transitionDuration,
+      cursorDrag: cs.cursor,
+      dropCls: dst.className,
+      lineH: pcs.height,
+      lineBg: pcs.backgroundColor
+    };
+    src.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+    return JSON.stringify(info);
+  })()`);
+  const feel = (() => {
+    try {
+      return JSON.parse(String(dragFeel));
+    } catch {
+      return { err: String(dragFeel) };
+    }
+  })();
+  results.push({
+    name: '第五版：可拖动的笔记行是「抓住」手型',
+    ok: feel.cursorHover === 'grab',
+    detail: 'cursor=' + feel.cursorHover + (feel.err ? ' err=' + feel.err : '')
+  });
+  results.push({
+    name: '第五版：拖动中的卡片倾斜浮起、且没有过渡（跟手）',
+    ok:
+      feel.dragging === true &&
+      feel.transform !== 'none' &&
+      feel.transform !== undefined &&
+      String(feel.duration)
+        .split(',')
+        .every((d) => d.trim() === '0s') &&
+      feel.cursorDrag === 'grabbing',
+    detail: 'transform=' + feel.transform + ' transition=' + feel.duration + ' cursor=' + feel.cursorDrag
+  });
+  results.push({
+    name: '第五版：落点是 3px 品牌色圆头高亮线 + 目标行浅底',
+    ok: (String(feel.dropCls).includes('drop-after') || String(feel.dropCls).includes('drop-before')) && feel.lineH === '3px',
+    detail: 'class=' + feel.dropCls + ' 线高=' + feel.lineH + ' 色=' + feel.lineBg
+  });
+  const settle = await cdp.eval(`(async () => {
+    const rows = [...document.querySelectorAll('.kb-list-body .list-row')];
+    if (rows.length < 2) return JSON.stringify({ err: 'few' });
+    const dt = new DataTransfer();
+    const src = rows[0];
+    const dst = rows[1];
+    src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+    const box = dst.getBoundingClientRect();
+    const init = { bubbles: true, dataTransfer: dt, clientX: box.left + 10, clientY: box.bottom - 3 };
+    dst.dispatchEvent(new DragEvent('dragover', init));
+    dst.dispatchEvent(new DragEvent('drop', init));
+    src.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+    await new Promise((r) => setTimeout(r, 90));
+    const hit = document.querySelector('.kb-list-body .list-row.drop-settling');
+    return JSON.stringify({
+      has: !!hit,
+      anim: hit ? getComputedStyle(hit).animationName : 'none',
+      transform: hit ? getComputedStyle(hit).transform : 'none'
+    });
+  })()`);
+  const settled = (() => {
+    try {
+      return JSON.parse(String(settle));
+    } catch {
+      return { err: String(settle) };
+    }
+  })();
+  results.push({
+    name: '第五版：松手落位的卡片回弹一下（弹簧动画）',
+    ok: settled.has === true && settled.anim === 'jw-settle',
+    detail: 'animation=' + settled.anim + ' transform=' + settled.transform
+  });
+
+  // ---- 第五版阶段3：卡片毛玻璃 + 悬停浮起（真的把鼠标移上去读计算样式） ----
+  await cdp.eval("location.hash = '/__bounce'; true");
+  await sleep(250);
+  await cdp.eval("location.hash = '/'; true");
+  await sleep(800);
+  const cardInfo = await cdp.eval(`(() => {
+    const c = document.querySelector('.dash-grid .card');
+    if (!c) return JSON.stringify({ err: 'no-card' });
+    const b = c.getBoundingClientRect();
+    const cs = getComputedStyle(c);
+    return JSON.stringify({
+      x: Math.round(b.left + b.width / 2),
+      y: Math.round(b.top + 16),
+      blur: cs.backdropFilter || cs.webkitBackdropFilter,
+      before: cs.transform
+    });
+  })()`);
+  const card = (() => {
+    try {
+      return JSON.parse(String(cardInfo));
+    } catch {
+      return { err: String(cardInfo) };
+    }
+  })();
+  results.push({
+    name: '第五版：卡片是毛玻璃（backdrop-filter 带模糊）',
+    ok: String(card.blur).includes('blur'),
+    detail: 'backdrop-filter=' + card.blur + (card.err ? ' err=' + card.err : '')
+  });
+  if (typeof card.x === 'number') {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: card.x, y: card.y });
+    await sleep(340);
+    const lifted = await cdp.eval(`(() => {
+      const c = document.querySelector('.dash-grid .card');
+      if (!c) return 'no-card';
+      const m = new DOMMatrix(getComputedStyle(c).transform);
+      return JSON.stringify({ dy: Math.round(m.m42 * 100) / 100, sx: Math.round(m.m11 * 10000) / 10000 });
+    })()`);
+    const lift = (() => {
+      try {
+        return JSON.parse(String(lifted));
+      } catch {
+        return { err: String(lifted) };
+      }
+    })();
+    results.push({
+      name: '第五版：鼠标移上去卡片浮起 translateY(-2px) scale(1.005)',
+      ok: card.before === 'none' && lift.dy === -2 && Math.abs(Number(lift.sx) - 1.005) < 0.001,
+      detail: 'hover 前=' + card.before + ' hover 后 translateY=' + lift.dy + ' scaleX=' + lift.sx
+    });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 4, y: 4 });
+    await sleep(120);
+  }
+  await cdp.shot('home-card-hover');
+
+  // 回到知识库，后面的分类断言要用这一页
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(900);
+
   // ---- 优化项 7：分类排序按钮 + 非空分类删除拦截（界面） ----
   const upBtnCount = await cdp.eval("(() => document.querySelectorAll('.tree-item [title=\"上移\"]').length)()");
   const downBtnCount = await cdp.eval("(() => document.querySelectorAll('.tree-item [title=\"下移\"]').length)()");
