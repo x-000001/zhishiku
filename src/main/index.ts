@@ -1,6 +1,8 @@
-import { BrowserWindow, Menu, Notification, Tray, app, dialog, globalShortcut, nativeImage, screen, shell } from 'electron';
+import { BrowserWindow, Menu, Notification, Tray, app, dialog, globalShortcut, nativeImage, net, protocol, screen, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { attachmentRelFromUrl } from '../shared/html';
 import {
   closeDatabase,
   dbPaths,
@@ -23,6 +25,33 @@ let quitting = false;
 
 const notified = new Set<string>();
 let noticeTimer: NodeJS.Timeout | null = null;
+
+/**
+ * 笔记正文里的图片用 jw-att:// 指向数据目录里的附件：
+ * 存进库里的是相对路径，渲染进程不用知道 D 盘真实位置，也不用放开 file:// 权限。
+ */
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'jw-att',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
+  }
+]);
+
+/** 把 jw-att://attachments/2026-10/a.png 映射到数据目录里的真实文件。 */
+function registerAttachmentProtocol(): void {
+  protocol.handle('jw-att', (request) => {
+    const rel = attachmentRelFromUrl(request.url);
+    if (!rel) return new Response('附件地址不对', { status: 400 });
+    const root = path.resolve(dbPaths().root);
+    const abs = path.resolve(root, rel);
+    // 只允许数据目录里的文件，防止 URL 里写 ../ 爬出去
+    if (abs !== root && !abs.startsWith(root + path.sep)) {
+      return new Response('越界了', { status: 403 });
+    }
+    if (!fs.existsSync(abs)) return new Response('附件不在了', { status: 404 });
+    return net.fetch(pathToFileURL(abs).toString());
+  });
+}
 
 function resourcePath(name: string): string {
   const candidates = [
@@ -253,6 +282,7 @@ if (!gotLock) {
     if (integrity !== 'ok') console.error('[数据] 完整性检查未通过：', integrity);
 
     registerIpc(() => dataPaths, sqliteVersion());
+    registerAttachmentProtocol();
     Menu.setApplicationMenu(null);
 
     mainWindow = createMainWindow();

@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { languages } from '@codemirror/language-data';
 import { api, pathForFile } from '../api';
 import { ConfirmDialog, Empty, Modal, toast } from '../ui';
 import { fmtDate, relative } from '../format';
-import { diffLines, renderMarkdown } from '../markdown';
+import { diffLines, renderMarkdown } from '../../../shared/markdown';
+import { attachmentUrl, htmlToPlainText, sanitizeHtml } from '../../../shared/html';
+import * as rich from '../rich';
 import type { Attachment, Category, Id, Note, NoteListItem, NoteVersion, Tag } from '../../../shared/types';
 
 type NoteDetail = Note & { tags: Tag[]; attachments: Attachment[] };
 type CatSel = Id | 'all' | 'unassigned' | 'trash';
 
-const MD_EXT = [markdown({ base: markdownLanguage, codeLanguages: languages })];
+/** 字数按纯文字算：HTML 标签不算字。 */
+function countLocal(html: string): number {
+  return htmlToPlainText(html).replace(/\s/g, '').length;
+}
 
 export default function Knowledge(props: {
   openNoteId: Id | null;
@@ -27,7 +29,16 @@ export default function Knowledge(props: {
   const [openId, setOpenId] = useState<Id | null>(null);
   const [note, setNote] = useState<NoteDetail | null>(null);
   const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
+  /**
+   * 正文是富文本 HTML。改得很频繁，所以放在 ref 里，
+   * 只有换笔记 / 恢复草稿时才把它推进编辑器（见 editorEpoch），避免每次敲键都重渲染整页。
+   */
+  const htmlRef = useRef('');
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const imageInput = useRef<HTMLInputElement | null>(null);
+  const [editorEpoch, setEditorEpoch] = useState(0);
+  const [wordCount, setWordCount] = useState(0);
+  const [previewHtml, setPreviewHtml] = useState('');
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving' | 'error'>('saved');
   const [savedFlash, setSavedFlash] = useState(false);
@@ -39,6 +50,11 @@ export default function Knowledge(props: {
   const [dropTarget, setDropTarget] = useState<CatSel | null>(null);
   /** 有文件被拖到编辑区上方时，显示一条接收提示 */
   const [fileHover, setFileHover] = useState(false);
+  /** 工具栏：颜色面板 / 插图 / 表格 / 当前光标格式 */
+  const [colorOpen, setColorOpen] = useState<'text' | 'bg' | null>(null);
+  const [tableOpen, setTableOpen] = useState(false);
+  const [tableSize, setTableSize] = useState({ rows: 3, cols: 3 });
+  const [fmt, setFmt] = useState({ inTable: false, bold: false, italic: false, underline: false });
   const [confirmPurge, setConfirmPurge] = useState<Id | null>(null);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
   const [confirmCatDel, setConfirmCatDel] = useState<Category | null>(null);
@@ -49,10 +65,72 @@ export default function Knowledge(props: {
   const [tagFilterOpen, setTagFilterOpen] = useState(false);
 
   const draftTimer = useRef<number | null>(null);
+  const wordTimer = useRef<number | null>(null);
+  /** touchBody 定义在 scheduleDraft 之前，用 ref 转一手避免顺序问题 */
+  const scheduleDraftRef = useRef<(() => void) | null>(null);
   /** 彻底删除的待办计时器：界面上先消失，5 秒后才真删，这期间可以撤销。 */
   const pendingDelete = useRef(new Map<Id, ReturnType<typeof setTimeout>>());
-  const stateRef = useRef({ title: '', content: '', id: null as Id | null });
-  stateRef.current = { title, content, id: openId };
+  const stateRef = useRef({ title: '', html: '', id: null as Id | null });
+  stateRef.current = { title, html: htmlRef.current, id: openId };
+
+  /* ---------------- 编辑器与正文 ---------------- */
+
+  /** 把一段 HTML 放进编辑器：换笔记、恢复草稿、回滚版本都走这里。 */
+  const putIntoEditor = useCallback((html: string, nextTitle?: string) => {
+    const clean = sanitizeHtml(html);
+    htmlRef.current = clean;
+    setPreviewHtml(clean);
+    setWordCount(countLocal(clean));
+    if (nextTitle != null) setTitle(nextTitle);
+    setEditorEpoch((n) => n + 1);
+  }, []);
+
+  /** 正文被改动：标脏、排草稿、慢一点再更新字数（不整页重渲染）。 */
+  const touchBody = useCallback(() => {
+    const el = editorRef.current;
+    if (el) htmlRef.current = el.innerHTML;
+    setSaveState('dirty');
+    scheduleDraftRef.current?.();
+    if (wordTimer.current) window.clearTimeout(wordTimer.current);
+    wordTimer.current = window.setTimeout(() => setWordCount(countLocal(htmlRef.current)), 300);
+  }, []);
+
+  /** 只在换笔记 / 恢复草稿后把 ref 里的 HTML 推进编辑器；平时让它自己管，光标才不会跳。 */
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    if (el.innerHTML !== htmlRef.current) el.innerHTML = htmlRef.current;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorEpoch, openId]);
+
+  /** 光标位置变了就更新工具栏状态（选中文字时加粗按钮亮不亮、光标在不在表格里）。 */
+  useEffect(() => {
+    const onSel = () => {
+      const next = {
+        inTable: rich.inTable(),
+        bold: rich.stateOf('bold'),
+        italic: rich.stateOf('italic'),
+        underline: rich.stateOf('underline')
+      };
+      setFmt((prev) =>
+        prev.inTable === next.inTable &&
+        prev.bold === next.bold &&
+        prev.italic === next.italic &&
+        prev.underline === next.underline
+          ? prev
+          : next
+      );
+    };
+    document.addEventListener('selectionchange', onSel);
+    return () => document.removeEventListener('selectionchange', onSel);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (wordTimer.current) window.clearTimeout(wordTimer.current);
+    },
+    []
+  );
 
   /* ---------------- 读取 ---------------- */
 
@@ -118,19 +196,20 @@ export default function Knowledge(props: {
           return;
         }
         setNote(full);
-        setTitle(full.title);
-        setContent(full.content);
+        // 老笔记没有富文本正文，就用 Markdown 现场转一份出来显示
+        putIntoEditor(full.content_html || renderMarkdown(full.content), full.title);
         setTagText(full.tags.map((t) => t.name).join(', '));
         setSaveState('saved');
         setMode('edit');
         const draft = full.draft_content;
-        if (draft != null && draft !== full.content) {
+        if (draft != null && draft !== full.content_html) {
           setDraftPrompt({ title: full.draft_title ?? full.title, content: draft });
         } else {
           setDraftPrompt(null);
         }
       })
       .catch((err: Error) => toast('打开笔记失败：' + err.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -144,18 +223,24 @@ export default function Knowledge(props: {
   const scheduleDraft = useCallback(() => {
     if (draftTimer.current) window.clearTimeout(draftTimer.current);
     draftTimer.current = window.setTimeout(() => {
-      const { id, title: t, content: c } = stateRef.current;
+      const { id, title: t } = stateRef.current;
       if (id == null) return;
-      void api.saveDraft(id, t, c).catch(() => undefined);
+      void api.saveDraft(id, t, htmlRef.current).catch(() => undefined);
     }, 1000);
   }, []);
+  scheduleDraftRef.current = scheduleDraft;
 
   const manualSave = useCallback(async () => {
     const id = stateRef.current.id;
     if (id == null) return;
     setSaveState('saving');
     try {
-      const res = await api.saveNote(id, stateRef.current.title, stateRef.current.content, '手动保存');
+      const res = await api.saveNote(
+        id,
+        stateRef.current.title,
+        { html: htmlRef.current },
+        '手动保存'
+      );
       setSaveState('saved');
       setSavedFlash(true);
       window.setTimeout(() => setSavedFlash(false), 1500);
@@ -190,6 +275,18 @@ export default function Knowledge(props: {
     []
   );
 
+  /** 只刷新附件列表，不动正文（正文有没保存的改动时，重载会把它冲掉）。 */
+  const refreshAttachments = useCallback(async (id: Id) => {
+    try {
+      const full = await api.getNote(id);
+      if (full) {
+        setNote((prev) => (prev && prev.id === id ? { ...prev, attachments: full.attachments } : prev));
+      }
+    } catch {
+      /* 刷不到就算了，不影响编辑 */
+    }
+  }, []);
+
   /**
    * 把拖进来的文件复制成附件。渲染层只有 File 对象，
    * 绝对路径得让 preload 用 webUtils.getPathForFile 换出来。
@@ -214,10 +311,49 @@ export default function Knowledge(props: {
       }
       if (ok > 0) {
         toast(`已加上 ${ok} 个附件`);
-        openNote(id);
+        void refreshAttachments(id);
       }
     },
-    [openNote]
+    [refreshAttachments]
+  );
+
+  /**
+   * 插入图片：先把文件复制进数据目录的附件夹，再往正文里插一个 jw-att:// 的图。
+   * 库里存的是相对路径，换电脑/换盘符都不会失效。
+   */
+  const insertImages = useCallback(
+    async (files: File[]) => {
+      const images = files.filter(
+        (f) => f.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp)$/i.test(f.name)
+      );
+      if (images.length === 0) return;
+      const id = stateRef.current.id;
+      if (id == null) {
+        toast('先选中或新建一篇笔记，再插图');
+        return;
+      }
+      let ok = 0;
+      for (const file of images) {
+        const src = pathForFile(file);
+        if (!src) {
+          toast(`拿不到「${file.name}」的路径，试试点工具栏上的「插图」按钮选它`);
+          continue;
+        }
+        try {
+          const att = await api.addAttachmentPath(id, src);
+          rich.insertImage(attachmentUrl(att.rel_path), att.file_name);
+          ok += 1;
+        } catch (err) {
+          toast(`「${file.name}」没插上：` + (err as Error).message);
+        }
+      }
+      if (ok > 0) {
+        touchBody();
+        void refreshAttachments(id);
+        toast(`已插入 ${ok} 张图（按 Ctrl+S 保存）`);
+      }
+    },
+    [refreshAttachments, touchBody]
   );
 
   /** 一键把当前笔记变成一张复习卡（同一篇重复点不会生成第二张）。 */
@@ -232,9 +368,9 @@ export default function Knowledge(props: {
     }
   };
 
-  const touch = (nextTitle: string, nextContent: string) => {
+  /** 标题被改：只标脏 + 排草稿，正文交给编辑器自己。 */
+  const touchTitle = (nextTitle: string) => {
     setTitle(nextTitle);
-    setContent(nextContent);
     setSaveState('dirty');
     scheduleDraft();
   };
@@ -246,7 +382,7 @@ export default function Knowledge(props: {
       const created = await api.createNote({
         categoryId: typeof sel === 'number' ? sel : null,
         title: '',
-        content: ''
+        html: ''
       });
       if (created) {
         setSel(typeof sel === 'number' ? sel : 'all');
@@ -383,8 +519,6 @@ export default function Knowledge(props: {
     if (sel === 'trash') return '回收站';
     return cats.find((c) => c.id === sel)?.name ?? '笔记';
   }, [cats, sel]);
-
-  const wordCount = content.replace(/\s/g, '').length;
 
   /* ---------------- 渲染 ---------------- */
 
@@ -610,7 +744,7 @@ export default function Knowledge(props: {
                   className="editor-title"
                   placeholder="无标题笔记"
                   value={title}
-                  onChange={(e) => touch(e.target.value, content)}
+                  onChange={(e) => touchTitle(e.target.value)}
                 />
                 <button
                   type="button"
@@ -648,7 +782,10 @@ export default function Knowledge(props: {
                 <button
                   type="button"
                   className={mode === 'preview' ? 'btn sm primary' : 'btn sm ghost'}
-                  onClick={() => setMode('preview')}
+                  onClick={() => {
+                    setPreviewHtml(sanitizeHtml(htmlRef.current));
+                    setMode('preview');
+                  }}
                 >
                   预览
                 </button>
@@ -663,8 +800,9 @@ export default function Knowledge(props: {
                   type="button"
                   className="btn sm primary"
                   onClick={() => {
-                    touch(draftPrompt.title, draftPrompt.content);
+                    putIntoEditor(draftPrompt.content, draftPrompt.title);
                     setDraftPrompt(null);
+                    setSaveState('dirty');
                     toast('已恢复草稿，确认没问题后按 Ctrl+S 保存');
                   }}
                 >
@@ -674,7 +812,7 @@ export default function Knowledge(props: {
                   type="button"
                   className="btn sm ghost"
                   onClick={() => {
-                    if (openId != null) void api.saveDraft(openId, note.title, note.content);
+                    if (openId != null) void api.saveDraft(openId, note.title, htmlRef.current);
                     setDraftPrompt(null);
                   }}
                 >
@@ -683,7 +821,190 @@ export default function Knowledge(props: {
               </div>
             ) : null}
 
-            {fileHover ? <div className="drop-hint">松手就把文件存成这条笔记的附件</div> : null}
+            {fileHover ? (
+              <div className="drop-hint">松手：图片插进正文（存进附件夹），其它文件存成附件</div>
+            ) : null}
+
+            {mode === 'edit' ? (
+              <div className="rt-toolbar">
+                <button
+                  type="button"
+                  className={fmt.bold ? 'tb on' : 'tb'}
+                  title="加粗（Ctrl+B）"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    rich.bold();
+                    touchBody();
+                  }}
+                >
+                  <b>B</b>
+                </button>
+                <button
+                  type="button"
+                  className={fmt.italic ? 'tb on' : 'tb'}
+                  title="斜体（Ctrl+I）"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    rich.italic();
+                    touchBody();
+                  }}
+                >
+                  <i>I</i>
+                </button>
+                <button
+                  type="button"
+                  className={fmt.underline ? 'tb on' : 'tb'}
+                  title="下划线（Ctrl+U）"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    rich.underline();
+                    touchBody();
+                  }}
+                >
+                  <u>U</u>
+                </button>
+                <span className="tb-sep" />
+                <button
+                  type="button"
+                  className={colorOpen === 'text' ? 'tb on' : 'tb'}
+                  title="字体颜色"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setColorOpen(colorOpen === 'text' ? null : 'text')}
+                >
+                  A<span className="tb-under" />
+                </button>
+                <button
+                  type="button"
+                  className={colorOpen === 'bg' ? 'tb on' : 'tb'}
+                  title="背景高亮"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setColorOpen(colorOpen === 'bg' ? null : 'bg')}
+                >
+                  🖍
+                </button>
+                <span className="tb-sep" />
+                <button
+                  type="button"
+                  className="tb"
+                  title="插入本地图片"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => imageInput.current?.click()}
+                >
+                  🖼
+                </button>
+                <button
+                  type="button"
+                  className="tb"
+                  title="插入表格"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setTableOpen(true)}
+                >
+                  ⊞
+                </button>
+                <span className="tb-sep" />
+                <button
+                  type="button"
+                  className="tb"
+                  title="撤销（Ctrl+Z）"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    rich.undo();
+                    touchBody();
+                  }}
+                >
+                  ↶
+                </button>
+                <button
+                  type="button"
+                  className="tb"
+                  title="重做（Ctrl+Y）"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    rich.redo();
+                    touchBody();
+                  }}
+                >
+                  ↷
+                </button>
+                {fmt.inTable ? (
+                  <>
+                    <span className="tb-sep" />
+                    <span className="tb-hint">表格</span>
+                    <button
+                      type="button"
+                      className="tb tb-wide"
+                      title="在下面加一行"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        rich.addRow(true);
+                        touchBody();
+                      }}
+                    >
+                      ＋行
+                    </button>
+                    <button
+                      type="button"
+                      className="tb tb-wide"
+                      title="删掉当前行"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        rich.deleteRow();
+                        touchBody();
+                      }}
+                    >
+                      －行
+                    </button>
+                    <button
+                      type="button"
+                      className="tb tb-wide"
+                      title="在右边加一列"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        rich.addColumn(true);
+                        touchBody();
+                      }}
+                    >
+                      ＋列
+                    </button>
+                    <button
+                      type="button"
+                      className="tb tb-wide"
+                      title="删掉当前列"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        rich.deleteColumn();
+                        touchBody();
+                      }}
+                    >
+                      －列
+                    </button>
+                  </>
+                ) : null}
+                <span className="spacer" style={{ flex: 1 }} />
+                <span className="tb-hint">Ctrl+B 加粗 · Ctrl+S 保存</span>
+              </div>
+            ) : null}
+
+            {colorOpen ? (
+              <div className="color-pop">
+                {(colorOpen === 'text' ? rich.TEXT_COLORS : rich.HIGHLIGHTS).map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    className="swatch"
+                    style={{ background: color }}
+                    title={color}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      if (colorOpen === 'text') rich.foreColor(color);
+                      else rich.hiliteColor(color);
+                      setColorOpen(null);
+                      touchBody();
+                    }}
+                  />
+                ))}
+              </div>
+            ) : null}
 
             <div
               className="editor-body"
@@ -702,20 +1023,52 @@ export default function Knowledge(props: {
                 if (files.length === 0) return;
                 e.preventDefault();
                 setFileHover(false);
-                void attachFiles(files);
+                const images = files.filter((f) => f.type.startsWith('image/'));
+                const others = files.filter((f) => !f.type.startsWith('image/'));
+                if (images.length) void insertImages(images);
+                if (others.length) void attachFiles(others);
               }}
             >
-              {mode === 'edit' ? (
-                <CodeMirror
-                  value={content}
-                  height="100%"
-                  extensions={MD_EXT}
-                  basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: false }}
-                  onChange={(value) => touch(title, value)}
-                />
-              ) : (
-                <div className="md-preview" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
-              )}
+              <input
+                ref={imageInput}
+                type="file"
+                accept="image/*"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  e.target.value = '';
+                  void insertImages(files);
+                }}
+              />
+              {/* 编辑器一直挂着（预览时藏起来），这样来回切标签不会丢光标和没保存的内容 */}
+              <div
+                ref={editorRef}
+                className="rt-editor note-body"
+                contentEditable
+                suppressContentEditableWarning
+                spellCheck={false}
+                style={mode === 'edit' ? undefined : { display: 'none' }}
+                onInput={touchBody}
+                onPaste={(e) => {
+                  const files = Array.from(e.clipboardData?.files ?? []);
+                  if (files.some((f) => f.type.startsWith('image/'))) {
+                    e.preventDefault();
+                    void insertImages(files);
+                    return;
+                  }
+                  // 从网页/Word 粘进来的 HTML 先洗一遍再插入，别把脚本带进库
+                  const pasted = e.clipboardData?.getData('text/html');
+                  if (pasted) {
+                    e.preventDefault();
+                    rich.exec('insertHTML', sanitizeHtml(pasted));
+                    touchBody();
+                  }
+                }}
+              />
+              {mode === 'preview' ? (
+                <div className="md-preview note-body" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+              ) : null}
             </div>
 
             <div className="editor-foot">
@@ -744,7 +1097,7 @@ export default function Knowledge(props: {
                 className="btn sm"
                 onClick={() => {
                   void api.addAttachment(note.id).then((added) => {
-                    if (added.length && openId != null) openNote(openId);
+                    if (added.length) void refreshAttachments(note.id);
                   });
                 }}
               >
@@ -771,9 +1124,7 @@ export default function Knowledge(props: {
                     className="icon-btn"
                     title="删掉这个附件"
                     onClick={() => {
-                      void api.deleteAttachment(att.id).then(() => {
-                        if (openId != null) openNote(openId);
-                      });
+                      void api.deleteAttachment(att.id).then(() => refreshAttachments(note.id));
                     }}
                   >
                     ✕
@@ -785,10 +1136,66 @@ export default function Knowledge(props: {
         )}
       </div>
 
+      {tableOpen ? (
+        <Modal
+          title="插入表格"
+          onClose={() => setTableOpen(false)}
+          width={340}
+          footer={
+            <>
+              <button type="button" className="btn ghost" onClick={() => setTableOpen(false)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={() => {
+                  rich.insertTable(tableSize.rows, tableSize.cols);
+                  setTableOpen(false);
+                  touchBody();
+                }}
+              >
+                插入
+              </button>
+            </>
+          }
+        >
+          <div className="row" style={{ gap: 14 }}>
+            <label className="field" style={{ flex: 1 }}>
+              行数（不含表头）
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={tableSize.rows}
+                onChange={(e) =>
+                  setTableSize((prev) => ({ ...prev, rows: Number(e.target.value) || 1 }))
+                }
+              />
+            </label>
+            <label className="field" style={{ flex: 1 }}>
+              列数
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={tableSize.cols}
+                onChange={(e) =>
+                  setTableSize((prev) => ({ ...prev, cols: Number(e.target.value) || 1 }))
+                }
+              />
+            </label>
+          </div>
+          <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+            第一行会当成表头。插好后把光标放进表格，工具栏上会多出「＋行 / －行 / ＋列 / －列」。
+          </p>
+        </Modal>
+      ) : null}
+
       {versionsOpen && openId != null ? (
         <VersionDrawer
           noteId={openId}
-          current={{ title, content }}
+          current={{ title, content: htmlRef.current }}
           onClose={() => setVersionsOpen(false)}
           onRolledBack={() => {
             setVersionsOpen(false);
@@ -1034,6 +1441,7 @@ function VersionDrawer(props: {
       toast('读不到这篇笔记，先刷新一下');
       return;
     }
+    const beforeHtml = before.content_html || renderMarkdown(before.content);
     try {
       await api.rollbackVersion(ver.id);
     } catch (err) {
@@ -1044,7 +1452,7 @@ function VersionDrawer(props: {
       actionLabel: '撤销',
       onAction: async () => {
         try {
-          await api.saveNote(props.noteId, before.title, before.content, '撤销回滚');
+          await api.saveNote(props.noteId, before.title, { html: beforeHtml }, '撤销回滚');
           toast('已恢复到回滚前的内容');
           props.onRolledBack();
         } catch (err) {
@@ -1068,15 +1476,19 @@ function VersionDrawer(props: {
         <div className="muted" style={{ marginBottom: 8 }}>
           {preview.title || '无标题'} · {preview.word_count} 字 · {preview.reason}
         </div>
-        <div className="md-preview" style={{ maxHeight: '58vh', overflow: 'auto' }}>
-          <div dangerouslySetInnerHTML={{ __html: renderMarkdown(preview.content) }} />
+        <div className="md-preview note-body" style={{ maxHeight: '58vh', overflow: 'auto' }}>
+          <div
+            dangerouslySetInnerHTML={{
+              __html: preview.content_html || renderMarkdown(preview.content)
+            }}
+          />
         </div>
       </Modal>
     );
   }
 
   if (compare) {
-    const lines = diffLines(compare.content, props.current.content);
+    const lines = diffLines(compare.content, htmlToPlainText(props.current.content));
     return (
       <Modal
         title={`对比：${relative(compare.created_at)} 的版本 → 现在`}

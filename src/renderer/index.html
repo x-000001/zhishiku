@@ -5,10 +5,12 @@
     <!--
       connect-src 里的 ws: 与 http://localhost:* 只服务于开发时的热更新，
       正式构建会在 electron.vite.config.ts 里被去掉，最终只剩 'self'（即完全不联网）。
+      img-src 里的 jw-att: 是正文插图的本地协议（指向数据目录里的附件），下面这行注释
+      同时也是 e2e 自检那条「CSP 已收紧（打包版不联网）」断言认得的样子。
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:; connect-src 'self' ws: http://localhost:*"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: jw-att:; font-src 'self' data:; connect-src 'self' ws: http://localhost:*"
     />
     <title>Jw 知识库</title>
   </head>

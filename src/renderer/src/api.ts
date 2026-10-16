@@ -78,11 +78,13 @@ export const api = {
 
   listNotes: (filter: ListFilter) => call<NoteListItem[]>('note:list', filter),
   getNote: (id: Id) => call<(Note & { tags: Tag[]; attachments: Attachment[] }) | null>('note:get', { id }),
-  createNote: (input: { categoryId?: Id | null; title?: string; content?: string }) =>
+  createNote: (input: { categoryId?: Id | null; title?: string; content?: string; html?: string }) =>
     call<(Note & { tags: Tag[]; attachments: Attachment[] }) | null>('note:create', input),
   saveDraft: (id: Id, title: string, content: string) => call<boolean>('note:draft', { id, title, content }),
-  saveNote: (id: Id, title: string, content: string, reason?: string) =>
-    call<{ note: Note; version: NoteVersion | null }>('note:save', { id, title, content, reason }),
+  /** 富文本编辑器走 html；传 content 就是老的 Markdown 路径 */
+  saveNote: (id: Id, title: string, body: { html?: string; content?: string }, reason?: string) =>
+    call<{ note: Note; version: NoteVersion | null }>('note:save', { id, title, ...body, reason }),
+  reorderNotes: (ids: Id[]) => call<number>('note:reorder', { ids }),
   moveNote: (id: Id, categoryId: Id | null) => call<boolean>('note:move', { id, categoryId }),
   togglePin: (id: Id) => call<boolean>('note:pin', { id }),
   trashNote: (id: Id) => call<boolean>('note:trash', { id }),

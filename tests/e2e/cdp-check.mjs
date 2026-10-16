@@ -305,6 +305,72 @@ const CHECK_SCRIPT = `(async () => {
     const remindRow = (await inv('task:list', { view: 'all' })).find((t) => t.id === withRemind);
     rec('任务能存提醒时间', !!remindRow && String(remindRow.remind_at).includes('09:30'), 'remind_at=' + (remindRow && remindRow.remind_at));
 
+    // ---- 第三版：富文本（优化项 2） ----
+    const richNote = await inv('note:create', {
+      title: '富文本自检',
+      html: '<p>第一段 <b>加粗的字</b> <mark style="background-color: #fff3b0">重点高亮</mark></p><p>第二段</p>'
+    });
+    const richId = richNote && richNote.id;
+    rec('富文本笔记能新建并带回 id', richId > 0, 'id=' + richId);
+    const richBack = await inv('note:get', { id: richId });
+    rec('富文本存进 content_html', !!richBack && String(richBack.content_html).includes('<b>加粗的字</b>'), String(richBack && richBack.content_html).slice(0, 80));
+    rec('纯文字自动从 HTML 抽出来（搜索/字数用）',
+      !!richBack && String(richBack.content).includes('第一段') && String(richBack.content).includes('重点高亮') && !String(richBack.content).includes('<p>'),
+      JSON.stringify(String(richBack && richBack.content).slice(0, 60)));
+
+    await inv('note:save', {
+      id: richId,
+      title: '富文本自检',
+      html: '<p>安全</p><script>window.__pwned = 1</scr' + 'ipt><p onclick="alert(1)">点我</p>',
+      reason: '自检'
+    });
+    const afterSave = await inv('note:get', { id: richId });
+    const savedHtml = String(afterSave && afterSave.content_html);
+    rec('保存时洗掉了 script 标签', !/<\s*script/i.test(savedHtml) && !savedHtml.includes('__pwned'), savedHtml.slice(0, 80));
+    rec('保存时洗掉了 onclick 这类事件属性', !/on[a-z]+\s*=/i.test(savedHtml), savedHtml.slice(0, 80));
+    rec('洗过之后正文还在（只删危险部分）', savedHtml.includes('安全') && savedHtml.includes('点我'), savedHtml.slice(0, 80));
+
+    const tableHtml = '<table><thead><tr><th>列一</th><th>列二</th></tr></thead><tbody><tr><td>甲</td><td>乙</td></tr></tbody></table>';
+    await inv('note:save', { id: richId, title: '富文本自检', html: tableHtml, reason: '自检' });
+    const tableBack = await inv('note:get', { id: richId });
+    rec('表格结构能原样存回来', !!tableBack && String(tableBack.content_html).includes('<th>列一</th>') && String(tableBack.content_html).includes('<td>甲</td>'), String(tableBack && tableBack.content_html).slice(0, 90));
+
+    const richVer = await inv('version:list', { noteId: richId });
+    const richVerWithHtml = (richVer || []).filter((v) => v.content_html && v.content_html.includes('<table'));
+    rec('版本点里也留了富文本（回滚不丢格式）', richVerWithHtml.length >= 1, '版本数=' + (richVer || []).length);
+
+    // ---- 第三版：正文里的图片（jw-att:// 协议） ----
+    const imgNote = await inv('note:create', { title: '图片自检', html: '<p>看图</p>' });
+    const imgAtt = await inv('attach:add-path', { noteId: imgNote.id, srcPath: __PIXEL_PATH__ });
+    const imgUrl = 'jw-att://' + String(imgAtt.rel_path).split('\\\\').join('/');
+    const imgLoad = await new Promise((resolve) => {
+      const im = new Image();
+      im.onload = () => resolve(im.naturalWidth + 'x' + im.naturalHeight);
+      im.onerror = () => resolve('ERR');
+      im.src = imgUrl;
+    });
+    rec('正文里的图片能通过 jw-att:// 显示出来', String(imgLoad) === '1x1', imgUrl + ' → ' + imgLoad);
+    await inv('note:save', { id: imgNote.id, title: '图片自检', html: '<p>看图</p><img src="' + imgUrl + '" alt="像素">' });
+    const imgBack = await inv('note:get', { id: imgNote.id });
+    rec('图片地址能存进正文', !!imgBack && String(imgBack.content_html).includes('jw-att://'), String(imgBack && imgBack.content_html).slice(0, 90));
+    rec('图片不算字数、只留 alt 文字', !!imgBack && !String(imgBack.content).includes('jw-att'), JSON.stringify(String(imgBack && imgBack.content).slice(0, 40)));
+
+    // ---- 第三版：笔记拖动排序（优化项 6） ----
+    const sortCat = await inv('category:create', { parentId: null, name: '排序自检分类' });
+    const sortA = await inv('note:create', { categoryId: sortCat, title: '排序甲', html: '<p>a</p>' });
+    const sortB = await inv('note:create', { categoryId: sortCat, title: '排序乙', html: '<p>b</p>' });
+    const sortC = await inv('note:create', { categoryId: sortCat, title: '排序丙', html: '<p>c</p>' });
+    const orderOf = (list, ids) => ids.map((id) => list.findIndex((n) => n.id === id));
+    const catList = () => inv('note:list', { categoryId: sortCat });
+    const before = await catList();
+    const moved = await inv('note:reorder', { ids: [sortC.id, sortA.id, sortB.id] });
+    rec('拖动排序写库返回条数', moved === 3, 'moved=' + moved);
+    const after = await catList();
+    const pos = orderOf(after, [sortC.id, sortA.id, sortB.id]);
+    rec('排序后列表顺序就是拖完的顺序', pos[0] === 0 && pos[1] === 1 && pos[2] === 2, '位置=' + JSON.stringify(pos) + ' 之前=' + JSON.stringify(orderOf(before, [sortA.id, sortB.id, sortC.id])));
+    const otherCatStill = await inv('note:list', { categoryId: catId });
+    rec('在某个分类里排序不影响别的分类', Array.isArray(otherCatStill) && otherCatStill.length >= 1, '别的分类=' + (otherCatStill || []).length);
+
     // ---- 设置与备份 ----
     const settings = await inv('settings:get');
     rec('设置能读', !!settings && typeof settings.theme === 'string', JSON.stringify(settings));
@@ -343,8 +409,38 @@ try {
   }
   results.push({ name: '界面挂载完成（侧栏出现）', ok: ready, detail: '' });
 
-  const dataChecks = await cdp.eval(CHECK_SCRIPT);
+  // 正文插图的协议自检需要一张真图片：先在数据目录里写一个 1×1 的 PNG
+  const pixelPath = path.join(dataDir, 'e2e-pixel.png');
+  fs.writeFileSync(
+    pixelPath,
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+      'base64'
+    )
+  );
+  const dataChecks = await cdp.eval(CHECK_SCRIPT.replace('__PIXEL_PATH__', JSON.stringify(pixelPath)));
   results.push(...dataChecks);
+
+  // 图片有没有真的被复制进数据目录的附件夹（渲染层看不到磁盘）
+  const findUnder = (dir, name) => {
+    if (!fs.existsSync(dir)) return null;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const hit = findUnder(full, name);
+        if (hit) return hit;
+      } else if (entry.name === name) {
+        return full;
+      }
+    }
+    return null;
+  };
+  const copiedPixel = findUnder(path.join(dataDir, 'attachments'), 'e2e-pixel.png');
+  results.push({
+    name: '插图真的复制进了数据目录的附件夹（原件删了也不影响）',
+    ok: !!copiedPixel && copiedPixel.startsWith(path.join(dataDir, 'attachments')),
+    detail: copiedPixel || '没在附件夹里找到 e2e-pixel.png'
+  });
 
   // 文件系统层面的结果由 Node 侧核对（渲染层看不到磁盘）
   const backupRoot = path.join(dataDir, '备份');
@@ -396,6 +492,141 @@ try {
     });
     await cdp.shot(name);
   }
+
+  // ---- 第三版：富文本编辑器的界面行为 ----
+  await cdp.eval("location.hash = '/__bounce'; true");
+  await sleep(250);
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(800);
+  const formOpen = await cdp.eval(`(() => {
+    const rows = [...document.querySelectorAll('.list-row')];
+    const row = rows.find((r) => (r.innerText || '').includes('富文本自检'));
+    if (!row) return 'no-row/' + rows.length;
+    row.click();
+    return 'clicked';
+  })()`);
+  await sleep(700);
+  const editorState = await cdp.eval(`(() => {
+    const bar = document.querySelector('.rt-toolbar');
+    const ed = document.querySelector('.rt-editor');
+    return JSON.stringify({ open: ${JSON.stringify(formOpen)}, bar: !!bar, btns: bar ? bar.querySelectorAll('button').length : 0, editable: !!ed && ed.getAttribute('contenteditable') === 'true' });
+  })()`);
+  const es = JSON.parse(String(editorState));
+  results.push({ name: '点开笔记后出现富文本工具栏', ok: es.open === 'clicked' && es.bar && es.btns >= 8, detail: String(editorState) });
+  results.push({ name: '正文区是可编辑的富文本容器', ok: es.editable === true, detail: String(editorState) });
+  await cdp.shot('knowledge-rich');
+
+  const tableInUi = await cdp.eval(`(async () => {
+    const btn = [...document.querySelectorAll('.rt-toolbar button')].find((b) => b.title === '插入表格');
+    if (!btn) return 'no-btn';
+    btn.click();
+    await new Promise((r) => setTimeout(r, 350));
+    const head = document.querySelector('.modal-head');
+    const insert = [...document.querySelectorAll('.modal-foot button')].find((b) => (b.textContent || '').trim() === '插入');
+    if (!insert) return 'no-insert:' + (head && head.textContent);
+    insert.click();
+    await new Promise((r) => setTimeout(r, 350));
+    const ed = document.querySelector('.rt-editor');
+    const hasTable = !!ed && ed.innerHTML.includes('<table');
+    // 把光标放进第一个单元格，工具栏才会亮出「＋行 / －行 / ＋列 / －列」
+    const cell = ed && ed.querySelector('td');
+    if (cell) {
+      const rng = document.createRange();
+      rng.selectNodeContents(cell);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(rng);
+      document.dispatchEvent(new Event('selectionchange'));
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    const buttons = [...document.querySelectorAll('.rt-toolbar button')].map((b) => (b.title || '') + (b.textContent || '').trim());
+    const rows = buttons.filter((t) => t.includes('行')).length;
+    const cols = buttons.filter((t) => t.includes('列')).length;
+    return (head && head.textContent) + '|table=' + hasTable + '|rowBtn=' + rows + '|colBtn=' + cols;
+  })()`);
+  results.push({
+    name: '工具栏能插入表格、光标进单元格后多出增删行列按钮',
+    ok: /table=true/.test(String(tableInUi)) && /colBtn=2/.test(String(tableInUi)) && /rowBtn=2/.test(String(tableInUi)),
+    detail: String(tableInUi)
+  });
+
+  const boldInUi = await cdp.eval(`(async () => {
+    const ed = document.querySelector('.rt-editor');
+    if (!ed) return 'no-editor';
+    ed.focus();
+    ed.innerHTML = '<p>界面自检正文</p>';
+    ed.dispatchEvent(new Event('input', { bubbles: true }));
+    const rng = document.createRange();
+    rng.selectNodeContents(ed.querySelector('p'));
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(rng);
+    const b = [...document.querySelectorAll('.rt-toolbar button')].find((x) => x.title && x.title.indexOf('加粗') === 0);
+    if (!b) return 'no-bold';
+    b.click();
+    await new Promise((r) => setTimeout(r, 250));
+    return ed.innerHTML;
+  })()`);
+  results.push({
+    name: '选中文字点「加粗」真的会加粗',
+    ok: /<(b|strong)[^>]*>界面自检正文/.test(String(boldInUi).replace(/\s+/g, '')),
+    detail: String(boldInUi).slice(0, 90)
+  });
+
+  const savedInUi = await cdp.eval(`(async () => {
+    const fab = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim().includes('保存') && !b.disabled);
+    if (!fab) return 'no-save-btn';
+    fab.click();
+    await new Promise((r) => setTimeout(r, 800));
+    return (fab.textContent || '').trim();
+  })()`);
+  results.push({ name: '编辑器上的保存按钮能用', ok: /已保存|保存/.test(String(savedInUi)), detail: String(savedInUi) });
+
+  const colorInUi = await cdp.eval(`(async () => {
+    const ed = document.querySelector('.rt-editor');
+    if (!ed) return 'no-editor';
+    const rng = document.createRange();
+    rng.selectNodeContents(ed);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(rng);
+    document.dispatchEvent(new Event('selectionchange'));
+    await new Promise((r) => setTimeout(r, 200));
+    const click = (title) => {
+      const b = [...document.querySelectorAll('.rt-toolbar button')].find((x) => x.title === title);
+      if (b) b.click();
+      return !!b;
+    };
+    click('字体颜色');
+    await new Promise((r) => setTimeout(r, 220));
+    const sw = document.querySelector('.color-pop .swatch');
+    if (!sw) return 'no-swatch';
+    sw.click();
+    await new Promise((r) => setTimeout(r, 260));
+    const afterText = ed.innerHTML;
+    click('背景高亮');
+    await new Promise((r) => setTimeout(r, 220));
+    const sw2 = document.querySelector('.color-pop .swatch');
+    if (sw2) sw2.click();
+    await new Promise((r) => setTimeout(r, 260));
+    const afterBg = ed.innerHTML;
+    const save = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '保存');
+    const saveLabel = save ? save.textContent : 'no-save';
+    if (save) save.click();
+    await new Promise((r) => setTimeout(r, 900));
+    const rows = await window.api.invoke('note:list', { q: '富文本自检' });
+    const row = (rows || []).find((n) => n.title === '富文本自检');
+    const full = row ? await window.api.invoke('note:get', { id: row.id }) : null;
+    return JSON.stringify({ afterText: afterText.slice(0, 130), afterBg: afterBg.slice(0, 170), saved: full ? String(full.content_html).slice(0, 200) : 'no-note', saveLabel });
+  })()`);
+  const cs = JSON.parse(String(colorInUi));
+  results.push({ name: '选中文字能改字体颜色', ok: /color:/i.test(String(cs.afterText)), detail: String(cs.afterText) });
+  results.push({ name: '选中文字能加背景高亮', ok: /background-color/i.test(String(cs.afterBg)), detail: String(cs.afterBg) });
+  results.push({
+    name: '颜色和高亮保存后还在库里（没被清洗规则吃掉）',
+    ok: /color:/i.test(String(cs.saved)) && /background-color/i.test(String(cs.saved)),
+    detail: String(cs.saved)
+  });
 
   // 主题切换也过一遍
   await cdp.eval("location.hash = '/settings'; true");

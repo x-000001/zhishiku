@@ -1492,3 +1492,146 @@ label.field {
   color: var(--ok);
   text-decoration: line-through;
 }
+
+/* ---------- 第三版：富文本编辑器（优化项 2 / 3） ---------- */
+
+.rt-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+
+.tb {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tb:hover {
+  background: var(--bg-hover);
+}
+
+.tb.on {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand-strong);
+}
+
+.tb-wide {
+  font-size: 12px;
+}
+
+.tb-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.tb-hint {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.tb-under {
+  display: inline-block;
+  width: 12px;
+  height: 3px;
+  margin-left: 2px;
+  border-radius: 2px;
+  background: #d1242f;
+  vertical-align: middle;
+}
+
+.color-pop {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+}
+
+.swatch:hover {
+  transform: scale(1.1);
+}
+
+.rt-editor {
+  min-height: 100%;
+  padding: 16px 20px;
+  outline: none;
+  line-height: 1.8;
+  font-size: 14.5px;
+  caret-color: var(--brand);
+  word-break: break-word;
+}
+
+.rt-editor:empty::before {
+  content: '开始写点什么…';
+  color: var(--text-faint);
+}
+
+.note-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 4px 0;
+}
+
+.note-body table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  max-width: 100%;
+}
+
+.note-body th,
+.note-body td {
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+  min-width: 44px;
+}
+
+.note-body th {
+  background: var(--bg-sunken);
+  font-weight: 600;
+}
+
+.note-body blockquote {
+  margin: 8px 0;
+  padding: 2px 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-soft);
+}
+
+.note-body p {
+  margin: 0 0 10px;
+}
+
+.note-body h1,
+.note-body h2,
+.note-body h3 {
+  margin: 14px 0 8px;
+}
+
+.note-body a {
+  color: var(--brand-strong);
+}

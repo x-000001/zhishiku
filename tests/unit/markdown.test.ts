@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diffLines, renderMarkdown } from '../../src/renderer/src/markdown';
+import { diffLines, renderMarkdown } from '../../src/shared/markdown';
 
 describe('Markdown 预览', () => {
   it('标题、粗体、行内代码能渲染成 HTML', () => {

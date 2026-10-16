@@ -8,6 +8,8 @@ import {
   todayLocal,
   type DataPaths
 } from './paths';
+import { renderMarkdown } from '../shared/markdown';
+import { htmlToPlainText, sanitizeHtml, textToHtml } from '../shared/html';
 import type {
   Attachment,
   CalendarEntry,
@@ -165,6 +167,8 @@ CREATE TABLE IF NOT EXISTS note (
   category_id   INTEGER REFERENCES category(id),
   title         TEXT NOT NULL DEFAULT '',
   content       TEXT NOT NULL DEFAULT '',
+  content_html  TEXT NOT NULL DEFAULT '',
+  sort_order    INTEGER NOT NULL DEFAULT 0,
   draft_title   TEXT,
   draft_content TEXT,
   draft_at      TEXT,
@@ -201,13 +205,14 @@ CREATE TABLE IF NOT EXISTS attachment (
 );
 
 CREATE TABLE IF NOT EXISTS note_version (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  note_id    INTEGER NOT NULL,
-  title      TEXT NOT NULL,
-  content    TEXT NOT NULL,
-  word_count INTEGER NOT NULL DEFAULT 0,
-  reason     TEXT NOT NULL DEFAULT '手动保存',
-  created_at TEXT NOT NULL
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  note_id      INTEGER NOT NULL,
+  title        TEXT NOT NULL,
+  content      TEXT NOT NULL,
+  content_html TEXT NOT NULL DEFAULT '',
+  word_count   INTEGER NOT NULL DEFAULT 0,
+  reason       TEXT NOT NULL DEFAULT '手动保存',
+  created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_version_note ON note_version(note_id, created_at DESC);
 
@@ -370,7 +375,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
 );
 `;
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 /** 给老库补列：SQLite 没有 ADD COLUMN IF NOT EXISTS，先查表结构再决定。 */
 function addColumnIfMissing(table: string, column: string, decl: string): void {
@@ -378,6 +383,58 @@ function addColumnIfMissing(table: string, column: string, decl: string): void {
   if (!cols.length) return;
   if (cols.some((c) => c.name === column)) return;
   raw(`alter table ${table} add column ${column} ${decl}`).run();
+}
+
+/** Markdown / 纯文本 → 富文本 HTML，解析失败时兜底成转义后的纯文字，绝不丢内容。 */
+function markdownToHtmlSafe(text: string): string {
+  const raw = String(text ?? '');
+  if (!raw.trim()) return '';
+  try {
+    const html = renderMarkdown(raw);
+    return html && html.trim() ? html : textToHtml(raw);
+  } catch {
+    return textToHtml(raw);
+  }
+}
+
+/**
+ * v2 → v3 迁移第一步：老笔记只有 Markdown 纯文本，转成富文本 HTML 存进 content_html。
+ * 草稿（draft_content）也一起转，否则恢复草稿时富文本编辑器拿到的是 Markdown。
+ */
+function backfillNoteHtml(): void {
+  const notes = all<{ id: Id; content: string }>(
+    "select id, content from note where content_html is null or content_html = ''"
+  );
+  for (const note of notes) {
+    run('update note set content_html = ? where id = ?', markdownToHtmlSafe(note.content), note.id);
+  }
+  const drafts = all<{ id: Id; draft_content: string }>(
+    "select id, draft_content from note where draft_content is not null and draft_content <> '' and draft_content not like '<%'"
+  );
+  for (const draft of drafts) {
+    run(
+      'update note set draft_content = ? where id = ?',
+      markdownToHtmlSafe(draft.draft_content),
+      draft.id
+    );
+  }
+}
+
+/**
+ * v2 → v3 迁移第二步：按「最近改过的排前面」给每个分类里的老笔记铺一遍 sort_order，
+ * 让升级后看到的顺序和升级前一致；之后的手动拖动才从这个顺序改起。
+ */
+function backfillNoteSort(): void {
+  const rows = all<{ id: Id; category_id: Id | null }>(
+    'select id, category_id from note order by updated_at desc, id desc'
+  );
+  const counters = new Map<string, number>();
+  for (const row of rows) {
+    const key = String(row.category_id ?? '');
+    const next = (counters.get(key) ?? 0) + 1;
+    counters.set(key, next);
+    run('update note set sort_order = ? where id = ?', next, row.id);
+  }
 }
 
 function migrate(): void {
@@ -396,6 +453,24 @@ function migrate(): void {
     addColumnIfMissing('plan', 'rhythm', "TEXT NOT NULL DEFAULT ''");
     addColumnIfMissing('plan_item', 'done_at', 'TEXT');
     addColumnIfMissing('review_card', 'lapses', 'INTEGER NOT NULL DEFAULT 0');
+  }
+  if (current < 3) {
+    // v2 → v3：笔记富文本正文（content_html）、分类内手动排序（sort_order）、
+    // 历史版本也留一份富文本。老笔记按 Markdown 转过来，顺序按「最近改过」铺一遍。
+    addColumnIfMissing('note', 'content_html', "TEXT NOT NULL DEFAULT ''");
+    addColumnIfMissing('note', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing('note_version', 'content_html', "TEXT NOT NULL DEFAULT ''");
+    // 列补齐了才能建这个索引（老库里 note 表此时还没有 sort_order）
+    database.exec('CREATE INDEX IF NOT EXISTS idx_note_sort ON note(category_id, sort_order)');
+    database.exec('BEGIN');
+    try {
+      backfillNoteHtml();
+      backfillNoteSort();
+      database.exec('COMMIT');
+    } catch (err) {
+      database.exec('ROLLBACK');
+      throw err;
+    }
   }
   if (current < SCHEMA_VERSION) {
     database.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
@@ -560,8 +635,8 @@ interface NoteRow extends Note {
 }
 
 function noteListSelect(): string {
-  return `select n.id, n.category_id, n.title, n.excerpt, n.word_count, n.is_pinned, n.updated_at,
-                 c.name as category_name
+  return `select n.id, n.category_id, n.title, n.excerpt, n.word_count, n.is_pinned, n.sort_order,
+                 n.updated_at, c.name as category_name
           from note n left join category c on c.id = n.category_id`;
 }
 
@@ -589,8 +664,9 @@ export function listNotes(filter: ListFilter = {}): NoteListItem[] {
     }
   }
   const limit = Math.min(Math.max(filter.limit ?? 500, 1), 2000);
+  // 置顶的最前，然后是手动排序（v3 起可拖动），同一位次里按改动时间兜底
   const sql = `${noteListSelect()} where ${where.join(' and ')}
-               order by n.is_pinned desc, n.updated_at desc limit ${limit}`;
+               order by n.is_pinned desc, n.sort_order asc, n.updated_at desc limit ${limit}`;
   return all<NoteListItem>(sql, ...args);
 }
 
@@ -618,16 +694,36 @@ function syncFts(id: Id, title: string, content: string): void {
   );
 }
 
-export function createNote(input: { categoryId?: Id | null; title?: string; content?: string }): Id {
+/** 分类内排到最后一名的位次（回收站里的不算）。 */
+function nextSortOrder(categoryId: Id | null): number {
+  const row = one<{ n: number | null }>(
+    'select max(sort_order) as n from note where deleted_at is null and category_id is ?',
+    categoryId
+  );
+  return Number(row?.n ?? 0) + 1;
+}
+
+export function createNote(input: {
+  categoryId?: Id | null;
+  title?: string;
+  content?: string;
+  /** 富文本正文；给了它就以它为准，content 由它抽出来 */
+  html?: string;
+}): Id {
   const now = nowIso();
   const title = input.title ?? '';
-  const content = input.content ?? '';
+  const html =
+    input.html != null ? sanitizeHtml(input.html) : markdownToHtmlSafe(input.content ?? '');
+  const content = input.html != null ? htmlToPlainText(html) : (input.content ?? '');
+  const categoryId = input.categoryId ?? null;
   const r = run(
-    `insert into note(category_id, title, content, excerpt, word_count, created_at, updated_at)
-     values(?, ?, ?, ?, ?, ?, ?)`,
-    input.categoryId ?? null,
+    `insert into note(category_id, title, content, content_html, sort_order, excerpt, word_count, created_at, updated_at)
+     values(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    categoryId,
     title,
     content,
+    html,
+    nextSortOrder(categoryId),
     makeExcerpt(content),
     countWords(content),
     now,
@@ -652,20 +748,30 @@ export function discardDraft(id: Id): void {
   run('update note set draft_title = null, draft_content = null, draft_at = null where id = ?', id);
 }
 
-/** 手动保存：写正文、清草稿，并按设置留一个版本点。 */
-export function saveNote(id: Id, title: string, content: string, reason = '手动保存'): NoteVersion | null {
-  const before = one<{ title: string; content: string; word_count: number }>(
-    'select title, content, word_count from note where id = ?',
+/**
+ * 手动保存的公共实现：正文（纯文字 + 富文本）一起写、清草稿、按设置留版本点。
+ * 纯文字那份给全文搜索和字数用，富文本那份给编辑器显示用。
+ */
+function writeNote(
+  id: Id,
+  title: string,
+  content: string,
+  contentHtml: string,
+  reason: string
+): NoteVersion | null {
+  const before = one<{ title: string; content: string; content_html: string }>(
+    'select title, content, content_html from note where id = ?',
     id
   );
   const now = nowIso();
   const wc = countWords(content);
   run(
-    `update note set title = ?, content = ?, excerpt = ?, word_count = ?, updated_at = ?,
+    `update note set title = ?, content = ?, content_html = ?, excerpt = ?, word_count = ?, updated_at = ?,
             draft_title = null, draft_content = null, draft_at = null
      where id = ?`,
     title,
     content,
+    contentHtml,
     makeExcerpt(content),
     wc,
     now,
@@ -675,21 +781,37 @@ export function saveNote(id: Id, title: string, content: string, reason = '手�
 
   const keep = Number(getSetting('versionKeep') ?? '20');
   if (keep <= 0) return null;
-  // 第一次保存、或内容确实变了，才留版本点
-  const changed = !before || before.content !== content || before.title !== title;
+  // 第一次保存、或内容确实变了（含只改颜色/加粗这种），才留版本点
+  const changed =
+    !before ||
+    before.content !== content ||
+    before.title !== title ||
+    before.content_html !== contentHtml;
   if (!changed) return null;
   const r = run(
-    `insert into note_version(note_id, title, content, word_count, reason, created_at)
-     values(?, ?, ?, ?, ?, ?)`,
+    `insert into note_version(note_id, title, content, content_html, word_count, reason, created_at)
+     values(?, ?, ?, ?, ?, ?, ?)`,
     id,
     title,
     content,
+    contentHtml,
     wc,
     reason,
     now
   );
   pruneVersions(id, keep);
   return one<NoteVersion>('select * from note_version where id = ?', r.lastInsertRowid) ?? null;
+}
+
+/** 手动保存（Markdown 路径，兼容老调用）：content 按 Markdown 转成富文本一起存。 */
+export function saveNote(id: Id, title: string, content: string, reason = '手动保存'): NoteVersion | null {
+  return writeNote(id, title, content, markdownToHtmlSafe(content), reason);
+}
+
+/** 手动保存（富文本路径）：编辑器交上来的 HTML 过一遍白名单，纯文字由它抽出来。 */
+export function saveNoteHtml(id: Id, title: string, html: string, reason = '手动保存'): NoteVersion | null {
+  const clean = sanitizeHtml(html);
+  return writeNote(id, title, htmlToPlainText(clean), clean, reason);
 }
 
 function pruneVersions(noteId: Id, keep: number): void {
@@ -717,15 +839,48 @@ export function rollbackVersion(versionId: Id): Note {
   const current = getNote(v.note_id);
   if (!current) throw new Error('笔记不存在');
   // 先把当前内容存成版本点，回滚也能反悔
-  saveNote(v.note_id, current.title, current.content, '回滚前快照');
-  saveNote(v.note_id, v.title, v.content, `回滚到 ${v.created_at.slice(0, 16).replace('T', ' ')}`);
+  saveNoteHtml(
+    v.note_id,
+    current.title,
+    current.content_html || markdownToHtmlSafe(current.content),
+    '回滚前快照'
+  );
+  const label = `回滚到 ${v.created_at.slice(0, 16).replace('T', ' ')}`;
+  if (v.content_html) {
+    saveNoteHtml(v.note_id, v.title, v.content_html, label);
+  } else {
+    saveNote(v.note_id, v.title, v.content, label);
+  }
   const after = getNote(v.note_id);
   if (!after) throw new Error('笔记不存在');
   return after;
 }
 
 export function moveNote(id: Id, categoryId: Id | null): void {
-  run('update note set category_id = ?, updated_at = ? where id = ?', categoryId, nowIso(), id);
+  // 换分类后排到新分类的最后，不抢别人位次
+  run(
+    'update note set category_id = ?, sort_order = ?, updated_at = ? where id = ?',
+    categoryId,
+    nextSortOrder(categoryId),
+    nowIso(),
+    id
+  );
+}
+
+/** 拖动排序落库：按给定顺序把位次写成 1..n。传进来的应当是当前分类的完整可见列表。 */
+export function reorderNotes(orderedIds: Id[]): number {
+  const clean = orderedIds.map((v) => Number(v)).filter((v) => Number.isFinite(v));
+  if (!clean.length) return 0;
+  const database = requireDb();
+  database.exec('BEGIN');
+  try {
+    clean.forEach((id, index) => run('update note set sort_order = ? where id = ?', index + 1, id));
+    database.exec('COMMIT');
+  } catch (err) {
+    database.exec('ROLLBACK');
+    throw err;
+  }
+  return clean.length;
 }
 
 export function togglePin(id: Id): void {

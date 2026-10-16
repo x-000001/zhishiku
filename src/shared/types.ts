@@ -18,8 +18,14 @@ export interface Note {
   id: Id;
   category_id: Id | null;
   title: string;
+  /** 纯文字正文：全文搜索、摘要、字数都吃它 */
   content: string;
+  /** 富文本正文（编辑器真正显示的那份），老笔记在迁移时由 content 转来 */
+  content_html: string;
+  /** 分类内的手动排序位（越小越靠前） */
+  sort_order: number;
   draft_title: string | null;
+  /** 草稿正文，v3 起存富文本 HTML */
   draft_content: string | null;
   draft_at: string | null;
   excerpt: string;
@@ -38,6 +44,7 @@ export interface NoteListItem {
   excerpt: string;
   word_count: number;
   is_pinned: number;
+  sort_order: number;
   updated_at: string;
 }
 
@@ -46,6 +53,7 @@ export interface NoteVersion {
   note_id: Id;
   title: string;
   content: string;
+  content_html: string;
   word_count: number;
   reason: string;
   created_at: string;

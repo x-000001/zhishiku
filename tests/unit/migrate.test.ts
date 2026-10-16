@@ -102,10 +102,47 @@ create table review_card (
   updated_at text not null,
   deleted_at text
 );
+create table note (
+  id integer primary key autoincrement,
+  category_id integer,
+  title text not null default '',
+  content text not null default '',
+  draft_title text,
+  draft_content text,
+  draft_at text,
+  excerpt text not null default '',
+  word_count integer not null default 0,
+  is_pinned integer not null default 0,
+  created_at text not null,
+  updated_at text not null,
+  deleted_at text
+);
+create table note_version (
+  id integer primary key autoincrement,
+  note_id integer not null,
+  title text not null,
+  content text not null,
+  word_count integer not null default 0,
+  reason text not null default '手动保存',
+  created_at text not null
+);
 insert into task(title, note, due_at, created_at, updated_at)
   values('老版本留下的任务', '老备注', '2026-01-02', '2026-01-01T09:00:00+08:00', '2026-01-01T09:00:00+08:00');
 insert into goal(title, created_at, updated_at)
   values('老目标', '2026-01-01T09:00:00+08:00', '2026-01-01T09:00:00+08:00');
+insert into note(category_id, title, content, created_at, updated_at)
+  values(1, '最老的笔记', '# 一级标题
+
+这是**重点**。', '2026-01-01T09:00:00+08:00', '2026-01-01T09:00:00+08:00');
+insert into note(category_id, title, content, draft_title, draft_content, draft_at, created_at, updated_at)
+  values(1, '带草稿的笔记', '普通一句话', '改过的标题', '- 草稿第一条
+- 草稿第二条', '2026-01-03T09:00:00+08:00', '2026-01-02T09:00:00+08:00', '2026-01-02T09:00:00+08:00');
+insert into note(category_id, title, content, created_at, updated_at)
+  values(1, '最新改过的笔记', '**收尾**', '2026-01-01T09:00:00+08:00', '2026-01-05T09:00:00+08:00');
+insert into note(category_id, title, content, created_at, updated_at)
+  values(2, '另一个分类的笔记', '只有这一句', '2026-01-04T09:00:00+08:00', '2026-01-04T09:00:00+08:00');
+insert into note_version(note_id, title, content, created_at)
+  values(1, '最老的笔记', '# 一级标题', '2026-01-01T09:00:00+08:00');
 pragma user_version = 1;
 `;
 
@@ -136,7 +173,31 @@ describe('老库自动升级', () => {
     expect(columnNames('review_card')).toContain('lapses');
 
     const version = db.getRawDb().prepare('pragma user_version').get() as { user_version: number };
-    expect(Number(version.user_version)).toBe(2);
+    expect(Number(version.user_version)).toBe(3);
+
+    // v3：笔记多了富文本正文和分类内排序位
+    expect(columnNames('note')).toEqual(expect.arrayContaining(['content_html', 'sort_order']));
+    expect(columnNames('note_version')).toContain('content_html');
+
+    // 老笔记的 Markdown 被转成富文本，纯文字那份原样保留
+    const oldest = db.getNote(1);
+    expect(oldest).toBeDefined();
+    expect(oldest!.content).toBe('# 一级标题\n\n这是**重点**。');
+    expect(oldest!.content_html).toContain('<h1');
+    expect(oldest!.content_html).toContain('<strong>重点</strong>');
+    expect(db.getNote(3)!.content_html).toContain('<strong>收尾</strong>');
+
+    // 草稿也从 Markdown 转成富文本，恢复草稿时编辑器才认识
+    expect(db.getNote(2)!.draft_content ?? '').toContain('<li>');
+
+    // 分类内按「最近改过的排前面」铺位次，另一个分类各算各的
+    expect(db.listNotes({ categoryId: 1 }).map((n) => n.title)).toEqual([
+      '最新改过的笔记',
+      '带草稿的笔记',
+      '最老的笔记'
+    ]);
+    expect(db.listNotes({ categoryId: 1 }).map((n) => n.sort_order)).toEqual([1, 2, 3]);
+    expect(db.listNotes({ categoryId: 2 }).map((n) => n.sort_order)).toEqual([1]);
 
     // 第二版新增的三张表都在
     for (const t of ['milestone', 'review_log', 'retrospective']) {
@@ -164,9 +225,37 @@ describe('老库自动升级', () => {
 
     db.openDatabase(paths);
     const before = columnNames('task').join(',');
+    const beforeNote = columnNames('note').join(',');
+    const htmlBefore = db.getNote(1)!.content_html;
     db.closeDatabase();
     db.openDatabase(paths);
     expect(columnNames('task').join(',')).toBe(before);
+    expect(columnNames('note').join(',')).toBe(beforeNote);
+    // 富文本不会被二次转换（转两遍会把 <h1> 转义成 &lt;h1&gt;）
+    expect(db.getNote(1)!.content_html).toBe(htmlBefore);
+    expect(db.getNote(1)!.content_html).toContain('<h1');
+    expect(db.integrityCheck()).toBe('ok');
+  });
+
+  it('第二版的库升到第三版：只补富文本与排序，已有内容不动', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'jwkb-mig3-'));
+    const paths = ensureDirs(root);
+    db.openDatabase(paths);
+    const id = db.createNote({ title: '第二版时代的笔记', content: '**老内容**' });
+    // 把它伪装成「第二版写下的笔记」：v3 的两列回到空，版本号退回 2
+    db.getRawDb().exec(`update note set content_html = '', sort_order = 0 where id = ${id}`);
+    db.getRawDb().exec('pragma user_version = 2');
+    db.closeDatabase();
+
+    db.openDatabase(paths);
+
+    const note = db.getNote(id)!;
+    expect(note.title).toBe('第二版时代的笔记');
+    expect(note.content).toBe('**老内容**');
+    expect(note.content_html).toContain('<strong>老内容</strong>');
+    expect(note.sort_order).toBeGreaterThanOrEqual(1);
+    const version = db.getRawDb().prepare('pragma user_version').get() as { user_version: number };
+    expect(Number(version.user_version)).toBe(3);
     expect(db.integrityCheck()).toBe('ok');
   });
 });

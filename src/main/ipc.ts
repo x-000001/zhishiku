@@ -99,7 +99,7 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
 
   handle('note:list', (p: ListFilter) => db.listNotes(p ?? {}));
   handle('note:get', (p: { id: Id }) => db.getNote(p.id));
-  handle('note:create', (p: { categoryId?: Id | null; title?: string; content?: string }) => {
+  handle('note:create', (p: { categoryId?: Id | null; title?: string; content?: string; html?: string }) => {
     const id = db.createNote(p ?? {});
     return db.getNote(id);
   });
@@ -107,10 +107,16 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
     db.saveDraft(p.id, p.title, p.content);
     return true;
   });
-  handle('note:save', (p: { id: Id; title: string; content: string; reason?: string }) => {
-    const version = db.saveNote(p.id, p.title, p.content, p.reason ?? '手动保存');
+  handle('note:save', (p: { id: Id; title: string; content?: string; html?: string; reason?: string }) => {
+    const reason = p.reason ?? '手动保存';
+    // 富文本编辑器交 html；老调用交 Markdown 纯文字
+    const version =
+      p.html != null
+        ? db.saveNoteHtml(p.id, p.title, p.html, reason)
+        : db.saveNote(p.id, p.title, p.content ?? '', reason);
     return { note: db.getNote(p.id), version };
   });
+  handle('note:reorder', (p: { ids: Id[] }) => db.reorderNotes(p?.ids ?? []));
   handle('note:move', (p: { id: Id; categoryId: Id | null }) => {
     db.moveNote(p.id, p.categoryId);
     return true;
