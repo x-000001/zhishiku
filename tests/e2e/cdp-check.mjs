@@ -1475,15 +1475,23 @@ try {
           const sb = document.querySelector('.sidebar');
           const lb = document.querySelector('.nav-label');
           const bt = document.querySelector('.brand-text');
+          const wl = document.querySelector('.win-lights');
+          const mk = document.querySelector('.brand-mark');
           if (!sb) return JSON.stringify({ err: 'no-sidebar' });
           const cs = lb ? getComputedStyle(lb) : null;
+          const sbBox = sb.getBoundingClientRect();
+          const wlBox = wl ? wl.getBoundingClientRect() : null;
+          const mkBox = mk ? mk.getBoundingClientRect() : null;
           return JSON.stringify({
-            w: Math.round(sb.getBoundingClientRect().width),
+            w: Math.round(sbBox.width),
             labelW: lb ? Math.round(lb.getBoundingClientRect().width) : -1,
             labelOpacity: cs ? Number(cs.opacity) : -1,
             labelText: lb ? lb.textContent : '',
             brandW: bt ? Math.round(bt.getBoundingClientRect().width) : -1,
-            lightsW: Math.round((document.querySelector('.win-lights') || { getBoundingClientRect: () => ({ width: -1 }) }).getBoundingClientRect().width)
+            lightsW: wlBox ? Math.round(wlBox.width) : -1,
+            lightsH: wlBox ? Math.round(wlBox.height) : -1,
+            markW: mkBox ? Math.round(mkBox.width) : -1,
+            markOverflow: mkBox ? Math.round(mkBox.right - sbBox.right) : 999
           });
         })()`)
       )
@@ -1543,14 +1551,32 @@ try {
   const labelWired = wiring.label.includes('max-width');
   const lightsWired = wiring.lights.includes('width');
   results.push({
-    name: '第五版：收起侧栏后宽度到位、文字收成 0 宽度（不是卸载）',
-    ok: collapsedState.w > 0 && collapsedState.w <= 64 && collapsedState.labelW <= 1 && collapsedState.labelOpacity <= 0.05 && collapsedState.lightsW <= 1 && labelStaysInDom,
-    detail: `宽 ${collapsedState.w}px 文字宽 ${collapsedState.labelW}px 透明度 ${collapsedState.labelOpacity} 三点宽 ${collapsedState.lightsW}px 文字仍在DOM=${labelStaysInDom}`
+    name: '第五版：收起侧栏后文字收成 0 宽度（不是卸载），三个点竖排留在品牌上方',
+    ok:
+      collapsedState.w > 0 &&
+      collapsedState.w <= 64 &&
+      collapsedState.labelW <= 1 &&
+      collapsedState.labelOpacity <= 0.05 &&
+      labelStaysInDom &&
+      collapsedState.lightsW >= 10 &&
+      collapsedState.lightsH >= collapsedState.lightsW + 20 &&
+      collapsedState.markW >= 24 &&
+      collapsedState.markOverflow <= 1,
+    detail: `宽 ${collapsedState.w}px 文字宽 ${collapsedState.labelW}px 透明度 ${collapsedState.labelOpacity} 三点 ${collapsedState.lightsW}×${collapsedState.lightsH}px（竖排） 图标宽 ${collapsedState.markW}px 右侧溢出 ${collapsedState.markOverflow}px 文字仍在DOM=${labelStaysInDom}`
   });
   results.push({
-    name: '第五版：展开是插值动画（侧栏宽度 / 文字宽度 / 三点都接了过渡）',
-    ok: sideWired && labelWired && lightsWired && grew && backState.w >= 200 && backState.labelW > 20 && backState.labelOpacity === 1,
-    detail: `侧栏[${wiring.side}] 文字[${wiring.label}] 三点[${wiring.lights}] 宽度轨迹 ${midFrames.slice(0, 8).join('→')} 回到 ${backState.w}px / 文字 ${backState.labelW}px`
+    name: '第五版：展开是插值动画（侧栏宽度 / 文字宽度 / 三点都接了过渡），三点回到一排',
+    ok:
+      sideWired &&
+      labelWired &&
+      lightsWired &&
+      grew &&
+      backState.w >= 200 &&
+      backState.labelW > 20 &&
+      backState.labelOpacity === 1 &&
+      backState.lightsW >= 40 &&
+      backState.lightsH <= 16,
+    detail: `侧栏[${wiring.side}] 文字[${wiring.label}] 三点[${wiring.lights}] 宽度轨迹 ${midFrames.slice(0, 8).join('→')} 回到 ${backState.w}px / 文字 ${backState.labelW}px / 三点 ${backState.lightsW}×${backState.lightsH}px`
   });
 
   const tableInUi = await cdp.eval(`(async () => {

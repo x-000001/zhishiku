@@ -3523,3 +3523,49 @@ label.field {
   }
 }
 
+/* ====================================================================
+   折叠态修正（用户反馈，2026-10-16 晚）
+   - 三个点竖排留在品牌列上方
+   - 「Jw」图标不再被切掉右半边
+   病因：折叠时把 .win-lights 收成 width:0，而 .brand 是横排 + overflow:hidden，
+        内容盒只有 24px（60 - 12×2 侧栏内边距 - 6×2 品牌内边距），
+        但 0 + 9(gap) + 28(图标) + 9(gap) 需要 46px → 图标右侧被裁。
+   治法：折叠时品牌行改竖排（三点在上、图标在下，左右内边距归零让 28px 图标放得下）；
+        三个点用 flex-wrap 在一根 12px 的宽度里自动换行成竖排，
+        宽度仍走同一条 180ms 缓停曲线，所以收起过程是「逐个换行」而不是硬切。 */
+.win-lights {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  width: 52px; /* 3 × 12 + 2 × 7 = 50，留 2px 余量保证展开时不换行 */
+  transition:
+    width 0.18s var(--smooth-ease),
+    gap 0.18s var(--smooth-ease),
+    opacity 0.12s linear,
+    margin-right 0.18s var(--smooth-ease);
+}
+
+.sidebar.collapsed .brand {
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 0 12px;
+}
+
+.sidebar.collapsed .brand-text {
+  max-height: 0;
+}
+
+.sidebar.collapsed .win-lights {
+  width: 12px;
+  gap: 5px;
+  opacity: 1;
+  margin-right: 0;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .win-lights {
+    transition: none;
+  }
+}
+
