@@ -545,6 +545,8 @@ export default function Knowledge(props: {
   };
 
   const tree = useMemo(() => buildTree(cats), [cats]);
+  /** 工具栏「新建子分类」用：只有当前选中的是一个真分类时才能建子分类 */
+  const selectedCat = useMemo(() => (typeof sel === 'number' ? cats.find((c) => c.id === sel) ?? null : null), [cats, sel]);
   const catName = useMemo(() => {
     if (sel === 'all') return '全部笔记';
     if (sel === 'unassigned') return '未分类';
@@ -562,6 +564,23 @@ export default function Knowledge(props: {
           <span className="muted" style={{ flex: 1, fontSize: 12 }}>
             分类
           </span>
+          <button
+            type="button"
+            className="icon-btn wide cat-child-btn"
+            title={
+              selectedCat
+                ? `在「${selectedCat.name}」下新建子分类`
+                : '新建子分类：先在下面点一个分类，再点这里'
+            }
+            disabled={!selectedCat}
+            onClick={() => {
+              if (!selectedCat) return;
+              setAddingCat(false);
+              setPromptFor({ kind: 'child', cat: selectedCat, value: '' });
+            }}
+          >
+            ＋子分类
+          </button>
           <button type="button" className="icon-btn" title="新建分类" onClick={() => setAddingCat((v) => !v)}>
             ＋
           </button>

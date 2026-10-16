@@ -40,7 +40,7 @@ PASS  排序是紧急在前、重要居中、一般在后  —  位置=1,2,3
 PASS  按「紧急」筛选只剩紧急  —  紧急=1 命中=1
 PASS  后端会把老式数字优先级归一成三档文字  —  urgent
 PASS  首页数据能读  —  today=2026-10-16 待办=0
-PASS  首页统计了收集箱与最近笔记  —  待整理=1 最近笔记=3
+PASS  首页统计了收集箱与最近笔记  —  待整理=0 最近笔记=3
 PASS  首页包含复习提醒结构  —  复习卡=0
 PASS  首页包含目标进度结构  —  目标=0
 PASS  preload 暴露了取真实路径的 pathForFile  —  function
@@ -100,10 +100,10 @@ PASS  删父分类后子分类上提一级，没有跟着一起没  —  tmpSub.
 PASS  分类能上移，顺序真的换了  —  ["工作","学习","生活","项目","资料收藏","排序自检分类","待删子分类"] → ["工作","学习","生活","项目","资料收藏","待删子分类","排序自检分类"]
 PASS  设置能读  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","versionKeep":20,"theme":"light","notifyEnabled":true,"closeToTray":true}
 PASS  设置能改并持久化  —  versionKeep=5
-PASS  手动备份成功  —  手动_2026-10-16_164106
+PASS  手动备份成功  —  手动_2026-10-16_171915
 PASS  备份列表可读  —  备份数=2
 PASS  插图真的复制进了数据目录的附件夹（原件删了也不影响）  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments\2026-10\e2e-pixel.png
-PASS  备份目录里有快照且含 kb.db  —  2026-10-16_164106, 手动_2026-10-16_164106
+PASS  备份目录里有快照且含 kb.db  —  2026-10-16_171915, 手动_2026-10-16_171915
 PASS  数据库文件落在数据目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.db
 PASS  附件目录已建好  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments
 PASS  页面 / 有实际内容  —  今日待办
@@ -135,13 +135,14 @@ PASS  页面 /inbox 有实际内容  —  随手记一条
 
 快捷键 Ctrl+Alt+Space 可以在任何地方呼出小窗口快速记录，存好自动进这里。
 
-待处理 · 1 条
-逐条清理
+待处理 · 0 条
 💡 0
-📖 1
+📖 0
 🧹 0
-待处
+待处理
+已处理
 PASS  页面 /knowledge 有实际内容  —  分类
+＋子分类
 ＋
 🗂
 全部笔记
@@ -166,8 +167,7 @@ PASS  页面 /knowledge 有实际内容  —  分类
 🗑
 回收站
 ＋
-全部笔记 · 9 篇
-🏷
+全部笔记 · 9
 PASS  页面 /tasks 有实际内容  —  视图
 ☀️
 今天
@@ -286,6 +286,9 @@ PASS  列表上方有「拖动卡片可以调顺序」的提示  —  true
 PASS  每个分类行上都有「上移 / 下移」按钮  —  上移=8 下移=8
 PASS  非空分类点删除会提示「请先移动或删除笔记」，分类还在  —  clicked | 提示=该分类下还有笔记，请先移动或删除笔记 | 还在=true
 PASS  点「上移」之后分类真的往上挪了一位  —  ["工作 (1)","学习","生活","项目","资料收藏","待删子分类","排序自检分类 (3)","排序子分类"] → ["学习","工作 (1)","生活","项目","资料收藏","待删子分类","排序自检分类 (3)","排序子分类"]
+PASS  分类工具栏里有「＋子分类」按钮，没选具体分类时是禁用的  —  {"disabled":true,"text":"＋子分类","title":"新建子分类：先在下面点一个分类，再点这里"}
+PASS  选中一个分类后「＋子分类」能点了，提示里带着这个分类的名字  —  clicked | {"disabled":false,"title":"在「排序自检分类」下新建子分类"}
+PASS  工具栏建的子分类挂对了父分类，并且立刻出现在树上  —  弹窗=在「排序自检分类」下新建子分类 | 输入=工具栏子分类 | parent_id=6 期望=6 | 界面上=true
 PASS  点开笔记后出现富文本工具栏  —  {"open":"clicked","bar":true,"btns":9,"editable":true}
 PASS  正文区是可编辑的富文本容器  —  {"open":"clicked","bar":true,"btns":9,"editable":true}
 PASS  工具栏能插入表格、光标进单元格后多出增删行列按钮  —  插入表格✕|table=true|rowBtn=2|colBtn=2
@@ -298,11 +301,11 @@ PASS  深色主题能切换  —  dark|
 PASS  笔记编辑页有「保存」按钮  —  clicked/保存
 PASS  目标编辑页有「保存」按钮  —  保存
 PASS  任务详情抽屉里有「保存」按钮  —  保存
-PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 16:41:38
-PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 16:41:39
+PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 17:19:49
+PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 17:19:51
 PASS  浅色主题能切回  —  light
 PASS  CSP 已收紧（打包版不联网）  —  default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: jw-att:; font-src 'self' data:; connect-src 'self'
 ------------------------------------------------
-合计 146 项，通过 146，失败 0
+合计 149 项，通过 149，失败 0
 截图目录：C:\Users\29785\Desktop\Jw的app\tests\e2e\shots
 应用进程：exit=null signal=SIGTERM

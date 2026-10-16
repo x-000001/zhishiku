@@ -352,6 +352,24 @@ select {
   color: var(--text);
 }
 
+/* 带文字的图标按钮（分类工具栏的「＋子分类」） */
+.icon-btn.wide {
+  width: auto;
+  padding: 0 7px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.icon-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-faint);
+}
+
 input[type='text'],
 input[type='search'],
 input[type='date'],

@@ -804,6 +804,106 @@ try {
     ok: beforeIdx > 0 && afterIdx === beforeIdx - 1,
     detail: JSON.stringify(upInfo.before) + ' → ' + JSON.stringify(treeOrder)
   });
+  // ---- 分类工具栏的「＋子分类」（第三版补：不用悬停也能建子分类） ----
+  await cdp.eval(`(() => {
+    const row = [...document.querySelectorAll('.tree-item')].find((el) => (el.innerText || '').includes('全部笔记'));
+    if (row) row.click();
+    return true;
+  })()`);
+  await sleep(500);
+  const childBtnOff = await cdp.eval(`(() => {
+    const btn = document.querySelector('.cat-child-btn');
+    if (!btn) return 'no-btn';
+    return JSON.stringify({ disabled: btn.disabled, text: (btn.innerText || '').trim(), title: btn.title });
+  })()`);
+  const childBtnOffInfo = (() => {
+    try {
+      return JSON.parse(String(childBtnOff));
+    } catch {
+      return {};
+    }
+  })();
+  results.push({
+    name: '分类工具栏里有「＋子分类」按钮，没选具体分类时是禁用的',
+    ok: childBtnOffInfo.disabled === true && String(childBtnOffInfo.text).includes('子分类'),
+    detail: String(childBtnOff)
+  });
+
+  const childBtnPick = await cdp.eval(`(() => {
+    const row = [...document.querySelectorAll('.tree-item')].find((el) => (el.innerText || '').includes('排序自检分类'));
+    if (!row) return 'no-row';
+    row.click();
+    return 'clicked';
+  })()`);
+  await sleep(600);
+  const childBtnState = await cdp.eval(`(() => {
+    const btn = document.querySelector('.cat-child-btn');
+    if (!btn) return 'no-btn';
+    return JSON.stringify({ disabled: btn.disabled, title: btn.title });
+  })()`);
+  const childBtnStateInfo = (() => {
+    try {
+      return JSON.parse(String(childBtnState));
+    } catch {
+      return {};
+    }
+  })();
+  results.push({
+    name: '选中一个分类后「＋子分类」能点了，提示里带着这个分类的名字',
+    ok:
+      childBtnPick === 'clicked' &&
+      childBtnStateInfo.disabled === false &&
+      String(childBtnStateInfo.title).includes('排序自检分类'),
+    detail: childBtnPick + ' | ' + String(childBtnState)
+  });
+
+  await cdp.eval("(() => { const b = document.querySelector('.cat-child-btn'); if (b) b.click(); return true; })()");
+  await sleep(400);
+  const childModal = await cdp.eval(`(() => {
+    const modal = document.querySelector('.modal');
+    if (!modal) return 'no-modal';
+    return (modal.querySelector('.modal-head span') || {}).innerText || '';
+  })()`);
+  const childTyped = await cdp.eval(`(() => {
+    const input = document.querySelector('.modal-body input.input');
+    if (!input) return 'no-input';
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, '工具栏子分类');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return input.value;
+  })()`);
+  await sleep(200);
+  await cdp.eval("(() => { const b = document.querySelector('.modal-foot button.btn.primary'); if (b) b.click(); return true; })()");
+  await sleep(800);
+  const treeRaw = await cdp.eval("(async () => JSON.stringify(await window.api.invoke('category:tree')))()");
+  const treeAfterToolbar = JSON.parse(String(treeRaw));
+  const toolbarParent = treeAfterToolbar.find((c) => c.name === '排序自检分类') || null;
+  const toolbarChild = treeAfterToolbar.find((c) => c.name === '工具栏子分类') || null;
+  const toolbarChildVisible = await cdp.eval(
+    "(() => [...document.querySelectorAll('.tree-item')].some((el) => (el.innerText || '').includes('工具栏子分类')))()"
+  );
+  results.push({
+    name: '工具栏建的子分类挂对了父分类，并且立刻出现在树上',
+    ok:
+      String(childModal).includes('新建子分类') &&
+      childTyped === '工具栏子分类' &&
+      !!toolbarChild &&
+      !!toolbarParent &&
+      toolbarChild.parent_id === toolbarParent.id &&
+      toolbarChildVisible === true,
+    detail:
+      '弹窗=' +
+      String(childModal) +
+      ' | 输入=' +
+      String(childTyped) +
+      ' | parent_id=' +
+      JSON.stringify(toolbarChild ? toolbarChild.parent_id : null) +
+      ' 期望=' +
+      JSON.stringify(toolbarParent ? toolbarParent.id : null) +
+      ' | 界面上=' +
+      toolbarChildVisible
+  });
+
   await cdp.shot('knowledge-category-tree');
 
   // ---- 第三版：富文本编辑器的界面行为 ----
