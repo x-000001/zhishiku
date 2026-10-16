@@ -1788,6 +1788,121 @@ try {
   });
   await cdp.shot('goals-milestone-timeline');
 
+  // ---- 第五版（阶段7）：搜索面板与 Toast 毛玻璃 ----
+  await cdp.eval("location.hash = '/'; true");
+  await sleep(700);
+
+  // ① 搜索框一聚焦，面板就从搜索框长出来 + 毛玻璃
+  await cdp.eval("(() => { const i = document.querySelector('.searchbox input'); if (i) i.focus(); return true; })()");
+  await sleep(420);
+  const palette = await cdp.eval(`(() => {
+    const m = document.querySelector('.modal.search-modal');
+    if (!m) return { found: false };
+    const cs = getComputedStyle(m);
+    const parts = cs.transformOrigin.split(' ');
+    return {
+      found: true,
+      anim: cs.animationName,
+      ox: parseFloat(parts[0]),
+      oy: parseFloat(parts[1]),
+      backdrop: cs.backdropFilter || cs.webkitBackdropFilter || 'none',
+      bg: cs.backgroundColor
+    };
+  })()`);
+  await cdp.shot('search-palette');
+  results.push({
+    name: '第五版：搜索框一聚焦，面板就从搜索框方向展开且是毛玻璃',
+    ok:
+      palette.found === true &&
+      palette.anim === 'jw-palette-in' &&
+      palette.ox > 0 &&
+      palette.oy < 0 &&
+      /rgba\(/.test(String(palette.bg)) &&
+      /blur/.test(String(palette.backdrop)),
+    detail:
+      '动画=' + palette.anim + ' origin=' + palette.ox + 'px ' + palette.oy + 'px 底色=' + palette.bg + ' backdrop=' + palette.backdrop
+  });
+
+  // ② 搜出命中行 → 悬停浮起
+  await cdp.eval(`(() => {
+    const inp = document.querySelector('.search-modal input');
+    if (!inp) return 'no-input';
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(inp, '自检');
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    return 'ok';
+  })()`);
+  await sleep(900);
+  const hitBox = await cdp.eval(`(() => {
+    const rows = [...document.querySelectorAll('.search-modal .list-row')];
+    if (rows.length === 0) return { found: false, count: 0 };
+    const r = rows[0].getBoundingClientRect();
+    return { found: true, count: rows.length, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`);
+  let hitHover = {};
+  for (let i = 0; i < 4; i++) {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 4, y: 4, buttons: 0 });
+    await sleep(60);
+    if (hitBox.found) {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hitBox.x, y: hitBox.y, buttons: 0 });
+    }
+    await sleep(280);
+    hitHover = await cdp.eval(`(() => {
+      const row = document.querySelector('.search-modal .list-row');
+      if (!row) return {};
+      const cs = getComputedStyle(row);
+      const m = new DOMMatrixReadOnly(cs.transform === 'none' ? '' : cs.transform);
+      return { ty: m.m42, shadow: cs.boxShadow, hovered: row.matches(':hover') };
+    })()`);
+    if (Number(hitHover.ty) <= -0.5) break;
+  }
+  results.push({
+    name: '第五版：搜索命中行悬停浮起（上移 1px + 投影）',
+    ok: hitBox.found === true && hitBox.count > 0 && Number(hitHover.ty) <= -0.5 && String(hitHover.shadow) !== 'none',
+    detail:
+      '命中=' + hitBox.count + ' 行 translateY=' + hitHover.ty + ' 悬停=' + hitHover.hovered + ' 投影=' + String(hitHover.shadow).slice(0, 40)
+  });
+
+  // 关掉搜索面板
+  await cdp.eval("(() => { const b = document.querySelector('.modal-head .icon-btn'); if (b) b.click(); return true; })()");
+  await sleep(400);
+
+  // ③ Toast 从右侧滑入 + 弹跳
+  await cdp.eval(
+    "(() => { const b = [...document.querySelectorAll('.topbar button')].find((x) => (x.textContent || '').includes('快速记录')); if (b) b.click(); return true; })()"
+  );
+  const readToast = `(() => {
+    const t = [...document.querySelectorAll('.toast-wrap .toast')].pop();
+    const wrap = document.querySelector('.toast-wrap');
+    if (!t || !wrap) return { found: false };
+    const cs = getComputedStyle(t);
+    const ws = getComputedStyle(wrap);
+    const m = new DOMMatrixReadOnly(cs.transform === 'none' ? '' : cs.transform);
+    return { found: true, anim: cs.animationName, tx: m.m41, ease: cs.animationTimingFunction, right: ws.right, backdrop: cs.backdropFilter };
+  })()`;
+  let toastIn = { found: false, tx: 0 };
+  for (let i = 0; i < 8; i++) {
+    await sleep(45);
+    toastIn = await cdp.eval(readToast);
+    if (toastIn.found && Number(toastIn.tx) > 1) break;
+  }
+  results.push({
+    name: '第五版：Toast 从右侧滑入，用带回弹的曲线',
+    ok: toastIn.found === true && toastIn.anim === 'jw-toast-in' && Number(toastIn.tx) > 1 && /cubic-bezier/.test(String(toastIn.ease)),
+    detail: '动画=' + toastIn.anim + ' 滑入位移=' + toastIn.tx + ' 曲线=' + toastIn.ease
+  });
+  results.push({
+    name: '第五版：Toast 挂在右下角（贴右 20px）',
+    ok: String(toastIn.right) === '20px',
+    detail: 'right=' + toastIn.right + ' backdrop=' + toastIn.backdrop
+  });
+  // 再点一次，等它落位后补一张截图（落位 = 420ms 动画走完）
+  await cdp.eval(
+    "(() => { const b = [...document.querySelectorAll('.topbar button')].find((x) => (x.textContent || '').includes('快速记录')); if (b) b.click(); return true; })()"
+  );
+  await sleep(520);
+  await cdp.shot('toast-right');
+
   // 任务：先点开一行，抽屉里才有保存按钮
   await cdp.eval("location.hash = '/tasks'; true");
   await sleep(700);

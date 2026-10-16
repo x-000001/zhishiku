@@ -3415,3 +3415,111 @@ label.field {
   }
 }
 
+/* ====================================================================
+   第五版（阶段7）：搜索面板与 Toast 毛玻璃
+   - 搜索面板从搜索框长出来（transform-origin 对准右上角搜索框）
+   - 命中行悬停浮起
+   - Toast 从右侧滑入 + 弹跳
+   ==================================================================== */
+
+.modal-backdrop {
+  animation: jw-fade-in 180ms var(--smooth-ease) both;
+}
+
+@keyframes jw-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 搜索面板：毛玻璃 + 从搜索框方向展开 */
+.modal.search-modal {
+  background: var(--glass-bg);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-color: var(--glass-border);
+  transform-origin: calc(100% - 140px) -28px;
+  animation: jw-palette-in 240ms var(--smooth-ease) both;
+}
+
+@keyframes jw-palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.search-modal .modal-head {
+  border-bottom: 1px solid var(--glass-border);
+}
+
+/* 命中行：悬停浮起 */
+.search-modal .modal-body .list-row {
+  border-radius: 10px;
+  transition:
+    transform 0.18s var(--smooth-ease),
+    box-shadow 0.18s var(--smooth-ease),
+    background 0.18s var(--smooth-ease);
+}
+
+.search-modal .modal-body .list-row:hover {
+  background: color-mix(in srgb, var(--bg-panel) 62%, transparent);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+}
+
+/* Toast：右下角，从右侧滑入 + 弹跳 */
+.toast-wrap {
+  left: auto;
+  right: 20px;
+  transform: none;
+  align-items: flex-end;
+}
+
+.toast {
+  animation: jw-toast-in 420ms var(--spring-ease) both;
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  background: color-mix(in srgb, #1c1d22 84%, transparent);
+}
+
+[data-theme='dark'] .toast {
+  background: color-mix(in srgb, #26282f 86%, transparent);
+}
+
+@keyframes jw-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(120%) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 窄窗口：Toast 回到居中，别贴着边（阶段9 细调断点） */
+@media (max-width: 768px) {
+  .toast-wrap {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    align-items: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop,
+  .modal.search-modal,
+  .toast {
+    animation: none;
+  }
+}
+

@@ -84,6 +84,8 @@ export function Modal(props: {
   children: ReactNode;
   footer?: ReactNode;
   width?: number;
+  /** 第五版：给弹窗挂一个变体类名（比如全局搜索的 search-modal），只用来加外观 */
+  variant?: string;
 }): ReactNode {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -95,7 +97,7 @@ export function Modal(props: {
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
-      <div className="modal" style={props.width ? { width: props.width } : undefined}>
+      <div className={props.variant ? 'modal ' + props.variant : 'modal'} style={props.width ? { width: props.width } : undefined}>
         <div className="modal-head">
           <span>{props.title}</span>
           <span className="spacer" style={{ flex: 1 }} />

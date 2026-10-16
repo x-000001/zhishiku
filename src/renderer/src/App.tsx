@@ -174,7 +174,7 @@ export default function App(): ReactNode {
           <div className="spacer" />
           <div className="searchbox" onClick={() => setSearchOpen(true)}>
             <span>🔍</span>
-            <input placeholder="搜索笔记（Ctrl+K）" readOnly />
+            <input placeholder="搜索笔记（Ctrl+K）" readOnly onFocus={() => setSearchOpen(true)} />
             <kbd>Ctrl K</kbd>
           </div>
           <button
@@ -249,7 +249,7 @@ function SearchModal({ onClose, openNote }: { onClose: () => void; openNote: (id
   }, [q]);
 
   return (
-    <Modal title="全局搜索" onClose={onClose} width={640}>
+    <Modal title="全局搜索" variant="search-modal" onClose={onClose} width={640}>
       <div className="row" style={{ marginBottom: 12 }}>
         <input
           ref={inputRef}
