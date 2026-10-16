@@ -88,8 +88,9 @@ export interface Task {
   title: string;
   note: string;
   status: TaskStatus;
-  priority: number; // 1 低 / 2 中 / 3 高
+  priority: number; // 0 无 / 1 低 / 2 中 / 3 高
   due_at: string | null; // YYYY-MM-DD 或 YYYY-MM-DD HH:mm（本地时间）
+  remind_at: string | null; // 提醒时间，同样是本地时间串
   repeat_rule: RepeatRule;
   goal_id: Id | null;
   plan_id: Id | null;
@@ -125,8 +126,195 @@ export interface DashboardData {
   doneTodayCount: number;
   inboxCount: number;
   reviewDue: { id: Id; note_id: Id | null; front: string; next_review_at: string }[];
+  reviewDueCount: number;
+  todayPlan: CalendarEntry[];
   goals: { id: Id; title: string; progress: number; target_date: string | null }[];
   recentNotes: NoteListItem[];
+}
+
+/* ---------------- 第二版：目标 ---------------- */
+
+export type GoalStatus = 'active' | 'done' | 'archived';
+
+export interface Goal {
+  id: Id;
+  title: string;
+  description: string;
+  status: GoalStatus;
+  target_date: string | null;
+  started_at: string | null;
+  archived_at: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface GoalSummary extends Goal {
+  /** 0–100，关键结果完成度与关联任务完成率的平均值 */
+  progress: number;
+  kr_count: number;
+  milestone_count: number;
+  task_count: number;
+}
+
+export interface KeyResult {
+  id: Id;
+  goal_id: Id;
+  title: string;
+  target_value: number;
+  current_value: number;
+  unit: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Milestone {
+  id: Id;
+  goal_id: Id;
+  title: string;
+  target_date: string | null;
+  done: number;
+  done_at: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GoalDetail {
+  goal: GoalSummary;
+  keyResults: KeyResult[];
+  milestones: Milestone[];
+  tasks: Task[];
+}
+
+/* ---------------- 第二版：下一阶段目标 ---------------- */
+
+export type GoalHorizon = 'this' | 'next' | 'later';
+export type PoolStatus = 'pool' | 'ready' | 'started' | 'dropped';
+
+export interface GoalPoolItem {
+  id: Id;
+  title: string;
+  description: string;
+  why: string;
+  start_condition: string;
+  status: PoolStatus;
+  priority: number;
+  horizon: GoalHorizon;
+  est_start: string | null;
+  goal_id: Id | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/* ---------------- 第二版：学习计划 ---------------- */
+
+export type PlanStatus = 'active' | 'paused' | 'done';
+
+export interface Plan {
+  id: Id;
+  title: string;
+  direction: string;
+  rhythm: string;
+  start_date: string | null;
+  end_date: string | null;
+  status: PlanStatus;
+  goal_id: Id | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface PlanSummary extends Plan {
+  goal_title: string | null;
+  item_count: number;
+  done_count: number;
+}
+
+export interface PlanItem {
+  id: Id;
+  plan_id: Id;
+  date: string | null;
+  title: string;
+  minutes: number;
+  done: number;
+  done_at: string | null;
+  note_id: Id | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlanDetail {
+  plan: PlanSummary;
+  items: PlanItem[];
+}
+
+/** 日历视图用：计划条目 + 所属计划名。 */
+export interface CalendarEntry {
+  id: Id;
+  plan_id: Id;
+  plan_title: string;
+  date: string | null;
+  title: string;
+  minutes: number;
+  done: number;
+  done_at: string | null;
+}
+
+/* ---------------- 第二版：复习与复盘 ---------------- */
+
+export type ReviewGrade = 'forgot' | 'fuzzy' | 'know';
+export type ReviewSource = 'note' | 'wrong' | 'hard';
+
+export interface ReviewCard {
+  id: Id;
+  note_id: Id | null;
+  front: string;
+  back: string;
+  source: ReviewSource;
+  ease_level: number;
+  interval_days: number;
+  next_review_at: string | null;
+  review_count: number;
+  lapses: number;
+  last_reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface ReviewLog {
+  id: Id;
+  card_id: Id;
+  reviewed_at: string;
+  result: ReviewGrade;
+  interval_before: number;
+  interval_after: number;
+  ease_before: number;
+  ease_after: number;
+}
+
+export type RetroType = 'day' | 'week' | 'month';
+
+export interface Retrospective {
+  id: Id;
+  type: RetroType;
+  date: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 复盘页顶部那排数字，按复盘周期统计。 */
+export interface RetroStats {
+  tasksDone: number;
+  notesWritten: number;
+  reviewsDone: number;
+  planItemsDone: number;
+  planItemsTotal: number;
 }
 
 export interface AppSettings {
@@ -168,6 +356,8 @@ export interface AppInfo {
 export interface KbApi {
   invoke<T = unknown>(channel: string, payload?: unknown): Promise<T>;
   on(channel: string, listener: (payload: unknown) => void): () => void;
+  /** 拖进来的文件换绝对路径（Electron 32+ 没有 file.path 了）。 */
+  pathForFile(file: File): string;
 }
 
 declare global {

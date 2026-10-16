@@ -6,10 +6,20 @@ import * as backup from './backup';
 import type { DataPaths } from './paths';
 import type {
   AppSettings,
+  Goal,
+  GoalHorizon,
+  GoalPoolItem,
   Id,
   InboxKind,
   InboxStatus,
+  KeyResult,
   ListFilter,
+  Milestone,
+  Plan,
+  PlanItem,
+  RetroType,
+  ReviewGrade,
+  ReviewSource,
   Task,
   TaskFilter
 } from '../shared/types';
@@ -160,6 +170,12 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
     db.deleteAttachment(p.id);
     return true;
   });
+  /** 拖拽进来的文件：渲染层拿得到绝对路径，直接复制进附件目录。 */
+  handle('attach:add-path', (p: { noteId: Id | null; srcPath: string }) => {
+    if (!p?.srcPath) throw new Error('没有取到文件路径');
+    if (!fs.existsSync(p.srcPath)) throw new Error('找不到这个文件：' + p.srcPath);
+    return db.addAttachment(p.noteId, p.srcPath, path.basename(p.srcPath));
+  });
 
   /* ---------------- 收集箱 ---------------- */
 
@@ -209,9 +225,9 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
         });
         ref = `task:${id}`;
       } else if (p.target === 'goal') {
-        ref = `goal:${db.createGoalFromInbox(title)}`;
+        ref = `goal:${db.createGoal({ title })}`;
       } else {
-        ref = `plan:${db.createPlanFromInbox(title)}`;
+        ref = `plan:${db.createPlan({ title })}`;
       }
       db.setInboxStatus(p.id, 'processed', ref);
       return { ref };
@@ -236,6 +252,133 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
   /* ---------------- 首页 ---------------- */
 
   handle('dash:overview', () => db.dashboard());
+
+  /* ---------------- 当前目标（第二版） ---------------- */
+
+  handle('goal:list', (p: { includeArchived?: boolean }) => db.listGoals(p?.includeArchived ?? false));
+  handle('goal:get', (p: { id: Id }) => db.getGoalDetail(p.id));
+  handle('goal:create', (p: { title: string; description?: string; target_date?: string | null }) =>
+    db.createGoal(p)
+  );
+  handle('goal:update', (p: { id: Id; patch: Partial<Goal> }) => {
+    db.updateGoal(p.id, p.patch);
+    return true;
+  });
+  handle('goal:delete', (p: { id: Id }) => {
+    db.deleteGoal(p.id);
+    return true;
+  });
+  handle('goal:active-count', () => db.activeGoalCount());
+
+  handle('kr:list', (p: { goalId: Id }) => db.listKeyResults(p.goalId));
+  handle('kr:create', (p: { goalId: Id } & Parameters<typeof db.createKeyResult>[1]) =>
+    db.createKeyResult(p.goalId, p)
+  );
+  handle('kr:update', (p: { id: Id; patch: Partial<KeyResult> }) => {
+    db.updateKeyResult(p.id, p.patch);
+    return true;
+  });
+  handle('kr:delete', (p: { id: Id }) => {
+    db.deleteKeyResult(p.id);
+    return true;
+  });
+
+  handle('milestone:list', (p: { goalId: Id }) => db.listMilestones(p.goalId));
+  handle('milestone:create', (p: { goalId: Id; title: string; target_date?: string | null }) =>
+    db.createMilestone(p.goalId, p)
+  );
+  handle('milestone:update', (p: { id: Id; patch: Partial<Milestone> }) => {
+    db.updateMilestone(p.id, p.patch);
+    return true;
+  });
+  handle('milestone:toggle', (p: { id: Id; done?: boolean }) => {
+    db.toggleMilestone(p.id, p.done);
+    return true;
+  });
+  handle('milestone:delete', (p: { id: Id }) => {
+    db.deleteMilestone(p.id);
+    return true;
+  });
+
+  /* ---------------- 下一阶段目标（第二版） ---------------- */
+
+  handle('pool:list', (p: { horizon?: GoalHorizon }) => db.listGoalPool(p?.horizon));
+  handle('pool:create', (p: Parameters<typeof db.createPoolItem>[0]) => db.createPoolItem(p));
+  handle('pool:update', (p: { id: Id; patch: Partial<GoalPoolItem> }) => {
+    db.updatePoolItem(p.id, p.patch);
+    return true;
+  });
+  handle('pool:delete', (p: { id: Id }) => {
+    db.deletePoolItem(p.id);
+    return true;
+  });
+  handle('pool:start', (p: { id: Id }) => db.startPoolItem(p.id));
+
+  /* ---------------- 学习计划（第二版） ---------------- */
+
+  handle('plan:list', (p: { includeArchived?: boolean }) => db.listPlans(p?.includeArchived ?? false));
+  handle('plan:get', (p: { id: Id }) => db.getPlanDetail(p.id));
+  handle('plan:create', (p: Parameters<typeof db.createPlan>[0]) => db.createPlan(p));
+  handle('plan:update', (p: { id: Id; patch: Partial<Plan> }) => {
+    db.updatePlan(p.id, p.patch);
+    return true;
+  });
+  handle('plan:delete', (p: { id: Id }) => {
+    db.deletePlan(p.id);
+    return true;
+  });
+  handle('plan-item:list', (p: { planId: Id }) => db.listPlanItems(p.planId));
+  handle('plan-item:create', (p: { planId: Id } & Parameters<typeof db.createPlanItem>[1]) =>
+    db.createPlanItem(p.planId, p)
+  );
+  handle('plan-item:update', (p: { id: Id; patch: Partial<PlanItem> }) => {
+    db.updatePlanItem(p.id, p.patch);
+    return true;
+  });
+  handle('plan-item:toggle', (p: { id: Id; done?: boolean }) => {
+    db.togglePlanItem(p.id, p.done);
+    return true;
+  });
+  handle('plan-item:delete', (p: { id: Id }) => {
+    db.deletePlanItem(p.id);
+    return true;
+  });
+  handle('plan:calendar', (p: { from: string; to: string }) => db.calendarEntries(p.from, p.to));
+
+  /* ---------------- 复习与复盘（第二版） ---------------- */
+
+  handle('review:list', (p: { due?: boolean; source?: ReviewSource; limit?: number }) =>
+    db.listReviewCards(p ?? {})
+  );
+  handle('review:due', () => db.dueReviewCards());
+  handle('review:stats', () => db.reviewStats());
+  handle('review:create', (p: Parameters<typeof db.createReviewCard>[0]) => db.createReviewCard(p));
+  handle('review:from-note', (p: { noteId: Id }) => db.createCardFromNote(p.noteId));
+  handle('review:update', (p: { id: Id; patch: Partial<Parameters<typeof db.createReviewCard>[0]> }) => {
+    db.updateReviewCard(p.id, p.patch);
+    return true;
+  });
+  handle('review:delete', (p: { id: Id }) => {
+    db.deleteReviewCard(p.id);
+    return true;
+  });
+  handle('review:grade', (p: { id: Id; grade: ReviewGrade }) => db.gradeReviewCard(p.id, p.grade));
+  handle('review:logs', (p: { cardId: Id }) => db.reviewLogs(p.cardId));
+
+  handle('retro:list', (p: { type?: RetroType }) => db.listRetrospectives(p?.type));
+  handle('retro:get', (p: { type: RetroType; date: string }) => db.getRetrospective(p.type, p.date));
+  handle('retro:save', (p: { type: RetroType; date: string; content: string }) =>
+    db.saveRetrospective(p.type, p.date, p.content)
+  );
+  handle('retro:delete', (p: { id: Id }) => {
+    db.deleteRetrospective(p.id);
+    return true;
+  });
+  handle('retro:period', (p: { type: 'week' | 'month'; date?: string }) => {
+    const base = p?.date ? new Date(`${p.date}T12:00:00`) : new Date();
+    return db.periodRange(p.type, base);
+  });
+  handle('retro:stats', (p: { from: string; to: string }) => db.periodStats(p.from, p.to));
 
   /* ---------------- 备份与恢复 ---------------- */
 

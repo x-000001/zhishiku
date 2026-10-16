@@ -152,7 +152,7 @@ check('打包版主页渲染出内容', typeof report.bodyText === 'string' && r
 await cdp.shot('packaged-home');
 
 // 再走一遍各页面，确认打包版的资源路径（图标、字体、css）都没丢
-for (const route of ['/inbox', '/knowledge', '/tasks', '/settings']) {
+for (const route of ['/inbox', '/knowledge', '/tasks', '/plans', '/goals', '/next', '/review', '/settings']) {
   await cdp.eval(`location.hash = '#${route}'; true`);
   await sleep(900);
   const text = await cdp.eval('document.body.innerText.slice(0, 120)');

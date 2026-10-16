@@ -10,16 +10,35 @@ import {
 } from './paths';
 import type {
   Attachment,
+  CalendarEntry,
   Category,
   DashboardData,
+  Goal,
+  GoalDetail,
+  GoalHorizon,
+  GoalPoolItem,
+  GoalStatus,
+  GoalSummary,
   Id,
   InboxItem,
   InboxKind,
+  KeyResult,
   ListFilter,
+  Milestone,
   Note,
   NoteListItem,
   NoteVersion,
+  Plan,
+  PlanDetail,
+  PlanItem,
+  PlanSummary,
   RepeatRule,
+  Retrospective,
+  RetroType,
+  ReviewCard,
+  ReviewGrade,
+  ReviewLog,
+  ReviewSource,
   SearchHit,
   Tag,
   Task,
@@ -210,6 +229,7 @@ CREATE TABLE IF NOT EXISTS task (
   status       TEXT NOT NULL DEFAULT 'todo',
   priority     INTEGER NOT NULL DEFAULT 2,
   due_at       TEXT,
+  remind_at    TEXT,
   repeat_rule  TEXT NOT NULL DEFAULT 'none',
   goal_id      INTEGER REFERENCES goal(id),
   plan_id      INTEGER REFERENCES plan(id),
@@ -254,6 +274,10 @@ CREATE TABLE IF NOT EXISTS goal_pool (
   why             TEXT NOT NULL DEFAULT '',
   start_condition TEXT NOT NULL DEFAULT '',
   status          TEXT NOT NULL DEFAULT 'pool',
+  priority        INTEGER NOT NULL DEFAULT 2,
+  horizon         TEXT NOT NULL DEFAULT 'later',
+  est_start       TEXT,
+  goal_id         INTEGER REFERENCES goal(id),
   sort_order      INTEGER NOT NULL DEFAULT 0,
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
@@ -263,6 +287,7 @@ CREATE TABLE IF NOT EXISTS plan (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   title      TEXT NOT NULL,
   direction  TEXT NOT NULL DEFAULT '',
+  rhythm     TEXT NOT NULL DEFAULT '',
   start_date TEXT,
   end_date   TEXT,
   status     TEXT NOT NULL DEFAULT 'active',
@@ -279,10 +304,12 @@ CREATE TABLE IF NOT EXISTS plan_item (
   title      TEXT NOT NULL,
   minutes    INTEGER NOT NULL DEFAULT 0,
   done       INTEGER NOT NULL DEFAULT 0,
+  done_at    TEXT,
   note_id    INTEGER REFERENCES note(id),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_plan_item_date ON plan_item(date, done);
 
 CREATE TABLE IF NOT EXISTS review_card (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -294,11 +321,47 @@ CREATE TABLE IF NOT EXISTS review_card (
   interval_days   INTEGER NOT NULL DEFAULT 0,
   next_review_at  TEXT,
   review_count    INTEGER NOT NULL DEFAULT 0,
+  lapses          INTEGER NOT NULL DEFAULT 0,
   last_reviewed_at TEXT,
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL,
   deleted_at      TEXT
 );
+
+CREATE TABLE IF NOT EXISTS milestone (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  goal_id     INTEGER NOT NULL REFERENCES goal(id),
+  title       TEXT NOT NULL,
+  target_date TEXT,
+  done        INTEGER NOT NULL DEFAULT 0,
+  done_at     TEXT,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_milestone_goal ON milestone(goal_id, sort_order);
+
+CREATE TABLE IF NOT EXISTS review_log (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  card_id         INTEGER NOT NULL REFERENCES review_card(id),
+  reviewed_at     TEXT NOT NULL,
+  result          TEXT NOT NULL,
+  interval_before INTEGER NOT NULL DEFAULT 0,
+  interval_after  INTEGER NOT NULL DEFAULT 0,
+  ease_before     INTEGER NOT NULL DEFAULT 0,
+  ease_after      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_review_log_card ON review_log(card_id, reviewed_at DESC);
+
+CREATE TABLE IF NOT EXISTS retrospective (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  type       TEXT NOT NULL,
+  date       TEXT NOT NULL,
+  content    TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_retro_type_date ON retrospective(type, date);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
   title,
@@ -307,13 +370,33 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
 );
 `;
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+
+/** 给老库补列：SQLite 没有 ADD COLUMN IF NOT EXISTS，先查表结构再决定。 */
+function addColumnIfMissing(table: string, column: string, decl: string): void {
+  const cols = all<{ name: string }>(`PRAGMA table_info(${table})`);
+  if (!cols.length) return;
+  if (cols.some((c) => c.name === column)) return;
+  raw(`alter table ${table} add column ${column} ${decl}`).run();
+}
 
 function migrate(): void {
   const database = requireDb();
   database.exec(SCHEMA);
   const row = one<{ user_version: number }>('PRAGMA user_version');
   const current = Number(row?.user_version ?? 0);
+  if (current < 2) {
+    // v1 → v2：任务提醒时间、目标池的优先级/路线图/启动后关联、学习计划节奏、
+    // 计划条目完成时间、复习卡的遗忘次数。
+    addColumnIfMissing('task', 'remind_at', 'TEXT');
+    addColumnIfMissing('goal_pool', 'priority', 'INTEGER NOT NULL DEFAULT 2');
+    addColumnIfMissing('goal_pool', 'horizon', "TEXT NOT NULL DEFAULT 'later'");
+    addColumnIfMissing('goal_pool', 'est_start', 'TEXT');
+    addColumnIfMissing('goal_pool', 'goal_id', 'INTEGER');
+    addColumnIfMissing('plan', 'rhythm', "TEXT NOT NULL DEFAULT ''");
+    addColumnIfMissing('plan_item', 'done_at', 'TEXT');
+    addColumnIfMissing('review_card', 'lapses', 'INTEGER NOT NULL DEFAULT 0');
+  }
   if (current < SCHEMA_VERSION) {
     database.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
@@ -962,14 +1045,15 @@ export function taskCounts(): Record<'today' | 'overdue' | 'upcoming' | 'all' | 
 export function createTask(input: Partial<Task> & { title: string }): Id {
   const now = nowIso();
   const r = run(
-    `insert into task(title, note, status, priority, due_at, repeat_rule, goal_id, plan_id,
+    `insert into task(title, note, status, priority, due_at, remind_at, repeat_rule, goal_id, plan_id,
                       sort_order, created_at, updated_at)
-     values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.title.trim(),
     input.note ?? '',
     input.status ?? 'todo',
     input.priority ?? 2,
     input.due_at ?? null,
+    input.remind_at ?? null,
     input.repeat_rule ?? 'none',
     input.goal_id ?? null,
     input.plan_id ?? null,
@@ -989,6 +1073,7 @@ export function updateTask(id: Id, patch: Partial<Task>): void {
     'status',
     'priority',
     'due_at',
+    'remind_at',
     'repeat_rule',
     'goal_id',
     'plan_id'
@@ -1085,14 +1170,25 @@ export function deleteTask(id: Id): void {
   run('update task set deleted_at = ? where id = ?', nowIso(), id);
 }
 
-/** 到期与逾期通知的数据来源。 */
+/** 本地「YYYY-MM-DD HH:mm」，只用来和 remind_at 做字符串比较。 */
+export function nowLocalMinute(d = new Date()): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 到期与逾期通知的数据来源：提醒时间到了，或者截止日到了（含逾期）。 */
 export function dueTasksForNotice(): Task[] {
   const today = todayLocal();
+  const nowMinute = nowLocalMinute();
   return all<Task>(
     `select * from task
-     where deleted_at is null and status = 'todo' and due_at is not null
-       and substr(due_at, 1, 10) <= ?
-     order by substr(due_at, 1, 10) asc, priority desc`,
+     where deleted_at is null and status = 'todo'
+       and (
+         (remind_at is not null and remind_at <> '' and remind_at <= ?)
+         or (due_at is not null and substr(due_at, 1, 10) <= ?)
+       )
+     order by substr(coalesce(remind_at, due_at), 1, 16) asc, priority desc`,
+    nowMinute,
     today
   ).map((r) => toTask(r, today));
 }
@@ -1132,25 +1228,36 @@ export function createPlanFromInbox(title: string, direction = ''): Id {
 }
 
 export function goalProgress(goalId: Id): number {
-  const row = one<{ cur: number; tar: number; c: number }>(
+  // 进度 = 可用维度的平均值：关键结果完成度 + 关联任务完成率；
+  // 两者都没有时，退到里程碑完成率；都没有就是 0。
+  const kr = one<{ cur: number; tar: number; c: number }>(
     `select sum(current_value) as cur, sum(target_value) as tar, count(*) as c
      from goal_key_result where goal_id = ?`,
     goalId
   );
-  const count = Number(row?.c ?? 0);
-  if (!count) {
-    const tasks = one<{ total: number; done: number }>(
-      `select count(*) as total, sum(case when status = 'done' then 1 else 0 end) as done
-       from task where goal_id = ? and deleted_at is null`,
-      goalId
-    );
-    const total = Number(tasks?.total ?? 0);
-    if (!total) return 0;
-    return Math.round((Number(tasks?.done ?? 0) / total) * 100);
+  const krCount = Number(kr?.c ?? 0);
+  const tasks = one<{ total: number; done: number }>(
+    `select count(*) as total, sum(case when status = 'done' then 1 else 0 end) as done
+     from task where goal_id = ? and deleted_at is null`,
+    goalId
+  );
+  const taskTotal = Number(tasks?.total ?? 0);
+  const ms = one<{ total: number; done: number }>(
+    `select count(*) as total, sum(done) as done from milestone where goal_id = ?`,
+    goalId
+  );
+  const msTotal = Number(ms?.total ?? 0);
+
+  const parts: number[] = [];
+  if (krCount > 0) {
+    const tar = Number(kr?.tar ?? 0);
+    parts.push(tar > 0 ? Math.min(1, Number(kr?.cur ?? 0) / tar) : 0);
   }
-  const tar = Number(row?.tar ?? 0);
-  if (tar <= 0) return 0;
-  return Math.min(100, Math.round((Number(row?.cur ?? 0) / tar) * 100));
+  if (taskTotal > 0) parts.push(Number(tasks?.done ?? 0) / taskTotal);
+  if (parts.length === 0 && msTotal > 0) parts.push(Number(ms?.done ?? 0) / msTotal);
+  if (parts.length === 0) return 0;
+  const avg = parts.reduce((a, b) => a + b, 0) / parts.length;
+  return Math.max(0, Math.min(100, Math.round(avg * 100)));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1197,6 +1304,14 @@ export function dashboard(): DashboardData {
   );
 
   const recentNotes = listNotes({ limit: 6 });
+  const todayPlan = calendarEntries(today, today);
+  const reviewDueCount = Number(
+    one<{ c: number }>(
+      `select count(*) as c from review_card
+       where deleted_at is null and next_review_at is not null and substr(next_review_at, 1, 10) <= ?`,
+      today
+    )?.c ?? 0
+  );
 
   return {
     today,
@@ -1205,7 +1320,813 @@ export function dashboard(): DashboardData {
     doneTodayCount,
     inboxCount: inboxOpenCount(),
     reviewDue,
+    reviewDueCount,
+    todayPlan,
     goals: goalRows.map((g) => ({ ...g, progress: goalProgress(g.id) })),
     recentNotes
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 第二版：当前目标（关键结果 / 里程碑）                                */
+/* ------------------------------------------------------------------ */
+
+/** 当前目标最多 3 个（PRD 4 / 5.6：不允许无限堆积）。 */
+export const MAX_ACTIVE_GOALS = 3;
+
+function goalSummary(g: Goal): GoalSummary {
+  const krCount = Number(
+    one<{ c: number }>('select count(*) as c from goal_key_result where goal_id = ?', g.id)?.c ?? 0
+  );
+  const msCount = Number(
+    one<{ c: number }>('select count(*) as c from milestone where goal_id = ?', g.id)?.c ?? 0
+  );
+  const taskCount = Number(
+    one<{ c: number }>(
+      'select count(*) as c from task where goal_id = ? and deleted_at is null',
+      g.id
+    )?.c ?? 0
+  );
+  return {
+    ...g,
+    progress: goalProgress(g.id),
+    kr_count: krCount,
+    milestone_count: msCount,
+    task_count: taskCount
+  };
+}
+
+export function activeGoalCount(): number {
+  return Number(
+    one<{ c: number }>(
+      "select count(*) as c from goal where deleted_at is null and status = 'active'"
+    )?.c ?? 0
+  );
+}
+
+export function listGoals(includeArchived = false): GoalSummary[] {
+  const rows = all<Goal>(
+    `select * from goal
+     where deleted_at is null ${includeArchived ? '' : "and status = 'active'"}
+     order by case status when 'active' then 0 when 'done' then 1 else 2 end, sort_order, id`
+  );
+  return rows.map(goalSummary);
+}
+
+export function getGoalDetail(goalId: Id): GoalDetail | null {
+  const g = one<Goal>('select * from goal where id = ? and deleted_at is null', goalId);
+  if (!g) return null;
+  return {
+    goal: goalSummary(g),
+    keyResults: listKeyResults(goalId),
+    milestones: listMilestones(goalId),
+    tasks: listTasks({ goalId, limit: 200 })
+  };
+}
+
+export function createGoal(input: {
+  title: string;
+  description?: string;
+  target_date?: string | null;
+  status?: GoalStatus;
+}): Id {
+  const title = input.title.trim();
+  if (!title) throw new Error('目标名称不能为空');
+  const status: GoalStatus = input.status ?? 'active';
+  if (status === 'active' && activeGoalCount() >= MAX_ACTIVE_GOALS) {
+    throw new Error(`当前目标最多 ${MAX_ACTIVE_GOALS} 个，先完成或归档一个再新建`);
+  }
+  const now = nowIso();
+  const nextOrder =
+    Number(one<{ m: number }>('select coalesce(max(sort_order), 0) + 1 as m from goal')?.m ?? 1) || 1;
+  const r = run(
+    `insert into goal(title, description, status, target_date, started_at, sort_order, created_at, updated_at)
+     values(?, ?, ?, ?, ?, ?, ?, ?)`,
+    title,
+    input.description ?? '',
+    status,
+    input.target_date ?? null,
+    status === 'active' ? todayLocal() : null,
+    nextOrder,
+    now,
+    now
+  );
+  return r.lastInsertRowid;
+}
+
+export function updateGoal(id: Id, patch: Partial<Goal>): void {
+  const fields: string[] = [];
+  const args: unknown[] = [];
+  for (const key of ['title', 'description', 'target_date', 'status', 'sort_order'] as (keyof Goal)[]) {
+    if (patch[key] !== undefined) {
+      fields.push(`${key} = ?`);
+      args.push(patch[key] as never);
+    }
+  }
+  if (fields.length) {
+    fields.push('updated_at = ?');
+    args.push(nowIso());
+    args.push(id);
+    run(`update goal set ${fields.join(', ')} where id = ?`, ...args);
+  }
+  if (patch.status === 'archived') {
+    run('update goal set archived_at = ?, updated_at = ? where id = ?', nowIso(), nowIso(), id);
+  } else if (patch.status === 'active') {
+    run('update goal set archived_at = null, updated_at = ? where id = ?', nowIso(), id);
+  }
+}
+
+/** 删除目标：任务不删只解除关联，关键结果与里程碑一并清掉（PRD 6.3）。 */
+export function deleteGoal(id: Id): void {
+  run('update task set goal_id = null where goal_id = ?', id);
+  run('update goal_pool set goal_id = null where goal_id = ?', id);
+  run('delete from goal_key_result where goal_id = ?', id);
+  run('delete from milestone where goal_id = ?', id);
+  const now = nowIso();
+  run('update goal set deleted_at = ?, updated_at = ? where id = ?', now, now, id);
+}
+
+export function listKeyResults(goalId: Id): KeyResult[] {
+  return all<KeyResult>(
+    'select * from goal_key_result where goal_id = ? order by sort_order, id',
+    goalId
+  );
+}
+
+export function createKeyResult(
+  goalId: Id,
+  input: { title: string; target_value?: number; current_value?: number; unit?: string }
+): Id {
+  const title = input.title.trim();
+  if (!title) throw new Error('关键结果不能为空');
+  const now = nowIso();
+  const nextOrder =
+    Number(
+      one<{ m: number }>(
+        'select coalesce(max(sort_order), 0) + 1 as m from goal_key_result where goal_id = ?',
+        goalId
+      )?.m ?? 1
+    ) || 1;
+  const r = run(
+    `insert into goal_key_result(goal_id, title, target_value, current_value, unit, sort_order, created_at, updated_at)
+     values(?, ?, ?, ?, ?, ?, ?, ?)`,
+    goalId,
+    title,
+    Number(input.target_value ?? 1),
+    Number(input.current_value ?? 0),
+    input.unit ?? '',
+    nextOrder,
+    now,
+    now
+  );
+  return r.lastInsertRowid;
+}
+
+export function updateKeyResult(id: Id, patch: Partial<KeyResult>): void {
+  const fields: string[] = [];
+  const args: unknown[] = [];
+  for (const key of ['title', 'target_value', 'current_value', 'unit', 'sort_order'] as (keyof KeyResult)[]) {
+    if (patch[key] !== undefined) {
+      fields.push(`${key} = ?`);
+      args.push(patch[key] as never);
+    }
+  }
+  if (!fields.length) return;
+  fields.push('updated_at = ?');
+  args.push(nowIso());
+  args.push(id);
+  run(`update goal_key_result set ${fields.join(', ')} where id = ?`, ...args);
+}
+
+export function deleteKeyResult(id: Id): void {
+  run('delete from goal_key_result where id = ?', id);
+}
+
+export function listMilestones(goalId: Id): Milestone[] {
+  return all<Milestone>('select * from milestone where goal_id = ? order by sort_order, id', goalId);
+}
+
+export function createMilestone(
+  goalId: Id,
+  input: { title: string; target_date?: string | null }
+): Id {
+  const title = input.title.trim();
+  if (!title) throw new Error('里程碑不能为空');
+  const now = nowIso();
+  const nextOrder =
+    Number(
+      one<{ m: number }>(
+        'select coalesce(max(sort_order), 0) + 1 as m from milestone where goal_id = ?',
+        goalId
+      )?.m ?? 1
+    ) || 1;
+  const r = run(
+    `insert into milestone(goal_id, title, target_date, done, sort_order, created_at, updated_at)
+     values(?, ?, ?, 0, ?, ?, ?)`,
+    goalId,
+    title,
+    input.target_date ?? null,
+    nextOrder,
+    now,
+    now
+  );
+  return r.lastInsertRowid;
+}
+
+export function updateMilestone(id: Id, patch: Partial<Milestone>): void {
+  const fields: string[] = [];
+  const args: unknown[] = [];
+  for (const key of ['title', 'target_date', 'sort_order'] as (keyof Milestone)[]) {
+    if (patch[key] !== undefined) {
+      fields.push(`${key} = ?`);
+      args.push(patch[key] as never);
+    }
+  }
+  if (!fields.length) return;
+  fields.push('updated_at = ?');
+  args.push(nowIso());
+  args.push(id);
+  run(`update milestone set ${fields.join(', ')} where id = ?`, ...args);
+}
+
+export function toggleMilestone(id: Id, done?: boolean): void {
+  const row = one<Milestone>('select * from milestone where id = ?', id);
+  if (!row) return;
+  const next = done ?? !Number(row.done);
+  run(
+    'update milestone set done = ?, done_at = ?, updated_at = ? where id = ?',
+    next ? 1 : 0,
+    next ? nowIso() : null,
+    nowIso(),
+    id
+  );
+}
+
+export function deleteMilestone(id: Id): void {
+  run('delete from milestone where id = ?', id);
+}
+
+/* ------------------------------------------------------------------ */
+/* 第二版：下一阶段目标（目标池 / 路线图 / 启动条件）                   */
+/* ------------------------------------------------------------------ */
+
+export function listGoalPool(horizon?: GoalHorizon): GoalPoolItem[] {
+  const args: unknown[] = [];
+  let where = '';
+  if (horizon) {
+    where = 'where horizon = ?';
+    args.push(horizon);
+  }
+  const rows = all<GoalPoolItem>(
+    `select * from goal_pool ${where}
+     order by case status when 'ready' then 0 when 'pool' then 1 when 'started' then 2 else 3 end,
+              case horizon when 'this' then 0 when 'next' then 1 else 2 end,
+              priority desc, id desc`,
+    ...args
+  );
+  return rows.map((r) => ({ ...r, priority: Number(r.priority) }));
+}
+
+export function createPoolItem(input: {
+  title: string;
+  why?: string;
+  start_condition?: string;
+  horizon?: GoalHorizon;
+  priority?: number;
+  est_start?: string | null;
+}): Id {
+  const title = input.title.trim();
+  if (!title) throw new Error('想法名称不能为空');
+  const now = nowIso();
+  const nextOrder =
+    Number(one<{ m: number }>('select coalesce(max(sort_order), 0) + 1 as m from goal_pool')?.m ?? 1) ||
+    1;
+  // 启动条件填了就标成「待启动」，路线图与首页据此提示。
+  const status = (input.start_condition ?? '').trim() ? 'ready' : 'pool';
+  const r = run(
+    `insert into goal_pool(title, description, why, start_condition, status, priority, horizon,
+                           est_start, sort_order, created_at, updated_at)
+     values(?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    title,
+    input.why ?? '',
+    input.start_condition ?? '',
+    status,
+    Number(input.priority ?? 2),
+    input.horizon ?? 'later',
+    input.est_start ?? null,
+    nextOrder,
+    now,
+    now
+  );
+  return r.lastInsertRowid;
+}
+
+export function updatePoolItem(id: Id, patch: Partial<GoalPoolItem>): void {
+  const fields: string[] = [];
+  const args: unknown[] = [];
+  for (const key of [
+    'title',
+    'description',
+    'why',
+    'start_condition',
+    'status',
+    'priority',
+    'horizon',
+    'est_start',
+    'goal_id',
+    'sort_order'
+  ] as (keyof GoalPoolItem)[]) {
+    if (patch[key] !== undefined) {
+      fields.push(`${key} = ?`);
+      args.push(patch[key] as never);
+    }
+  }
+  if (!fields.length) return;
+  fields.push('updated_at = ?');
+  args.push(nowIso());
+  args.push(id);
+  run(`update goal_pool set ${fields.join(', ')} where id = ?`, ...args);
+}
+
+export function deletePoolItem(id: Id): void {
+  run('delete from goal_pool where id = ?', id);
+}
+
+/** 启动条件满足 → 转成当前目标，池里留下关联（PRD 5.7）。 */
+export function startPoolItem(id: Id): { goalId: Id } {
+  const row = one<GoalPoolItem>('select * from goal_pool where id = ?', id);
+  if (!row) throw new Error('目标池里找不到这一条');
+  if (row.goal_id) throw new Error('这一条已经启动过了');
+  const goalId = createGoal({
+    title: row.title,
+    description: row.why || row.start_condition,
+    status: 'active'
+  });
+  run(
+    "update goal_pool set status = 'started', goal_id = ?, updated_at = ? where id = ?",
+    goalId,
+    nowIso(),
+    id
+  );
+  return { goalId };
+}
+
+/* ------------------------------------------------------------------ */
+/* 第二版：学习计划（周期安排 + 日历）                                  */
+/* ------------------------------------------------------------------ */
+
+function planSummary(p: Plan): PlanSummary {
+  const row = one<{ total: number; done: number }>(
+    'select count(*) as total, sum(done) as done from plan_item where plan_id = ?',
+    p.id
+  );
+  const goalTitle = p.goal_id
+    ? (one<{ title: string }>('select title from goal where id = ?', p.goal_id)?.title ?? null)
+    : null;
+  return {
+    ...p,
+    goal_title: goalTitle,
+    item_count: Number(row?.total ?? 0),
+    done_count: Number(row?.done ?? 0)
+  };
+}
+
+export function listPlans(includeArchived = false): PlanSummary[] {
+  const rows = all<Plan>(
+    `select * from plan where deleted_at is null ${includeArchived ? '' : "and status != 'done'"}
+     order by status asc, start_date is null, start_date, id`
+  );
+  return rows.map(planSummary);
+}
+
+export function getPlanDetail(planId: Id): PlanDetail | null {
+  const p = one<Plan>('select * from plan where id = ? and deleted_at is null', planId);
+  if (!p) return null;
+  return { plan: planSummary(p), items: listPlanItems(planId) };
+}
+
+export function createPlan(input: {
+  title: string;
+  direction?: string;
+  rhythm?: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  goal_id?: Id | null;
+}): Id {
+  const title = input.title.trim();
+  if (!title) throw new Error('学习方向不能为空');
+  const now = nowIso();
+  const r = run(
+    `insert into plan(title, direction, rhythm, start_date, end_date, status, goal_id, created_at, updated_at)
+     values(?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+    title,
+    input.direction ?? '',
+    input.rhythm ?? '',
+    input.start_date ?? todayLocal(),
+    input.end_date ?? null,
+    input.goal_id ?? null,
+    now,
+    now
+  );
+  return r.lastInsertRowid;
+}
+
+export function updatePlan(id: Id, patch: Partial<Plan>): void {
+  const fields: string[] = [];
+  const args: unknown[] = [];
+  for (const key of [
+    'title',
+    'direction',
+    'rhythm',
+    'start_date',
+    'end_date',
+    'status',
+    'goal_id'
+  ] as (keyof Plan)[]) {
+    if (patch[key] !== undefined) {
+      fields.push(`${key} = ?`);
+      args.push(patch[key] as never);
+    }
+  }
+  if (!fields.length) return;
+  fields.push('updated_at = ?');
+  args.push(nowIso());
+  args.push(id);
+  run(`update plan set ${fields.join(', ')} where id = ?`, ...args);
+}
+
+/** 删除学习计划：软删计划本身，条目保留（计划藏起来后就看不见了）。 */
+export function deletePlan(id: Id): void {
+  const now = nowIso();
+  run('update plan set deleted_at = ?, updated_at = ? where id = ?', now, now, id);
+}
+
+export function listPlanItems(planId: Id): PlanItem[] {
+  return all<PlanItem>(
+    `select * from plan_item where plan_id = ?
+     order by date is null, date, id`,
+    planId
+  );
+}
+
+export function createPlanItem(
+  planId: Id,
+  input: { title: string; date?: string | null; minutes?: number; note_id?: Id | null }
+): Id {
+  const title = input.title.trim();
+  if (!title) throw new Error('计划内容不能为空');
+  const now = nowIso();
+  const r = run(
+    `insert into plan_item(plan_id, date, title, minutes, done, note_id, created_at, updated_at)
+     values(?, ?, ?, ?, 0, ?, ?, ?)`,
+    planId,
+    input.date ?? null,
+    title,
+    Number(input.minutes ?? 0),
+    input.note_id ?? null,
+    now,
+    now
+  );
+  return r.lastInsertRowid;
+}
+
+export function updatePlanItem(id: Id, patch: Partial<PlanItem>): void {
+  const fields: string[] = [];
+  const args: unknown[] = [];
+  for (const key of ['date', 'title', 'minutes', 'note_id'] as (keyof PlanItem)[]) {
+    if (patch[key] !== undefined) {
+      fields.push(`${key} = ?`);
+      args.push(patch[key] as never);
+    }
+  }
+  if (!fields.length) return;
+  fields.push('updated_at = ?');
+  args.push(nowIso());
+  args.push(id);
+  run(`update plan_item set ${fields.join(', ')} where id = ?`, ...args);
+}
+
+export function togglePlanItem(id: Id, done?: boolean): void {
+  const row = one<PlanItem>('select * from plan_item where id = ?', id);
+  if (!row) return;
+  const next = done ?? !Number(row.done);
+  run(
+    'update plan_item set done = ?, done_at = ?, updated_at = ? where id = ?',
+    next ? 1 : 0,
+    next ? nowIso() : null,
+    nowIso(),
+    id
+  );
+}
+
+export function deletePlanItem(id: Id): void {
+  run('delete from plan_item where id = ?', id);
+}
+
+/** 日历视图：某段日期内的全部计划条目（含所属计划名）。 */
+export function calendarEntries(from: string, to: string): CalendarEntry[] {
+  return all<CalendarEntry>(
+    `select i.id, i.plan_id, p.title as plan_title, i.date, i.title, i.minutes, i.done, i.done_at
+     from plan_item i join plan p on p.id = i.plan_id
+     where p.deleted_at is null and i.date is not null and i.date >= ? and i.date <= ?
+     order by i.date, i.done, i.id`,
+    from,
+    to
+  ).map((r) => ({ ...r, minutes: Number(r.minutes), done: Number(r.done) }));
+}
+
+/* ------------------------------------------------------------------ */
+/* 第二版：复习与复盘（简化 SM-2 + 日/周/月复盘）                       */
+/* ------------------------------------------------------------------ */
+
+/** 三档打分对应的间隔阶梯（天）。ease_level 是阶梯下标。 */
+export const REVIEW_LADDER = [1, 2, 4, 7, 15, 30, 60, 120];
+
+export function listReviewCards(filter: { due?: boolean; source?: string; limit?: number } = {}): ReviewCard[] {
+  const where: string[] = ['deleted_at is null'];
+  const args: unknown[] = [];
+  if (filter.due) {
+    where.push('next_review_at is not null and substr(next_review_at, 1, 10) <= ?');
+    args.push(todayLocal());
+  }
+  if (filter.source) {
+    where.push('source = ?');
+    args.push(filter.source);
+  }
+  const limit = Math.min(Math.max(Number(filter.limit ?? 300) || 300, 1), 2000);
+  return all<ReviewCard>(
+    `select * from review_card where ${where.join(' and ')}
+     order by next_review_at is null, next_review_at, id
+     limit ${limit}`,
+    ...args
+  );
+}
+
+export function dueReviewCards(date = todayLocal()): ReviewCard[] {
+  return all<ReviewCard>(
+    `select * from review_card
+     where deleted_at is null and next_review_at is not null and substr(next_review_at, 1, 10) <= ?
+     order by next_review_at asc, id asc`,
+    date
+  );
+}
+
+export function createReviewCard(input: {
+  front: string;
+  back?: string;
+  note_id?: Id | null;
+  source?: ReviewSource;
+  next_review_at?: string | null;
+}): Id {
+  const front = input.front.trim();
+  if (!front) throw new Error('卡片正面不能为空');
+  const now = nowIso();
+  const r = run(
+    `insert into review_card(note_id, front, back, source, ease_level, interval_days,
+                             next_review_at, review_count, lapses, created_at, updated_at)
+     values(?, ?, ?, ?, 0, 0, ?, 0, 0, ?, ?)`,
+    input.note_id ?? null,
+    front,
+    input.back ?? '',
+    input.source ?? 'note',
+    input.next_review_at ?? todayLocal(),
+    now,
+    now
+  );
+  return r.lastInsertRowid;
+}
+
+/** 从笔记一键生成卡片：正面是标题，背面是正文开头。 */
+export function createCardFromNote(noteId: Id): Id {
+  const note = one<{ title: string; content: string }>(
+    'select title, content from note where id = ? and deleted_at is null',
+    noteId
+  );
+  if (!note) throw new Error('笔记不存在');
+  const exists = one<{ id: Id }>(
+    'select id from review_card where note_id = ? and deleted_at is null limit 1',
+    noteId
+  );
+  if (exists) return exists.id;
+  const back = note.content.replace(/\s+/g, ' ').trim().slice(0, 300);
+  return createReviewCard({
+    front: note.title || back.slice(0, 40) || '未命名笔记',
+    back,
+    note_id: noteId,
+    source: 'note'
+  });
+}
+
+export function updateReviewCard(id: Id, patch: Partial<ReviewCard>): void {
+  const fields: string[] = [];
+  const args: unknown[] = [];
+  for (const key of ['front', 'back', 'source', 'note_id', 'next_review_at'] as (keyof ReviewCard)[]) {
+    if (patch[key] !== undefined) {
+      fields.push(`${key} = ?`);
+      args.push(patch[key] as never);
+    }
+  }
+  if (!fields.length) return;
+  fields.push('updated_at = ?');
+  args.push(nowIso());
+  args.push(id);
+  run(`update review_card set ${fields.join(', ')} where id = ?`, ...args);
+}
+
+export function deleteReviewCard(id: Id): void {
+  run('update review_card set deleted_at = ?, updated_at = ? where id = ?', nowIso(), nowIso(), id);
+}
+
+function dateAfter(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return todayLocal(d);
+}
+
+/**
+ * 三档打分（忘了 / 模糊 / 记得）决定下次复习时间：
+ * - 记得：阶梯上走一格（1→2→4→7→15→30→60→120 天）
+ * - 模糊：退回一格，间隔取当前间隔的 60%（至少 1 天）
+ * - 忘了：回到起点，今天再来一次，并记一次遗忘
+ */
+export function gradeReviewCard(id: Id, grade: ReviewGrade): ReviewCard | null {
+  const row = one<ReviewCard>('select * from review_card where id = ? and deleted_at is null', id);
+  if (!row) return null;
+  const level = Math.max(0, Math.min(Number(row.ease_level) || 0, REVIEW_LADDER.length - 1));
+  const prevInterval = Number(row.interval_days) || 0;
+  let nextLevel = level;
+  let interval = prevInterval;
+
+  if (grade === 'know') {
+    // ease_level 记的是「已经答对过几次」，间隔取阶梯上对应的那一格：
+    // 第一次记得 = 1 天，第二次 = 2 天……到顶就一直停在 120 天。
+    nextLevel = Math.min(level + 1, REVIEW_LADDER.length);
+    interval = REVIEW_LADDER[nextLevel - 1];
+  } else if (grade === 'fuzzy') {
+    nextLevel = Math.max(0, level - 1);
+    interval = Math.max(1, Math.round((prevInterval || REVIEW_LADDER[level]) * 0.6));
+  } else {
+    nextLevel = 0;
+    interval = 0;
+  }
+
+  const now = nowIso();
+  const nextAt = interval > 0 ? dateAfter(interval) : todayLocal();
+  run(
+    `update review_card set ease_level = ?, interval_days = ?, next_review_at = ?,
+            review_count = review_count + 1, lapses = lapses + ?, last_reviewed_at = ?, updated_at = ?
+     where id = ?`,
+    nextLevel,
+    interval,
+    nextAt,
+    grade === 'forgot' ? 1 : 0,
+    now,
+    now,
+    id
+  );
+  run(
+    `insert into review_log(card_id, reviewed_at, result, interval_before, interval_after, ease_before, ease_after)
+     values(?, ?, ?, ?, ?, ?, ?)`,
+    id,
+    now,
+    grade,
+    prevInterval,
+    interval,
+    level,
+    nextLevel
+  );
+  return one<ReviewCard>('select * from review_card where id = ?', id) ?? null;
+}
+
+export function reviewLogs(cardId: Id, limit = 50): ReviewLog[] {
+  return all<ReviewLog>(
+    'select * from review_log where card_id = ? order by reviewed_at desc, id desc limit ?',
+    cardId,
+    Math.min(Math.max(Number(limit) || 50, 1), 500)
+  );
+}
+
+export function reviewStats(): {
+  total: number;
+  dueToday: number;
+  learned: number;
+  reviewedToday: number;
+  lapses: number;
+} {
+  const today = todayLocal();
+  const n = (sql: string, ...args: unknown[]): number =>
+    Number(one<{ c: number }>(sql, ...args)?.c ?? 0);
+  return {
+    total: n('select count(*) as c from review_card where deleted_at is null'),
+    dueToday: n(
+      `select count(*) as c from review_card where deleted_at is null
+       and next_review_at is not null and substr(next_review_at, 1, 10) <= ?`,
+      today
+    ),
+    learned: n('select count(*) as c from review_card where deleted_at is null and review_count > 0'),
+    reviewedToday: n(
+      'select count(*) as c from review_log where substr(reviewed_at, 1, 10) = ?',
+      today
+    ),
+    lapses: n('select coalesce(sum(lapses), 0) as c from review_card where deleted_at is null')
+  };
+}
+
+export function listRetrospectives(type?: RetroType): Retrospective[] {
+  if (type) {
+    return all<Retrospective>(
+      'select * from retrospective where type = ? order by date desc limit 200',
+      type
+    );
+  }
+  return all<Retrospective>('select * from retrospective order by date desc limit 200');
+}
+
+export function getRetrospective(type: RetroType, date: string): Retrospective | null {
+  return (
+    one<Retrospective>('select * from retrospective where type = ? and date = ?', type, date) ?? null
+  );
+}
+
+/** 写复盘：同一天同一类型只保留一份，再写就是覆盖。 */
+export function saveRetrospective(type: RetroType, date: string, content: string): Id {
+  const now = nowIso();
+  const exists = getRetrospective(type, date);
+  if (exists) {
+    run(
+      'update retrospective set content = ?, updated_at = ? where id = ?',
+      content,
+      now,
+      exists.id
+    );
+    return exists.id;
+  }
+  const r = run(
+    'insert into retrospective(type, date, content, created_at, updated_at) values(?, ?, ?, ?, ?)',
+    type,
+    date,
+    content,
+    now,
+    now
+  );
+  return r.lastInsertRowid;
+}
+
+export function deleteRetrospective(id: Id): void {
+  run('delete from retrospective where id = ?', id);
+}
+
+/** 复盘周期边界：本周（周一为起点）与本月。 */
+export function periodRange(type: 'week' | 'month', from = new Date()): { from: string; to: string } {
+  if (type === 'month') {
+    const first = new Date(from.getFullYear(), from.getMonth(), 1);
+    const last = new Date(from.getFullYear(), from.getMonth() + 1, 0);
+    return { from: todayLocal(first), to: todayLocal(last) };
+  }
+  const day = from.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(from.getFullYear(), from.getMonth(), from.getDate() + offset);
+  const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+  return { from: todayLocal(monday), to: todayLocal(sunday) };
+}
+
+/** 复盘页需要的「这段日期的产出」：完成的任务数、写完的笔记数、复习次数、计划完成率。 */
+export function periodStats(from: string, to: string): {
+  tasksDone: number;
+  notesWritten: number;
+  reviewsDone: number;
+  planItemsDone: number;
+  planItemsTotal: number;
+} {
+  const n = (sql: string, ...args: unknown[]): number =>
+    Number(one<{ c: number }>(sql, ...args)?.c ?? 0);
+  return {
+    tasksDone: n(
+      `select count(*) as c from task where deleted_at is null and status = 'done'
+       and completed_at is not null and substr(completed_at, 1, 10) >= ? and substr(completed_at, 1, 10) <= ?`,
+      from,
+      to
+    ),
+    notesWritten: n(
+      `select count(*) as c from note where deleted_at is null
+       and substr(updated_at, 1, 10) >= ? and substr(updated_at, 1, 10) <= ?`,
+      from,
+      to
+    ),
+    reviewsDone: n(
+      'select count(*) as c from review_log where substr(reviewed_at, 1, 10) >= ? and substr(reviewed_at, 1, 10) <= ?',
+      from,
+      to
+    ),
+    planItemsDone: n(
+      'select count(*) as c from plan_item where done = 1 and date >= ? and date <= ?',
+      from,
+      to
+    ),
+    planItemsTotal: n(
+      'select count(*) as c from plan_item where date >= ? and date <= ?',
+      from,
+      to
+    )
   };
 }

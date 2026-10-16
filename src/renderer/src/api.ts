@@ -3,16 +3,35 @@ import type {
   AppSettings,
   Attachment,
   BackupEntry,
+  CalendarEntry,
   Category,
   DashboardData,
+  Goal,
+  GoalDetail,
+  GoalHorizon,
+  GoalPoolItem,
+  GoalSummary,
   Id,
   InboxItem,
   InboxKind,
   InboxStatus,
+  KeyResult,
   ListFilter,
+  Milestone,
   Note,
   NoteListItem,
   NoteVersion,
+  Plan,
+  PlanDetail,
+  PlanItem,
+  PlanSummary,
+  RetroStats,
+  RetroType,
+  Retrospective,
+  ReviewCard,
+  ReviewGrade,
+  ReviewLog,
+  ReviewSource,
   SearchHit,
   Tag,
   Task,
@@ -32,6 +51,14 @@ function call<T>(channel: string, payload?: unknown): Promise<T> {
 /** 渲染进程用的事件通道白名单。 */
 export function onEvent(channel: 'nav:go' | 'capture:focus' | 'notice:due', listener: (payload: unknown) => void): () => void {
   return bridge.on(channel, listener);
+}
+
+/**
+ * 拖进窗口的文件换绝对路径。Electron 32 之后 File 上没有 path 了，
+ * 只能走 preload 里的 webUtils.getPathForFile。
+ */
+export function pathForFile(file: File): string {
+  return typeof bridge.pathForFile === 'function' ? bridge.pathForFile(file) : '';
 }
 
 export const api = {
@@ -74,6 +101,8 @@ export const api = {
   reindex: () => call<number>('search:reindex'),
 
   addAttachment: (noteId: Id | null) => call<Attachment[]>('attach:add', { noteId }),
+  addAttachmentPath: (noteId: Id | null, srcPath: string) =>
+    call<Attachment>('attach:add-path', { noteId, srcPath }),
   openAttachment: (id: Id, relPath: string) => call<string>('attach:open', { id, relPath }),
   deleteAttachment: (id: Id) => call<boolean>('attach:delete', { id }),
 
@@ -103,6 +132,94 @@ export const api = {
   deleteTask: (id: Id) => call<boolean>('task:delete', { id }),
 
   dashboard: () => call<DashboardData>('dash:overview'),
+
+  /* 当前目标 */
+  listGoals: (includeArchived = false) => call<GoalSummary[]>('goal:list', { includeArchived }),
+  getGoal: (id: Id) => call<GoalDetail | null>('goal:get', { id }),
+  createGoal: (input: { title: string; description?: string; target_date?: string | null }) =>
+    call<Id>('goal:create', input),
+  updateGoal: (id: Id, patch: Partial<Goal>) => call<boolean>('goal:update', { id, patch }),
+  deleteGoal: (id: Id) => call<boolean>('goal:delete', { id }),
+  activeGoalCount: () => call<number>('goal:active-count'),
+
+  listKeyResults: (goalId: Id) => call<KeyResult[]>('kr:list', { goalId }),
+  createKeyResult: (goalId: Id, input: Partial<KeyResult> & { title: string }) =>
+    call<Id>('kr:create', { goalId, ...input }),
+  updateKeyResult: (id: Id, patch: Partial<KeyResult>) => call<boolean>('kr:update', { id, patch }),
+  deleteKeyResult: (id: Id) => call<boolean>('kr:delete', { id }),
+
+  listMilestones: (goalId: Id) => call<Milestone[]>('milestone:list', { goalId }),
+  createMilestone: (goalId: Id, input: { title: string; target_date?: string | null }) =>
+    call<Id>('milestone:create', { goalId, ...input }),
+  updateMilestone: (id: Id, patch: Partial<Milestone>) => call<boolean>('milestone:update', { id, patch }),
+  toggleMilestone: (id: Id, done?: boolean) => call<boolean>('milestone:toggle', { id, done }),
+  deleteMilestone: (id: Id) => call<boolean>('milestone:delete', { id }),
+
+  /* 下一阶段目标 */
+  listPool: (horizon?: GoalHorizon) => call<GoalPoolItem[]>('pool:list', { horizon }),
+  createPool: (input: {
+    title: string;
+    description?: string;
+    why?: string;
+    start_condition?: string;
+    horizon?: GoalHorizon;
+    priority?: number;
+    est_start?: string | null;
+  }) => call<Id>('pool:create', input),
+  updatePool: (id: Id, patch: Partial<GoalPoolItem>) => call<boolean>('pool:update', { id, patch }),
+  deletePool: (id: Id) => call<boolean>('pool:delete', { id }),
+  startPool: (id: Id) => call<{ goalId: Id }>('pool:start', { id }),
+
+  /* 学习计划 */
+  listPlans: (includeArchived = false) => call<PlanSummary[]>('plan:list', { includeArchived }),
+  getPlan: (id: Id) => call<PlanDetail | null>('plan:get', { id }),
+  createPlan: (input: {
+    title: string;
+    direction?: string;
+    rhythm?: string;
+    start_date?: string | null;
+    end_date?: string | null;
+    goal_id?: Id | null;
+  }) => call<Id>('plan:create', input),
+  updatePlan: (id: Id, patch: Partial<Plan>) => call<boolean>('plan:update', { id, patch }),
+  deletePlan: (id: Id) => call<boolean>('plan:delete', { id }),
+  listPlanItems: (planId: Id) => call<PlanItem[]>('plan-item:list', { planId }),
+  createPlanItem: (planId: Id, input: { title: string; date?: string | null; minutes?: number }) =>
+    call<Id>('plan-item:create', { planId, ...input }),
+  updatePlanItem: (id: Id, patch: Partial<PlanItem>) => call<boolean>('plan-item:update', { id, patch }),
+  togglePlanItem: (id: Id, done?: boolean) => call<boolean>('plan-item:toggle', { id, done }),
+  deletePlanItem: (id: Id) => call<boolean>('plan-item:delete', { id }),
+  calendar: (from: string, to: string) => call<CalendarEntry[]>('plan:calendar', { from, to }),
+
+  /* 复习与复盘 */
+  listReview: (filter: { due?: boolean; source?: ReviewSource; limit?: number } = {}) =>
+    call<ReviewCard[]>('review:list', filter),
+  dueReview: () => call<ReviewCard[]>('review:due'),
+  reviewStats: () =>
+    call<{ total: number; dueToday: number; learned: number; reviewedToday: number; lapses: number }>(
+      'review:stats'
+    ),
+  createReview: (input: {
+    front: string;
+    back?: string;
+    note_id?: Id | null;
+    source?: ReviewSource;
+  }) => call<Id>('review:create', input),
+  reviewFromNote: (noteId: Id) => call<Id>('review:from-note', { noteId }),
+  updateReview: (id: Id, patch: Partial<ReviewCard>) => call<boolean>('review:update', { id, patch }),
+  deleteReview: (id: Id) => call<boolean>('review:delete', { id }),
+  gradeReview: (id: Id, grade: ReviewGrade) =>
+    call<ReviewCard>('review:grade', { id, grade }),
+  reviewLogs: (cardId: Id) => call<ReviewLog[]>('review:logs', { cardId }),
+
+  listRetros: (type?: RetroType) => call<Retrospective[]>('retro:list', { type }),
+  getRetro: (type: RetroType, date: string) => call<Retrospective | null>('retro:get', { type, date }),
+  saveRetro: (type: RetroType, date: string, content: string) =>
+    call<Retrospective>('retro:save', { type, date, content }),
+  deleteRetro: (id: Id) => call<boolean>('retro:delete', { id }),
+  retroPeriod: (type: 'week' | 'month', date?: string) =>
+    call<{ from: string; to: string }>('retro:period', { type, date }),
+  retroStats: (from: string, to: string) => call<RetroStats>('retro:stats', { from, to }),
 
   listBackups: () => call<BackupEntry[]>('backup:list'),
   runBackup: () => call<BackupEntry>('backup:run'),

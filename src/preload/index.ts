@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 const ALLOWED_EVENTS = new Set(['nav:go', 'capture:focus', 'notice:due']);
 
@@ -22,6 +22,17 @@ const api = {
     return () => {
       ipcRenderer.removeListener(channel, wrapped);
     };
+  },
+  /**
+   * 拖进来的文件在渲染层只能拿到 File 对象，Electron 32 之后不再有 file.path，
+   * 必须用 webUtils.getPathForFile 换成真实绝对路径，主进程才能复制它。
+   */
+  pathForFile(file: File): string {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return '';
+    }
   }
 };
 

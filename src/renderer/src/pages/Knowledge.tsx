@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import CodeMirror from '@uiw/react-codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
-import { api } from '../api';
+import { api, pathForFile } from '../api';
 import { ConfirmDialog, Empty, Modal, toast } from '../ui';
 import { fmtDate, relative } from '../format';
 import { diffLines, renderMarkdown } from '../markdown';
@@ -37,6 +37,8 @@ export default function Knowledge(props: {
   const [newCatName, setNewCatName] = useState('');
   const [addingCat, setAddingCat] = useState(false);
   const [dropTarget, setDropTarget] = useState<CatSel | null>(null);
+  /** 有文件被拖到编辑区上方时，显示一条接收提示 */
+  const [fileHover, setFileHover] = useState(false);
   const [confirmPurge, setConfirmPurge] = useState<Id | null>(null);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
   const [confirmCatDel, setConfirmCatDel] = useState<Category | null>(null);
@@ -187,6 +189,48 @@ export default function Knowledge(props: {
     },
     []
   );
+
+  /**
+   * 把拖进来的文件复制成附件。渲染层只有 File 对象，
+   * 绝对路径得让 preload 用 webUtils.getPathForFile 换出来。
+   */
+  const attachFiles = useCallback(
+    async (files: File[]) => {
+      const id = stateRef.current.id;
+      if (id == null || files.length === 0) return;
+      let ok = 0;
+      for (const file of files) {
+        const src = pathForFile(file);
+        if (!src) {
+          toast(`拿不到「${file.name}」的路径，请用「加附件」按钮选它`);
+          continue;
+        }
+        try {
+          await api.addAttachmentPath(id, src);
+          ok += 1;
+        } catch (err) {
+          toast(`「${file.name}」没加上：` + (err as Error).message);
+        }
+      }
+      if (ok > 0) {
+        toast(`已加上 ${ok} 个附件`);
+        openNote(id);
+      }
+    },
+    [openNote]
+  );
+
+  /** 一键把当前笔记变成一张复习卡（同一篇重复点不会生成第二张）。 */
+  const makeCard = async (): Promise<void> => {
+    const id = stateRef.current.id;
+    if (id == null) return;
+    try {
+      const cardId = await api.reviewFromNote(id);
+      toast(cardId ? '已经生成复习卡，去复习页就能看到' : '这篇笔记之前已经生成过卡片了');
+    } catch (err) {
+      toast('生成失败：' + (err as Error).message);
+    }
+  };
 
   const touch = (nextTitle: string, nextContent: string) => {
     setTitle(nextTitle);
@@ -639,7 +683,28 @@ export default function Knowledge(props: {
               </div>
             ) : null}
 
-            <div className="editor-body">
+            {fileHover ? <div className="drop-hint">松手就把文件存成这条笔记的附件</div> : null}
+
+            <div
+              className="editor-body"
+              onDragOver={(e) => {
+                if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                setFileHover(true);
+              }}
+              onDragLeave={(e) => {
+                if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                setFileHover(false);
+              }}
+              onDrop={(e) => {
+                const files = Array.from(e.dataTransfer.files ?? []);
+                if (files.length === 0) return;
+                e.preventDefault();
+                setFileHover(false);
+                void attachFiles(files);
+              }}
+            >
               {mode === 'edit' ? (
                 <CodeMirror
                   value={content}
@@ -684,6 +749,9 @@ export default function Knowledge(props: {
                 }}
               >
                 加附件
+              </button>
+              <button type="button" className="btn sm" title="把这篇笔记变成一张复习卡" onClick={() => void makeCard()}>
+                🔁 变复习卡
               </button>
               <span className="spacer" style={{ flex: 1 }} />
               {note.attachments.slice(0, 3).map((att) => (

@@ -211,10 +211,50 @@ export default function Dashboard(props: {
 
         <div className="card">
           <div className="card-head">
+            <h2>今日计划</h2>
+            <span className="spacer" />
+            <button type="button" className="btn ghost sm" onClick={() => props.navigate('/plans')}>
+              计划页
+            </button>
+          </div>
+          {data.todayPlan.length === 0 ? (
+            <Empty>今天还没有排计划条目。</Empty>
+          ) : (
+            <div className="list">
+              {data.todayPlan.map((item) => (
+                <div key={item.id} className="list-row">
+                  <button
+                    type="button"
+                    className={item.done ? 'check on' : 'check'}
+                    title={item.done ? '改回未完成' : '标记完成'}
+                    onClick={() => {
+                      void api
+                        .togglePlanItem(item.id, !item.done)
+                        .then(load)
+                        .catch((err: Error) => toast('操作失败：' + err.message));
+                    }}
+                  >
+                    ✓
+                  </button>
+                  <div className="grow">
+                    <div className="title">{item.title}</div>
+                    <div className="sub">
+                      {item.plan_title}
+                      {item.minutes ? ` · 预计 ${item.minutes} 分钟` : ''}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="card-head">
             <h2>复习提醒</h2>
             <span className="spacer" />
             <button type="button" className="btn ghost sm" onClick={() => props.navigate('/review')}>
-              去复习
+              {data.reviewDueCount > 0 ? `去复习（${data.reviewDueCount}）` : '去复习'}
             </button>
           </div>
           {data.reviewDue.length === 0 ? (

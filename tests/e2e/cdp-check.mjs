@@ -213,6 +213,98 @@ const CHECK_SCRIPT = `(async () => {
     rec('首页包含复习提醒结构', !!dash && Array.isArray(dash.reviewDue), '复习卡=' + (dash && dash.reviewDue.length));
     rec('首页包含目标进度结构', !!dash && Array.isArray(dash.goals), '目标=' + (dash && dash.goals.length));
 
+    // ---- 第二版：附件（拖拽走的就是这条通道） ----
+    rec('preload 暴露了取真实路径的 pathForFile', typeof window.api.pathForFile === 'function', typeof window.api.pathForFile);
+    const srcPath = info.dataRoot + String.fromCharCode(92) + 'kb.db';
+    const att = await inv('attach:add-path', { noteId: note.id, srcPath });
+    rec('按绝对路径把文件存成附件', !!att && att.file_name === 'kb.db' && !!att.rel_path, JSON.stringify(att && { f: att.file_name, r: att.rel_path }));
+    const noteWithAtt = await inv('note:get', { id: note.id });
+    const atts = (noteWithAtt && noteWithAtt.attachments) || [];
+    rec('附件挂到了这条笔记上', atts.length >= 1 && atts[0].id === att.id, '附件=' + atts.length);
+    rec('不存在的路径会被挡住', await inv('attach:add-path', { noteId: note.id, srcPath: srcPath + '.nope' }).then(() => false, () => true), 'ok');
+
+    // ---- 第二版：目标 / 关键结果 / 里程碑 ----
+    const goalId = await inv('goal:create', { title: '把知识库用起来', description: '每天记一点', target_date: '2026-12-31' });
+    rec('能建目标', typeof goalId === 'number' && goalId > 0, 'goalId=' + goalId);
+    rec('进行中目标计数', (await inv('goal:active-count')) === 1, 'activeCount=' + (await inv('goal:active-count')));
+
+    const krId = await inv('kr:create', { goalId, title: '写满 100 篇笔记', target_value: 100, current_value: 20, unit: '篇' });
+    const krs = await inv('kr:list', { goalId });
+    rec('关键结果能建能列', krs.length === 1 && krs[0].target_value === 100, 'kr=' + JSON.stringify(krs[0] && { t: krs[0].title, v: krs[0].current_value }));
+    await inv('kr:update', { id: krId, patch: { current_value: 50 } });
+    const goalAfter = await inv('goal:get', { id: goalId });
+    rec('目标进度按关键结果自动算', goalAfter && goalAfter.goal.progress >= 50 && goalAfter.goal.progress < 100, 'progress=' + (goalAfter && goalAfter.goal.progress));
+
+    const msId = await inv('milestone:create', { goalId, title: '搭好目录结构', target_date: todayStr });
+    await inv('milestone:toggle', { id: msId, done: true });
+    const detail = await inv('goal:get', { id: goalId });
+    rec('里程碑能勾能读', Array.isArray(detail.milestones) && detail.milestones.some((m) => m.id === msId && m.done === 1), '里程碑=' + (detail.milestones || []).length);
+
+    // ---- 第二版：目标池（下一阶段） ----
+    const poolId = await inv('pool:create', { title: '学 Rust 写命令行工具', why: '想自己做工具', start_condition: '当前目标做完', horizon: 'quarter', priority: 2 });
+    const poolList = await inv('pool:list', {});
+    rec('目标池能存能列', Array.isArray(poolList) && poolList.some((p) => p.id === poolId), '池子=' + (poolList || []).length);
+    const started = await inv('pool:start', { id: poolId });
+    const goalsNow = await inv('goal:list', { includeArchived: true });
+    rec('目标池能一键转成当前目标', !!started && typeof started.goalId === 'number' && goalsNow.some((g) => g.id === started.goalId), '新目标=' + (started && started.goalId));
+    const poolAfter = (await inv('pool:list', {})).find((p) => p.id === poolId);
+    rec('启动后池子条目标成已启动并挂上新目标', !!poolAfter && poolAfter.status === 'started' && poolAfter.goal_id === started.goalId, JSON.stringify(poolAfter && { s: poolAfter.status, g: poolAfter.goal_id }));
+
+    // ---- 第二版：学习计划 ----
+    const planId = await inv('plan:create', { title: '每天两小时学英语', direction: '先补口语', rhythm: '每天 2 小时', start_date: todayStr });
+    rec('能建计划', typeof planId === 'number' && planId > 0, 'planId=' + planId);
+    const itemId = await inv('plan-item:create', { planId, title: '精读一篇外刊', date: todayStr, minutes: 60 });
+    const items = await inv('plan-item:list', { planId });
+    rec('计划条目能建能列', items.length === 1 && items[0].minutes === 60, '条目=' + items.length);
+    const cal = await inv('plan:calendar', { from: todayStr, to: todayStr });
+    rec('日历能按日期取到计划条目', Array.isArray(cal) && cal.some((c) => c.id === itemId), '当天=' + (cal || []).length);
+    await inv('plan-item:toggle', { id: itemId, done: true });
+    const cal2 = await inv('plan:calendar', { from: todayStr, to: todayStr });
+    rec('勾掉计划条目后日历里标成完成', cal2.some((c) => c.id === itemId && c.done === 1), 'ok');
+    const dash2 = await inv('dash:overview');
+    rec('首页今日计划取到条目', Array.isArray(dash2.todayPlan) && dash2.todayPlan.some((c) => c.id === itemId), '今日计划=' + (dash2.todayPlan || []).length);
+
+    // ---- 第二版：复习（间隔重复） ----
+    const cardId = await inv('review:create', { front: '什么是闭包', back: '能读外部变量的函数', source: 'wrong' });
+    rec('能手动加复习卡', typeof cardId === 'number' && cardId > 0, 'cardId=' + cardId);
+    const fromNote = await inv('review:from-note', { noteId: note.id });
+    rec('笔记能一键变复习卡', typeof fromNote === 'number' && fromNote > 0, 'cardId=' + fromNote);
+    rec('同一篇笔记不会重复生成', (await inv('review:from-note', { noteId: note.id })) === fromNote, 'ok');
+
+    const graded = await inv('review:grade', { id: cardId, grade: 'know' });
+    rec('打分「记得」后间隔拉长', !!graded && graded.interval_days === 1 && graded.review_count === 1, JSON.stringify(graded && { i: graded.interval_days, c: graded.review_count, n: graded.next_review_at }));
+    const forgot = await inv('review:grade', { id: cardId, grade: 'forgot' });
+    rec('打分「忘了」后回到今天、遗忘次数加一', !!forgot && forgot.interval_days === 0 && forgot.lapses === 1 && String(forgot.next_review_at).startsWith(todayStr), JSON.stringify(forgot && { i: forgot.interval_days, l: forgot.lapses, n: forgot.next_review_at }));
+    const dueList = await inv('review:due');
+    rec('今天到期的卡能取到', Array.isArray(dueList) && dueList.some((c) => c.id === cardId), '到期=' + (dueList || []).length);
+    const dash3 = await inv('dash:overview');
+    rec('首页带复习到期数量', typeof dash3.reviewDueCount === 'number' && dash3.reviewDueCount >= 1, 'reviewDueCount=' + dash3.reviewDueCount);
+    const again = await inv('review:grade', { id: cardId, grade: 'know' });
+    rec('再记一次间隔从 1 天重新爬', !!again && again.interval_days === 1, '间隔=' + (again && again.interval_days));
+    const logs = await inv('review:logs', { cardId });
+    rec('每次打分留了日志', Array.isArray(logs) && logs.length === 3, '日志=' + (logs || []).length);
+    const rstats = await inv('review:stats');
+    rec('复习统计能读', !!rstats && rstats.total >= 2 && typeof rstats.dueToday === 'number', JSON.stringify(rstats));
+
+    // ---- 第二版：复盘 ----
+    const retroId = await inv('retro:save', { type: 'day', date: todayStr, content: '今天把第二版做完了。' });
+    rec('日复盘能存', typeof retroId === 'number' && retroId > 0, 'retroId=' + retroId);
+    const retroBack = await inv('retro:get', { type: 'day', date: todayStr });
+    rec('日复盘能读回', !!retroBack && retroBack.content.includes('第二版'), retroBack && retroBack.content);
+    const week = await inv('retro:period', { type: 'week', date: todayStr });
+    rec('周复盘算出周一到周日的范围', !!week && week.to >= week.from && (new Date(week.to + 'T12:00:00') - new Date(week.from + 'T12:00:00')) / 86400000 === 6, JSON.stringify(week));
+    const rstats2 = await inv('retro:stats', { from: week.from, to: week.to });
+    rec('复盘周期统计能算', !!rstats2 && typeof rstats2.tasksDone === 'number' && typeof rstats2.planItemsTotal === 'number', JSON.stringify(rstats2));
+    rec('复盘统计数到了勾掉的计划条目', !!rstats2 && rstats2.planItemsDone >= 1, 'planItemsDone=' + (rstats2 && rstats2.planItemsDone));
+    await inv('retro:save', { type: 'week', date: todayStr, content: '这周方向没问题。' });
+    const retroList = await inv('retro:list', { type: 'week' });
+    rec('周复盘和历史列表分开存', Array.isArray(retroList) && retroList.length === 1 && retroList[0].type === 'week', '周复盘=' + (retroList || []).length);
+
+    // ---- 第二版：任务提醒时间 ----
+    const withRemind = await inv('task:create', { title: '提醒测试', due_at: todayStr, remind_at: todayStr + ' 09:30:00', priority: 2 });
+    const remindRow = (await inv('task:list', { view: 'all' })).find((t) => t.id === withRemind);
+    rec('任务能存提醒时间', !!remindRow && String(remindRow.remind_at).includes('09:30'), 'remind_at=' + (remindRow && remindRow.remind_at));
+
     // ---- 设置与备份 ----
     const settings = await inv('settings:get');
     rec('设置能读', !!settings && typeof settings.theme === 'string', JSON.stringify(settings));

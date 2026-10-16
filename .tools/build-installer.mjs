@@ -111,6 +111,15 @@ for (const file of produced) {
   log(`安装包：${path.join(targetDir, file)}（${(fs.statSync(path.join(targetDir, file)).size / 1048576).toFixed(1)} MB）`);
 }
 
+// 6.1 绿色版目录也同步回来 —— 否则 release\win-unpacked 会一直停在上一次 npm run pack 的旧版本
+const unpackedSrc = path.join(outDir, 'win-unpacked');
+if (fs.existsSync(unpackedSrc)) {
+  const unpackedDst = path.join(targetDir, 'win-unpacked');
+  fs.rmSync(unpackedDst, { recursive: true, force: true });
+  fs.cpSync(unpackedSrc, unpackedDst, { recursive: true });
+  log(`绿色版目录：${unpackedDst}（已同步成这次构建）`);
+}
+
 // 7. 再另存一份到项目目录之外 —— 项目目录里的那份双击会安装失败，见文件头说明
 const handoffDir =
   process.env.JWKB_OUT_DIR || path.join(os.homedir(), 'Desktop', 'Jw知识库安装包');
@@ -122,6 +131,19 @@ try {
   log(`可直接运行的副本：${handoffDir}`);
 } catch (err) {
   log('另存副本失败（不影响 release\\ 里的产物）：' + err.message);
+}
+
+// 7.1 桌面上如果已经有「绿色版」文件夹，一并刷成这次构建（没有就不动）
+const greenDir =
+  process.env.JWKB_GREEN_DIR || path.join(os.homedir(), 'Desktop', 'Jw知识库（绿色版）');
+if (fs.existsSync(greenDir) && fs.existsSync(unpackedSrc)) {
+  try {
+    fs.rmSync(greenDir, { recursive: true, force: true });
+    fs.cpSync(unpackedSrc, greenDir, { recursive: true });
+    log(`绿色版已更新：${greenDir}`);
+  } catch (err) {
+    log('更新绿色版失败（请先退出正在运行的 Jw知识库，再重跑 npm run dist）：' + err.message);
+  }
 }
 
 console.log('');

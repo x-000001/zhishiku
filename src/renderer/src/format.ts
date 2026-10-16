@@ -42,8 +42,15 @@ export function relative(value: string | null | undefined): string {
   return fmtDateTime(value);
 }
 
-export const PRIORITY_LABEL: Record<number, string> = { 1: '低', 2: '中', 3: '高' };
-export const PRIORITY_ORDER: number[] = [3, 2, 1];
+/** 优先级四档：0 无、1 低、2 中、3 高（PRD 5.4）。 */
+export const PRIORITY_LABEL: Record<number, string> = { 0: '无', 1: '低', 2: '中', 3: '高' };
+export const PRIORITY_ORDER: number[] = [3, 2, 1, 0];
+
+/** 点一下换下一档，循环顺序：无 → 低 → 中 → 高 → 无。 */
+export function nextPriority(current: number): number {
+  return (Number(current || 0) + 1) % 4;
+}
+
 export const REPEAT_LABEL: Record<string, string> = {
   none: '不重复',
   daily: '每天',

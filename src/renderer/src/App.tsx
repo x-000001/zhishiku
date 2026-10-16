@@ -6,7 +6,10 @@ import Inbox from './pages/Inbox';
 import Knowledge from './pages/Knowledge';
 import Tasks from './pages/Tasks';
 import Settings from './pages/Settings';
-import Placeholder from './pages/Placeholder';
+import Goals from './pages/Goals';
+import NextGoals from './pages/NextGoals';
+import Plans from './pages/Plans';
+import Review from './pages/Review';
 import QuickCapture from './pages/QuickCapture';
 import type { SearchHit } from '../../shared/types';
 
@@ -169,39 +172,20 @@ export default function App(): ReactNode {
           {route === '/inbox' && <Inbox navigate={navigate} refreshCount={refreshCount} openNote={openNote} />}
           {route === '/knowledge' && <Knowledge openNoteId={openNoteId} clearOpenNote={() => setOpenNoteId(null)} refreshCount={refreshCount} />}
           {route === '/tasks' && <Tasks refreshCount={refreshCount} />}
-          {route === '/plans' && (
-            <Placeholder
-              icon="📅"
-              title="学习计划"
-              hint="这里用来排学习方向、周期安排和日历视图，会和目标关联。"
-              note="第一版只留入口，具体界面在第二版补上。"
-            />
-          )}
-          {route === '/goals' && (
-            <Placeholder
-              icon="🎯"
-              title="当前目标"
-              hint="目标拆成关键结果、里程碑和任务，进度自动汇总。"
-              note="第一版只留入口，首页已经能显示目标进度。"
-            />
-          )}
-          {route === '/next' && (
-            <Placeholder
-              icon="🚀"
-              title="下一阶段目标"
-              hint="放目标池、路线图和启动条件，完成后归档复盘。"
-              note="第一版只留入口，具体界面在第二版补上。"
-            />
-          )}
-          {route === '/review' && (
-            <Placeholder
-              icon="🔁"
-              title="复习与复盘"
-              hint="间隔重复、错题难点、每日每周每月复盘。"
-              note="第一版只留入口，具体界面在第二版补上。"
-            />
-          )}
+          {route === '/plans' && <Plans refreshCount={refreshCount} />}
+          {route === '/goals' && <Goals refreshCount={refreshCount} />}
+          {route === '/next' && <NextGoals refreshCount={refreshCount} navigate={navigate} />}
+          {route === '/review' && <Review />}
           {route === '/settings' && <Settings theme={theme} onTheme={setTheme} />}
+          {route !== '/' &&
+            route !== '/inbox' &&
+            route !== '/knowledge' &&
+            route !== '/tasks' &&
+            route !== '/plans' &&
+            route !== '/goals' &&
+            route !== '/next' &&
+            route !== '/review' &&
+            route !== '/settings' && <div className="empty">这个页面不存在</div>}
         </div>
       </main>
 

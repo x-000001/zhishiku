@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { Empty, toast } from '../ui';
-import { PRIORITY_LABEL, REPEAT_LABEL, fmtDate, relative, todayLocal } from '../format';
-import type { Id, Task, TaskFilter } from '../../../shared/types';
+import { PRIORITY_LABEL, REPEAT_LABEL, fmtDate, fmtDateTime, nextPriority, relative, todayLocal } from '../format';
+import type { GoalSummary, Id, Task, TaskFilter } from '../../../shared/types';
 
 const VIEWS: { key: NonNullable<TaskFilter['view']>; icon: string; label: string; hint: string }[] = [
   { key: 'today', icon: '☀️', label: '今天', hint: '今天到期，连同已经逾期的' },
@@ -227,7 +227,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
                     title={`优先级：${PRIORITY_LABEL[task.priority] ?? '中'}（点一下换一档）`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void patch(task.id, { priority: ((task.priority % 3) + 1) as number });
+                      void patch(task.id, { priority: nextPriority(task.priority) });
                     }}
                   />
                   <input
@@ -334,6 +334,11 @@ function TaskDrawer(props: {
   const [note, setNote] = useState(task.note);
   useEffect(() => setNote(task.note), [task.id, task.note]);
 
+  const [goals, setGoals] = useState<GoalSummary[]>([]);
+  useEffect(() => {
+    void api.listGoals().then(setGoals);
+  }, []);
+
   return (
     <div className="drawer">
       <div className="row">
@@ -355,6 +360,7 @@ function TaskDrawer(props: {
           <option value={3}>高</option>
           <option value={2}>中</option>
           <option value={1}>低</option>
+          <option value={0}>无</option>
         </select>
       </div>
       <div className="field">
@@ -364,6 +370,31 @@ function TaskDrawer(props: {
           value={task.due_at ? task.due_at.slice(0, 10) : ''}
           onChange={(e) => props.onPatch({ due_at: e.target.value || null })}
         />
+      </div>
+      <div className="field">
+        <label>提醒时间</label>
+        <input
+          type="datetime-local"
+          value={task.remind_at ? task.remind_at.replace(' ', 'T').slice(0, 16) : ''}
+          onChange={(e) => props.onPatch({ remind_at: e.target.value ? e.target.value.replace('T', ' ') : null })}
+        />
+        <span className="muted">
+          {task.remind_at ? `到 ${fmtDateTime(task.remind_at)} 会进首页提醒` : '留空就按截止日提醒'}
+        </span>
+      </div>
+      <div className="field">
+        <label>挂在目标</label>
+        <select
+          value={task.goal_id ?? ''}
+          onChange={(e) => props.onPatch({ goal_id: e.target.value ? Number(e.target.value) : null })}
+        >
+          <option value="">不挂</option>
+          {goals.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.title}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="field">
         <label>重复</label>
