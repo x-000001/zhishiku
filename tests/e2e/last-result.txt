@@ -100,10 +100,10 @@ PASS  删父分类后子分类上提一级，没有跟着一起没  —  tmpSub.
 PASS  分类能上移，顺序真的换了  —  ["工作","学习","生活","项目","资料收藏","排序自检分类","待删子分类"] → ["工作","学习","生活","项目","资料收藏","待删子分类","排序自检分类"]
 PASS  设置能读  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","versionKeep":20,"theme":"light","notifyEnabled":true,"closeToTray":true}
 PASS  设置能改并持久化  —  versionKeep=5
-PASS  手动备份成功  —  手动_2026-10-16_163955
+PASS  手动备份成功  —  手动_2026-10-16_164106
 PASS  备份列表可读  —  备份数=2
 PASS  插图真的复制进了数据目录的附件夹（原件删了也不影响）  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments\2026-10\e2e-pixel.png
-PASS  备份目录里有快照且含 kb.db  —  2026-10-16_163955, 手动_2026-10-16_163955
+PASS  备份目录里有快照且含 kb.db  —  2026-10-16_164106, 手动_2026-10-16_164106
 PASS  数据库文件落在数据目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.db
 PASS  附件目录已建好  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments
 PASS  页面 / 有实际内容  —  今日待办
@@ -298,8 +298,8 @@ PASS  深色主题能切换  —  dark|
 PASS  笔记编辑页有「保存」按钮  —  clicked/保存
 PASS  目标编辑页有「保存」按钮  —  保存
 PASS  任务详情抽屉里有「保存」按钮  —  保存
-PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 16:40:27
-PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 16:40:28
+PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 16:41:38
+PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 16:41:39
 PASS  浅色主题能切回  —  light
 PASS  CSP 已收紧（打包版不联网）  —  default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: jw-att:; font-src 'self' data:; connect-src 'self'
 ------------------------------------------------
