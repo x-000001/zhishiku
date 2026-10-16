@@ -1308,26 +1308,8 @@ try {
         return { sx: 1, sy: 1, err: String(raw) };
       }
     };
-    await cdp.send('Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      x: btn.x,
-      y: btn.y,
-      button: 'left',
-      buttons: 1,
-      clickCount: 1
-    });
-    await sleep(180);
-    let press = await readPress();
-    if (Number(press.sx) === 1) {
-      await cdp.send('Input.dispatchMouseEvent', {
-        type: 'mouseReleased',
-        x: 4,
-        y: 4,
-        button: 'left',
-        buttons: 0,
-        clickCount: 1
-      });
-      await sleep(160);
+    let press = { sx: 1, sy: 1 };
+    for (let attempt = 0; attempt < 4; attempt++) {
       await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: btn.x, y: btn.y, buttons: 0 });
       await sleep(120);
       await cdp.send('Input.dispatchMouseEvent', {
@@ -1338,8 +1320,19 @@ try {
         buttons: 1,
         clickCount: 1
       });
-      await sleep(200);
+      await sleep(180);
       press = await readPress();
+      if (Math.abs(Number(press.sx) - 0.97) < 0.02) break;
+      // CDP 的 mousePressed 偶尔挂不上 :active —— 松手移开再来一次
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        x: 4,
+        y: 4,
+        button: 'left',
+        buttons: 0,
+        clickCount: 1
+      });
+      await sleep(160);
     }
     // 松手丢到窗口角落，避免真的点到「保存」（这一步只验手感）
     await cdp.send('Input.dispatchMouseEvent', {
@@ -1482,6 +1475,10 @@ try {
           const sbBox = sb.getBoundingClientRect();
           const wlBox = wl ? wl.getBoundingClientRect() : null;
           const mkBox = mk ? mk.getBoundingClientRect() : null;
+          const dots = [...document.querySelectorAll('.win-light')].map((d) => {
+            const b = d.getBoundingClientRect();
+            return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width) };
+          });
           return JSON.stringify({
             w: Math.round(sbBox.width),
             labelW: lb ? Math.round(lb.getBoundingClientRect().width) : -1,
@@ -1490,6 +1487,7 @@ try {
             brandW: bt ? Math.round(bt.getBoundingClientRect().width) : -1,
             lightsW: wlBox ? Math.round(wlBox.width) : -1,
             lightsH: wlBox ? Math.round(wlBox.height) : -1,
+            dots,
             markW: mkBox ? Math.round(mkBox.width) : -1,
             markOverflow: mkBox ? Math.round(mkBox.right - sbBox.right) : 999
           });
@@ -1498,7 +1496,7 @@ try {
     );
   const expandedState = await sbRead();
   await cdp.eval(`document.querySelector('.nav-foot .icon-btn').click()`);
-  await sleep(420);
+  await sleep(680);
   const collapsedState = await sbRead();
   await cdp.shot('sidebar-collapsed');
   // 文字节点必须一直留在 DOM 里（不是「展开时才挂上」）——这就是闪烁的根因
@@ -1516,7 +1514,8 @@ try {
         return JSON.stringify({
           side: p(document.querySelector('.sidebar')),
           label: p(document.querySelector('.nav-label')),
-          lights: p(document.querySelector('.win-lights'))
+          lights: p(document.querySelector('.win-lights')),
+          dot: p(document.querySelector('.win-light'))
         });
       })()`)
     )
@@ -1549,7 +1548,21 @@ try {
   const grew = midFrames.every((w, i) => i === 0 || w >= midFrames[i - 1] - 1);
   const sideWired = wiring.side.includes('width') && wiring.side.includes('flex-basis');
   const labelWired = wiring.label.includes('max-width');
-  const lightsWired = wiring.lights.includes('width');
+  const dotsWired = wiring.dot.includes('transform');
+  // 三个点：折叠时同一列（x 相同、y 逐颗往下），展开时同一排（y 相同、x 逐颗往右）
+  const dotsColumn = (st) =>
+    Array.isArray(st.dots) &&
+    st.dots.length === 3 &&
+    st.dots.every((d) => Math.abs(d.x - st.dots[0].x) <= 2) &&
+    st.dots[1].y - st.dots[0].y >= 14 &&
+    st.dots[2].y - st.dots[1].y >= 14;
+  const dotsRow = (st) =>
+    Array.isArray(st.dots) &&
+    st.dots.length === 3 &&
+    st.dots.every((d) => Math.abs(d.y - st.dots[0].y) <= 2) &&
+    st.dots[1].x - st.dots[0].x >= 14 &&
+    st.dots[2].x - st.dots[1].x >= 14;
+  const dotsText = (st) => (st.dots || []).map((d) => `(${d.x},${d.y})`).join(' ');
   results.push({
     name: '第五版：收起侧栏后文字收成 0 宽度（不是卸载），三个点竖排留在品牌上方',
     ok:
@@ -1558,25 +1571,83 @@ try {
       collapsedState.labelW <= 1 &&
       collapsedState.labelOpacity <= 0.05 &&
       labelStaysInDom &&
-      collapsedState.lightsW >= 10 &&
-      collapsedState.lightsH >= collapsedState.lightsW + 20 &&
+      dotsColumn(collapsedState) &&
+      collapsedState.lightsW <= 16 &&
       collapsedState.markW >= 24 &&
       collapsedState.markOverflow <= 1,
-    detail: `宽 ${collapsedState.w}px 文字宽 ${collapsedState.labelW}px 透明度 ${collapsedState.labelOpacity} 三点 ${collapsedState.lightsW}×${collapsedState.lightsH}px（竖排） 图标宽 ${collapsedState.markW}px 右侧溢出 ${collapsedState.markOverflow}px 文字仍在DOM=${labelStaysInDom}`
+    detail: `宽 ${collapsedState.w}px 文字宽 ${collapsedState.labelW}px 透明度 ${collapsedState.labelOpacity} 三点坐标 ${dotsText(collapsedState)}（竖排） 容器 ${collapsedState.lightsW}×${collapsedState.lightsH}px 图标宽 ${collapsedState.markW}px 右侧溢出 ${collapsedState.markOverflow}px 文字仍在DOM=${labelStaysInDom}`
   });
   results.push({
-    name: '第五版：展开是插值动画（侧栏宽度 / 文字宽度 / 三点都接了过渡），三点回到一排',
+    name: '第五版：展开是插值动画（侧栏宽度 / 文字宽度 / 三个点走 transform），三点回到一排',
     ok:
       sideWired &&
       labelWired &&
-      lightsWired &&
+      dotsWired &&
       grew &&
       backState.w >= 200 &&
       backState.labelW > 20 &&
       backState.labelOpacity === 1 &&
-      backState.lightsW >= 40 &&
-      backState.lightsH <= 16,
-    detail: `侧栏[${wiring.side}] 文字[${wiring.label}] 三点[${wiring.lights}] 宽度轨迹 ${midFrames.slice(0, 8).join('→')} 回到 ${backState.w}px / 文字 ${backState.labelW}px / 三点 ${backState.lightsW}×${backState.lightsH}px`
+      dotsRow(backState),
+    detail: `侧栏[${wiring.side}] 文字[${wiring.label}] 三点容器[${wiring.lights}] 每个点[${wiring.dot}] 宽度轨迹 ${midFrames.slice(0, 8).join('→')} 回到 ${backState.w}px / 文字 ${backState.labelW}px / 三点坐标 ${dotsText(backState)}（一排）`
+  });
+
+  // ---- 展开态不弹任何导航提示；折叠态悬停才浮出毛玻璃气泡（用户反馈第 2、3 条） ----
+  const tipRead = async () =>
+    JSON.parse(
+      String(
+        await cdp.eval(`(() => {
+          const it = document.querySelector('.nav-item');
+          if (!it) return JSON.stringify({ err: 'no-nav' });
+          const cs = getComputedStyle(it, '::after');
+          const b = it.getBoundingClientRect();
+          return JSON.stringify({
+            title: it.getAttribute('title') || '',
+            dataTip: it.getAttribute('data-tip') || '',
+            content: (cs.content || '').replace(/"/g, ''),
+            opacity: Number(cs.opacity),
+            delay: cs.transitionDelay,
+            transform: cs.transform,
+            backdrop: cs.backdropFilter || cs.webkitBackdropFilter || '',
+            radius: cs.borderTopLeftRadius,
+            sidebarOverflow: getComputedStyle(document.querySelector('.sidebar')).overflow,
+            navOverflow: getComputedStyle(document.querySelector('.nav')).overflowY,
+            cx: Math.round(b.left + b.width / 2),
+            cy: Math.round(b.top + b.height / 2)
+          });
+        })()`)
+      )
+    );
+  const hoverNav = async (st) => {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: st.cx, y: st.cy, buttons: 0 });
+    await sleep(620);
+    return tipRead();
+  };
+  const expandedTip = await hoverNav(await tipRead());
+  await cdp.eval(`document.querySelector('.nav-foot .icon-btn').click()`);
+  await sleep(420);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 4, y: 4, buttons: 0 });
+  await sleep(120);
+  const collapsedTip = await hoverNav(await tipRead());
+  // 气泡现在真能从 60px 侧栏里探出来（.nav 放开裁剪 + 侧栏抬层级），
+  // 所以这张截图就是真实的悬停态，不需要任何临时注入
+  await cdp.shot('sidebar-nav-tip');
+  // 复位成展开态，后面的断言仍按展开的侧栏走
+  await cdp.eval(`document.querySelector('.nav-foot .icon-btn').click()`);
+  await sleep(420);
+  results.push({
+    name: '第五版：不再弹系统提示（title 已去掉），只有折叠态才有毛玻璃气泡',
+    ok:
+      expandedTip.title === '' &&
+      expandedTip.dataTip.length > 0 &&
+      expandedTip.opacity === 0 &&
+      collapsedTip.content === collapsedTip.dataTip &&
+      collapsedTip.opacity === 1 &&
+      collapsedTip.backdrop.includes('blur') &&
+      collapsedTip.radius !== '0px' &&
+      collapsedTip.sidebarOverflow === 'visible' &&
+      collapsedTip.navOverflow === 'visible' &&
+      parseFloat(collapsedTip.delay) >= 0.3,
+    detail: `title="${expandedTip.title}" data-tip="${expandedTip.dataTip}"；展开态 opacity=${expandedTip.opacity}；折叠态 content="${collapsedTip.content}" opacity=${collapsedTip.opacity} 延迟=${collapsedTip.delay} 圆角=${collapsedTip.radius} 背景模糊=${collapsedTip.backdrop} 侧栏溢出=${collapsedTip.sidebarOverflow} 导航列溢出=${collapsedTip.navOverflow}`
   });
 
   const tableInUi = await cdp.eval(`(async () => {
@@ -1859,34 +1930,53 @@ try {
     return 'ok';
   })()`);
   await sleep(900);
-  const hitBox = await cdp.eval(`(() => {
-    const rows = [...document.querySelectorAll('.search-modal .list-row')];
-    if (rows.length === 0) return { found: false, count: 0 };
-    const r = rows[0].getBoundingClientRect();
-    return { found: true, count: rows.length, x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  })()`);
-  let hitHover = {};
-  for (let i = 0; i < 4; i++) {
+  const hitRead = async () => {
+    const box = JSON.parse(
+      String(
+        await cdp.eval(`(() => {
+          const rows = [...document.querySelectorAll('.search-modal .modal-body .list-row')];
+          if (rows.length === 0) return JSON.stringify({ found: false, count: 0, x: 0, y: 0 });
+          const r = rows[0].getBoundingClientRect();
+          return JSON.stringify({ found: true, count: rows.length, x: r.left + r.width / 2, y: r.top + r.height / 2 });
+        })()`)
+      )
+    );
+    if (!box.found) return { found: false, count: 0 };
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 4, y: 4, buttons: 0 });
     await sleep(60);
-    if (hitBox.found) {
-      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hitBox.x, y: hitBox.y, buttons: 0 });
-    }
-    await sleep(280);
-    hitHover = await cdp.eval(`(() => {
-      const row = document.querySelector('.search-modal .list-row');
-      if (!row) return {};
-      const cs = getComputedStyle(row);
-      const m = new DOMMatrixReadOnly(cs.transform === 'none' ? '' : cs.transform);
-      return { ty: m.m42, shadow: cs.boxShadow, hovered: row.matches(':hover') };
-    })()`);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.x, y: box.y, buttons: 0 });
+    await sleep(300);
+    // 读「鼠标底下那一行」而不是「第一行」——结果列表可能会重排
+    const st = JSON.parse(
+      String(
+        await cdp.eval(`(() => {
+          try {
+            const el = document.elementFromPoint(${Math.round(box.x)}, ${Math.round(box.y)});
+            const row = el && el.closest ? el.closest('.list-row') : null;
+            if (!row) return JSON.stringify({ ty: 0, shadow: 'none', hovered: false, which: 'none' });
+            const cs = getComputedStyle(row);
+            const m = new DOMMatrixReadOnly(cs.transform === 'none' ? '' : cs.transform);
+            return JSON.stringify({ ty: m.m42, shadow: cs.boxShadow, hovered: row.matches(':hover'), which: (row.textContent || '').slice(0, 10) });
+          } catch (err) {
+            return JSON.stringify({ ty: 0, shadow: 'none', hovered: false, which: 'err:' + err });
+          }
+        })()`)
+      )
+    );
+    return { found: true, count: box.count, ...st };
+  };
+  let hitBox = { found: false, count: 0 };
+  let hitHover = {};
+  for (let i = 0; i < 6; i++) {
+    hitHover = await hitRead();
+    if (hitHover.found) hitBox = { found: true, count: hitHover.count };
     if (Number(hitHover.ty) <= -0.5) break;
   }
   results.push({
     name: '第五版：搜索命中行悬停浮起（上移 1px + 投影）',
     ok: hitBox.found === true && hitBox.count > 0 && Number(hitHover.ty) <= -0.5 && String(hitHover.shadow) !== 'none',
     detail:
-      '命中=' + hitBox.count + ' 行 translateY=' + hitHover.ty + ' 悬停=' + hitHover.hovered + ' 投影=' + String(hitHover.shadow).slice(0, 40)
+      '命中=' + hitBox.count + ' 行 ' + (hitHover.which || '') + ' translateY=' + hitHover.ty + ' 悬停=' + hitHover.hovered + ' 投影=' + String(hitHover.shadow).slice(0, 40)
   });
 
   // 关掉搜索面板

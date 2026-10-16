@@ -142,7 +142,7 @@ export default function App(): ReactNode {
               key={item.route}
               type="button"
               className={route === item.route ? 'nav-item active' : 'nav-item'}
-              title={item.label}
+              data-tip={item.label}
               onClick={() => {
                 navigate(item.route);
                 refreshCount();
