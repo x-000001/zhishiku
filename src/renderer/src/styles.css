@@ -2731,7 +2731,13 @@ label.field {
 
 /* 侧栏收到 60px 时塞不下三个点，藏起来（顶栏照样能拖窗口） */
 .sidebar.collapsed .win-lights {
-  display: none;
+  /* 折叠时三个点淡出收窄，而不是 display:none（display 切换会让品牌行整块跳一下） */
+  width: 0;
+  opacity: 0;
+  margin-right: 0;
+  gap: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 /* ---- 侧栏 / 顶栏毛玻璃 ---- */
@@ -3105,5 +3111,60 @@ label.field {
   background: var(--bg-sunken);
   border-style: dashed;
   cursor: default;
+}
+
+/* ================= 第五版：侧栏折叠/展开不再闪跳（bugfix） =================
+   病因有两个：
+   ① 文字是「折叠时卸载、展开时挂载」的，展开那一帧文字就整块出现，而侧栏宽度还在
+      从 60px 长到 232px，于是出现「先闪一下、再挤过去」的跳；
+   ② 三个点用 `display: none` 藏起来，展开时又突然插回来，把品牌行整块推开。
+   治法：文字与圆点一直挂在 DOM 里，只是把宽度/透明度收成 0（GPU 能插值），
+   侧栏本身走同一条 180ms 缓停曲线，两者同一拍进出。 */
+.sidebar {
+  transition: width 0.18s var(--smooth-ease), flex-basis 0.18s var(--smooth-ease);
+  will-change: width;
+}
+
+.win-lights {
+  transition: width 0.18s var(--smooth-ease), opacity 0.12s linear,
+    margin-right 0.18s var(--smooth-ease), gap 0.18s var(--smooth-ease);
+}
+
+.brand-text,
+.nav-label,
+.foot-text,
+.count {
+  max-width: 240px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 0.18s var(--smooth-ease), opacity 0.14s linear,
+    transform 0.18s var(--smooth-ease);
+}
+
+.sidebar.collapsed .brand-text,
+.sidebar.collapsed .nav-label,
+.sidebar.collapsed .foot-text,
+.sidebar.collapsed .count {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-6px);
+}
+
+/* 折叠时只在图标上停一下，文字收干净，别留下半截字 */
+.sidebar.collapsed .nav-item,
+.sidebar.collapsed .brand {
+  overflow: hidden;
+}
+
+/* 尊重系统「减少动态效果」：折叠就是直接切，不插值 */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .win-lights,
+  .brand-text,
+  .nav-label,
+  .foot-text,
+  .count {
+    transition: none;
+  }
 }
 

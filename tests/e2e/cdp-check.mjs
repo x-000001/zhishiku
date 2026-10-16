@@ -1187,25 +1187,33 @@ try {
     detail: '底色=' + btn.bg + ' 描边=' + btn.border + ' 圆角=' + btn.radius + (btn.err ? ' err=' + btn.err : '')
   });
   if (typeof btn.x === 'number') {
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: btn.x, y: btn.y });
-    await sleep(280);
-    const hoverRaw = await cdp.eval(`(() => {
-      const b = ${pickSave};
-      const cs = getComputedStyle(b);
-      const m = new DOMMatrix(cs.transform);
-      return JSON.stringify({ bg: cs.backgroundColor, ty: Math.round(m.m42 * 100) / 100 });
-    })()`);
-    const hov = (() => {
+    const readHover = async () => {
+      const hoverRaw = await cdp.eval(`(() => {
+        const b = ${pickSave};
+        const cs = getComputedStyle(b);
+        const m = new DOMMatrix(cs.transform);
+        return JSON.stringify({ bg: cs.backgroundColor, ty: Math.round(m.m42 * 100) / 100 });
+      })()`);
       try {
         return JSON.parse(String(hoverRaw));
       } catch {
         return { err: String(hoverRaw) };
       }
-    })();
+    };
+    // 软件渲染下 mouseMoved 偶尔丢一次，所以「移开 → 移回」最多试三遍
+    let hov = { bg: btn.bg, ty: 0 };
+    for (let i = 0; i < 3; i += 1) {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 4, y: 4, buttons: 0 });
+      await sleep(70);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: btn.x, y: btn.y, buttons: 0 });
+      await sleep(240);
+      hov = await readHover();
+      if (hov.bg !== btn.bg && hov.ty === -1) break;
+    }
     results.push({
       name: '第五版：悬停态换底色 + 抬 1px',
       ok: hov.bg !== btn.bg && hov.ty === -1,
-      detail: '底色 ' + btn.bg + ' → ' + hov.bg + '，位移 ' + hov.ty + 'px'
+      detail: '底色 ' + btn.bg + ' → ' + hov.bg + '，位移 ' + hov.ty + 'px' + (hov.err ? ' err=' + hov.err : '')
     });
     // 按下：CDP 的 mousePressed 偶尔不会立刻挂上 :active，读不到就再按一次
     const readPress = async () => {
@@ -1377,6 +1385,92 @@ try {
     name: '第五版：加载态是 12px 转圈（无限循环，按钮不变宽）',
     ok: st.load && st.load.w === '12px' && st.load.h === '12px' && st.load.anim === 'jw-spin' && st.load.iter === 'infinite',
     detail: JSON.stringify(st.load)
+  });
+
+  // ---- 侧栏折叠/展开：宽度插值平滑、文字不再「闪一下」（回归断言） ----
+  const sbRead = async () =>
+    JSON.parse(
+      String(
+        await cdp.eval(`(() => {
+          const sb = document.querySelector('.sidebar');
+          const lb = document.querySelector('.nav-label');
+          const bt = document.querySelector('.brand-text');
+          if (!sb) return JSON.stringify({ err: 'no-sidebar' });
+          const cs = lb ? getComputedStyle(lb) : null;
+          return JSON.stringify({
+            w: Math.round(sb.getBoundingClientRect().width),
+            labelW: lb ? Math.round(lb.getBoundingClientRect().width) : -1,
+            labelOpacity: cs ? Number(cs.opacity) : -1,
+            labelText: lb ? lb.textContent : '',
+            brandW: bt ? Math.round(bt.getBoundingClientRect().width) : -1,
+            lightsW: Math.round((document.querySelector('.win-lights') || { getBoundingClientRect: () => ({ width: -1 }) }).getBoundingClientRect().width)
+          });
+        })()`)
+      )
+    );
+  const expandedState = await sbRead();
+  await cdp.eval(`document.querySelector('.nav-foot .icon-btn').click()`);
+  await sleep(420);
+  const collapsedState = await sbRead();
+  await cdp.shot('sidebar-collapsed');
+  // 文字节点必须一直留在 DOM 里（不是「展开时才挂上」）——这就是闪烁的根因
+  const labelStaysInDom = collapsedState.labelText.includes('首页');
+  // 展开过程本身是「逐帧插值」的：宽度与文字宽度都有过渡曲线。
+  // 注意：e2e 是 --disable-gpu 跑的（软件渲染，帧率不可信），所以这里断言的是
+  // 「过渡接线正确 + 宽度单调长回去」，不用帧率判断是否顺滑。
+  const wiring = JSON.parse(
+    String(
+      await cdp.eval(`(() => {
+        const p = (el) => {
+          const c = el ? getComputedStyle(el) : null;
+          return c ? c.transitionProperty + ' @ ' + c.transitionDuration : '';
+        };
+        return JSON.stringify({
+          side: p(document.querySelector('.sidebar')),
+          label: p(document.querySelector('.nav-label')),
+          lights: p(document.querySelector('.win-lights'))
+        });
+      })()`)
+    )
+  );
+  const midRaw = await cdp.eval(`(async () => {
+    const sb = document.querySelector('.sidebar');
+    const seen = [Math.round(sb.getBoundingClientRect().width)];
+    const t0 = performance.now();
+    document.querySelector('.nav-foot .icon-btn').click();
+    await new Promise((res) => {
+      const tick = () => {
+        seen.push(Math.round(sb.getBoundingClientRect().width));
+        if (performance.now() - t0 > 260) res();
+        else requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    return JSON.stringify(seen);
+  })()`);
+  const midFrames = (() => {
+    try {
+      return JSON.parse(String(midRaw));
+    } catch {
+      return [];
+    }
+  })();
+  await sleep(200);
+  const backState = await sbRead();
+  await cdp.shot('sidebar-expanded');
+  const grew = midFrames.every((w, i) => i === 0 || w >= midFrames[i - 1] - 1);
+  const sideWired = wiring.side.includes('width') && wiring.side.includes('flex-basis');
+  const labelWired = wiring.label.includes('max-width');
+  const lightsWired = wiring.lights.includes('width');
+  results.push({
+    name: '第五版：收起侧栏后宽度到位、文字收成 0 宽度（不是卸载）',
+    ok: collapsedState.w > 0 && collapsedState.w <= 64 && collapsedState.labelW <= 1 && collapsedState.labelOpacity <= 0.05 && collapsedState.lightsW <= 1 && labelStaysInDom,
+    detail: `宽 ${collapsedState.w}px 文字宽 ${collapsedState.labelW}px 透明度 ${collapsedState.labelOpacity} 三点宽 ${collapsedState.lightsW}px 文字仍在DOM=${labelStaysInDom}`
+  });
+  results.push({
+    name: '第五版：展开是插值动画（侧栏宽度 / 文字宽度 / 三点都接了过渡）',
+    ok: sideWired && labelWired && lightsWired && grew && backState.w >= 200 && backState.labelW > 20 && backState.labelOpacity === 1,
+    detail: `侧栏[${wiring.side}] 文字[${wiring.label}] 三点[${wiring.lights}] 宽度轨迹 ${midFrames.slice(0, 8).join('→')} 回到 ${backState.w}px / 文字 ${backState.labelW}px`
   });
 
   const tableInUi = await cdp.eval(`(async () => {

@@ -134,7 +134,7 @@ export default function App(): ReactNode {
             />
           </div>
           <span className="brand-mark">Jw</span>
-          {!collapsed ? <span>知识库</span> : null}
+          <span className="brand-text">知识库</span>
         </div>
         <nav className="nav">
           {NAV.map((item) => (
@@ -149,10 +149,8 @@ export default function App(): ReactNode {
               }}
             >
               <span className="ico">{item.icon}</span>
-              {!collapsed ? <span>{item.label}</span> : null}
-              {!collapsed && item.countKey === 'inbox' && inboxCount > 0 ? (
-                <span className="count">{inboxCount}</span>
-              ) : null}
+              <span className="nav-label">{item.label}</span>
+              {item.countKey === 'inbox' && inboxCount > 0 ? <span className="count">{inboxCount}</span> : null}
             </button>
           ))}
         </nav>
@@ -166,7 +164,7 @@ export default function App(): ReactNode {
           >
             {collapsed ? '»' : '«'}
           </button>
-          {!collapsed ? <span>本地运行 · D 盘数据</span> : null}
+          <span className="foot-text">本地运行 · D 盘数据</span>
         </div>
       </aside>
 
