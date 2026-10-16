@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { ConfirmDialog, toast } from '../ui';
 import { fmtDateTime } from '../format';
+import { describeSaveError, saveStamp } from '../save';
 import type { AppInfo, AppSettings, BackupEntry } from '../../../shared/types';
 
 export default function Settings(props: {
@@ -50,9 +51,9 @@ export default function Settings(props: {
       await api.setSetting('closeToTray', form.closeToTray);
       setSaved(form);
       props.onTheme(form.theme);
-      toast('设置已保存');
+      toast('已保存 ' + saveStamp());
     } catch (err) {
-      toast('保存失败：' + (err as Error).message);
+      toast(describeSaveError(err), { ttl: 7000 });
     } finally {
       setBusy('');
     }

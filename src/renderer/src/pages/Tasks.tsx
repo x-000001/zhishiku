@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { api } from '../api';
 import { Empty, ConfirmDialog, toast } from '../ui';
 import { PRIORITY_LABEL, PRIORITY_ORDER, REPEAT_LABEL, fmtDate, fmtDateTime, nextPriority, relative, todayLocal } from '../format';
+import { SaveButton, useManualSave } from '../save';
 import type { GoalSummary, Id, Task, TaskFilter, TaskPriority } from '../../../shared/types';
 
 const VIEWS: { key: NonNullable<TaskFilter['view']>; icon: string; label: string; hint: string }[] = [
@@ -87,6 +88,12 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
     } catch (err) {
       toast('改不动：' + (err as Error).message);
     }
+  };
+
+  /** 手动保存走这条：不吞异常，交给「保存」按钮按占用/权限分诊报错。 */
+  const patchStrict = async (id: Id, changes: Partial<Task>): Promise<void> => {
+    await api.updateTask(id, changes);
+    await load();
   };
 
   const toggle = async (task: Task): Promise<void> => {
@@ -426,6 +433,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
                   <TaskDrawer
                     task={selectedTask}
                     onPatch={(changes) => void patch(selectedTask.id, changes)}
+                    onSave={(changes) => patchStrict(selectedTask.id, changes)}
                     onClose={() => setSelected(null)}
                   />
                 ) : null}
@@ -487,6 +495,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
 function TaskDrawer(props: {
   task: Task;
   onPatch: (changes: Partial<Task>) => void;
+  onSave: (changes: Partial<Task>) => Promise<void>;
   onClose: () => void;
 }): ReactNode {
   const { task } = props;
@@ -497,6 +506,12 @@ function TaskDrawer(props: {
   useEffect(() => {
     void api.listGoals().then(setGoals);
   }, []);
+
+  // 优化项 8：手动保存——把备注（唯一「改了还没写」的字段）立刻写进去，并报时间/分诊报错
+  const { saving, run } = useManualSave();
+  const saveNow = (): void => {
+    void run(() => props.onSave({ note }));
+  };
 
   return (
     <div className="drawer">
@@ -581,6 +596,12 @@ function TaskDrawer(props: {
             if (note !== task.note) props.onPatch({ note });
           }}
         />
+      </div>
+      <div className="row" style={{ marginTop: 4 }}>
+        <span className="muted" style={{ flex: 1 }}>
+          改完点一下保存，立刻写进数据文件
+        </span>
+        <SaveButton saving={saving} primary onClick={saveNow} />
       </div>
       <div className="row">
         <span className="muted" style={{ flex: 1 }}>

@@ -957,6 +957,95 @@ try {
   );
   results.push({ name: '深色主题能切换', ok: String(darkOk).startsWith('dark'), detail: String(darkOk) });
   await cdp.shot('settings-dark');
+
+  // ---- 优化项 8：四个页面都有「保存」按钮，点了会报「已保存 HH:MM:SS」 ----
+  // 知识库：先点开一篇笔记，编辑器头部才有「保存」
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(700);
+  const kbOpened = await cdp.eval(`(() => {
+    const row = document.querySelector('.list-row');
+    if (!row) return 'no-row';
+    row.click();
+    return 'clicked';
+  })()`);
+  await sleep(700);
+  const kbSave = await cdp.eval(
+    "(() => { const b = [...document.querySelectorAll('.editor-head button')].find((x) => (x.textContent || '').trim().indexOf('保存') === 0 && !x.disabled); return b ? (b.textContent || '').trim() : 'no-btn'; })()"
+  );
+  results.push({
+    name: '笔记编辑页有「保存」按钮',
+    ok: kbOpened === 'clicked' && String(kbSave).startsWith('保存'),
+    detail: kbOpened + '/' + kbSave
+  });
+
+  await cdp.eval("location.hash = '/goals'; true");
+  await sleep(700);
+  const goalSave = await cdp.eval(
+    "(() => { const b = [...document.querySelectorAll('.editor-head button')].find((x) => (x.textContent || '').trim().indexOf('保存') === 0 && !x.disabled); return b ? (b.textContent || '').trim() : 'no-btn'; })()"
+  );
+  results.push({ name: '目标编辑页有「保存」按钮', ok: String(goalSave).startsWith('保存'), detail: String(goalSave) });
+
+  // 任务：先点开一行，抽屉里才有保存按钮
+  await cdp.eval("location.hash = '/tasks'; true");
+  await sleep(700);
+  await cdp.eval(`(() => {
+    const row = document.querySelector('.task-row');
+    if (row) row.click();
+    return true;
+  })()`);
+  await sleep(500);
+  const taskSave = await cdp.eval(
+    "(() => { const b = [...document.querySelectorAll('.drawer button')].find((x) => (x.textContent || '').trim().indexOf('保存') === 0); return b ? (b.textContent || '').trim() : 'no-btn'; })()"
+  );
+  results.push({ name: '任务详情抽屉里有「保存」按钮', ok: String(taskSave).startsWith('保存'), detail: String(taskSave) });
+  if (String(taskSave).startsWith('保存')) {
+    await cdp.eval(
+      "(() => { const b = [...document.querySelectorAll('.drawer button')].find((x) => (x.textContent || '').trim().indexOf('保存') === 0); if (b) b.click(); return true; })()"
+    );
+    await sleep(700);
+    const taskToast = await cdp.eval("(() => [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | '))()");
+    results.push({
+      name: '任务点保存后报「已保存 HH:MM:SS」',
+      ok: /已保存 \d{2}:\d{2}:\d{2}/.test(String(taskToast)),
+      detail: String(taskToast).slice(0, 80)
+    });
+  }
+
+  // 设置页：得先改动一处（这里把主题切到 dark），保存条才会出现
+  await cdp.eval("location.hash = '/settings'; true");
+  await sleep(700);
+  const settingsSave = await cdp.eval(`(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    const sel = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'dark'));
+    if (!sel) return 'no-theme-select';
+    setter.call(sel, 'dark');
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 400));
+    const btn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '保存设置' && !b.disabled);
+    if (!btn) return 'no-btn';
+    btn.click();
+    await new Promise((r) => setTimeout(r, 900));
+    return [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ');
+  })()`);
+  results.push({
+    name: '设置页点「保存设置」报「已保存 HH:MM:SS」',
+    ok: /已保存 \d{2}:\d{2}:\d{2}/.test(String(settingsSave)),
+    detail: String(settingsSave).slice(0, 90)
+  });
+  // 收尾：把主题改回浅色，别把 light 的主题留在深色上
+  await cdp.eval(`(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    const sel = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'dark'));
+    if (sel) {
+      setter.call(sel, 'light');
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 300));
+      const btn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '保存设置' && !b.disabled);
+      if (btn) btn.click();
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    return true;
+  })()`);
   const backOk = await cdp.eval(
     `(async () => {
       const sel = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'dark'));

@@ -5,6 +5,7 @@ import { fmtDate, relative } from '../format';
 import { diffLines, renderMarkdown } from '../../../shared/markdown';
 import { attachmentUrl, htmlToPlainText, sanitizeHtml } from '../../../shared/html';
 import * as rich from '../rich';
+import { describeSaveError, saveStamp } from '../save';
 import { applyOrder, moveWithinGroup } from '../reorder';
 import type { Attachment, Category, Id, Note, NoteListItem, NoteVersion, Tag } from '../../../shared/types';
 
@@ -255,9 +256,10 @@ export default function Knowledge(props: {
       setDraftPrompt(null);
       void loadList();
       void loadTags();
+      toast('已保存 ' + saveStamp());
     } catch (err) {
       setSaveState('error');
-      toast('保存失败：' + (err as Error).message);
+      toast(describeSaveError(err), { ttl: 7000 });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadList, loadTags]);

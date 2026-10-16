@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { ConfirmDialog, Empty, toast } from '../ui';
+import { SaveButton, useManualSave } from '../save';
 import { fmtDate } from '../format';
 import type { GoalDetail, GoalSummary, Id } from '../../../shared/types';
 
@@ -20,6 +21,8 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
   const [msDraft, setMsDraft] = useState('');
   const [msDate, setMsDate] = useState('');
   const [goalNote, setGoalNote] = useState('');
+  const titleRef = useRef<HTMLInputElement>(null);
+  const dateRef = useRef<HTMLInputElement>(null);
   const addRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(
@@ -86,6 +89,22 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
     } catch (err) {
       toast('改不动：' + (err as Error).message);
     }
+  };
+
+  // 优化项 8：手动保存。标题和目标日期是「没失焦就还没落库」的两个输入框，
+  // 这里直接把当前输入框里的值一起写一遍，点一下就是一次真写盘。
+  const { saving, run: runSave } = useManualSave();
+  const saveGoalNow = (): void => {
+    if (!detail) return;
+    const g = detail.goal;
+    const title = titleRef.current?.value.trim() || g.title;
+    const targetDate = dateRef.current?.value || null;
+    void runSave(async () => {
+      await api.updateGoal(g.id, { title, target_date: targetDate, description: goalNote });
+      await load();
+      loadDetail(g.id);
+      props.refreshCount();
+    });
   };
 
   const addKeyResult = async (): Promise<void> => {
@@ -207,6 +226,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
               <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
                 <input
                   className="inline-title"
+                  ref={titleRef}
                   defaultValue={detail.goal.title}
                   style={{ fontSize: 16, fontWeight: 650, minWidth: 220 }}
                   onKeyDown={(e) => {
@@ -223,6 +243,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
                 />
                 <span className="badge">{detail.goal.progress}%</span>
                 <span className="spacer" style={{ flex: 1 }} />
+                <SaveButton saving={saving} primary onClick={saveGoalNow} />
                 <button
                   type="button"
                   className="btn sm"
@@ -277,6 +298,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
                   <label>目标日期</label>
                   <input
                     type="date"
+                    ref={dateRef}
                     defaultValue={detail.goal.target_date ?? ''}
                     onBlur={(e) => {
                       const value = e.target.value || null;
