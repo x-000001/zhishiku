@@ -423,9 +423,9 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
                 {detail.milestones.length === 0 ? (
                   <Empty>还没有里程碑。比如「第 1 个月：能读懂 TypeScript 类型报错」。</Empty>
                 ) : (
-                  <div className="list">
+                  <div className="list timeline">
                     {detail.milestones.map((m) => (
-                      <div key={m.id} className="list-row">
+                      <div key={m.id} className={m.done ? 'list-row done' : 'list-row'}>
                         <button
                           type="button"
                           className={m.done ? 'check on' : 'check'}
@@ -437,7 +437,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
                           ✓
                         </button>
                         <div className="grow">
-                          <div className="title" style={m.done ? { textDecoration: 'line-through' } : undefined}>
+                          <div className="title">
                             {m.title}
                           </div>
                           <div className="sub">

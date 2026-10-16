@@ -3168,3 +3168,250 @@ label.field {
   }
 }
 
+/* ================= 第五版（阶段6）：首页可视化 =================
+   只动外观：进度条更精致、目标进度环形+卡片化、完成/逾期用颜色与动效区分、
+   里程碑变时间轴。新加的类名只有 .goal-row / .goal-ring / .goal-title /
+   .goal-date / .timeline / .stat.alarm / .stat.good / .list-row.done /
+   .list-row.overdue，老的类名与 DOM 结构一个没动。 */
+
+/* ---- 1. 进度条：内阴影轨道 + 三段渐变 + 顶部高光 + 入场从 0 长出来 ---- */
+.progress {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--border) 55%, transparent);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.07);
+  overflow: hidden;
+}
+
+.progress > i {
+  position: relative;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--brand) 0%, var(--accent-blue) 55%, #6cc8ff 100%);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--brand) 42%, transparent);
+  transition: width 420ms var(--smooth-ease);
+  transform-origin: left center;
+  animation: jw-grow 620ms var(--smooth-ease) both;
+}
+
+/* 玻璃棒上的一道高光 */
+.progress > i::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 50% 0;
+  border-radius: var(--radius-pill) var(--radius-pill) 0 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+
+@keyframes jw-grow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+/* ---- 2. 目标进度：环形（conic-gradient）+ 卡片化一行 ---- */
+@property --p {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: 0%;
+}
+
+.goal-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--border) 75%, transparent);
+}
+
+.goal-row:last-child {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+
+.goal-ring {
+  --p: 0%;
+  position: relative;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: conic-gradient(
+    var(--brand) var(--p),
+    color-mix(in srgb, var(--border) 60%, transparent) var(--p)
+  );
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 16%, transparent), 0 6px 16px rgba(15, 23, 42, 0.1);
+  transition: --p 700ms var(--smooth-ease);
+  animation: jw-ring-in 620ms var(--smooth-ease) both;
+}
+
+/* 中间挖空，剩下的就是一个环（半透明 + 模糊，跟卡片毛玻璃接得上） */
+.goal-ring::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+  backdrop-filter: blur(4px) saturate(1.2);
+  -webkit-backdrop-filter: blur(4px) saturate(1.2);
+  box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.goal-ring > span {
+  position: relative;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--brand-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes jw-ring-in {
+  from { opacity: 0; transform: scale(0.84) rotate(-20deg); }
+  to { opacity: 1; transform: none; }
+}
+
+.goal-row .grow { min-width: 0; }
+
+.goal-title {
+  font-size: 13.5px;
+  font-weight: 550;
+  margin-bottom: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-date { margin-top: 5px; }
+
+[data-theme='dark'] .goal-ring {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 24%, transparent), 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme='dark'] .goal-ring::before {
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+/* ---- 3. 完成 / 逾期：颜色 + 动效区分 ---- */
+.list-row.done .title {
+  color: var(--text-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.list-row.done .sub { color: var(--text-faint); }
+
+/* 勾上的一瞬间弹一下（0.62 → 1.16 → 1） */
+.list-row.done .check {
+  animation: jw-pop 340ms var(--spring-ease) both;
+}
+
+@keyframes jw-pop {
+  0% { transform: scale(0.62); }
+  62% { transform: scale(1.16); }
+  100% { transform: scale(1); }
+}
+
+/* 逾期：左边一道红杠 + 淡淡红背景 + 日期转红 */
+.list-row.overdue {
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--danger) 9%, transparent), transparent 62%);
+}
+
+.list-row.overdue::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 62%;
+  border-radius: 0 3px 3px 0;
+  background: var(--danger);
+}
+
+.list-row.overdue .title {
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
+}
+
+.list-row.overdue .sub {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+/* 统计卡：逾期那格是红的并且轻轻呼吸，完成那格是绿的 */
+.stat.alarm {
+  border-color: color-mix(in srgb, var(--danger) 34%, var(--glass-border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--danger) 8%, transparent),
+    color-mix(in srgb, var(--bg-panel) 62%, transparent)
+  );
+  animation: jw-alarm 2600ms ease-in-out infinite;
+}
+
+.stat.alarm b { color: var(--danger); }
+
+.stat.good {
+  border-color: color-mix(in srgb, var(--ok) 26%, var(--glass-border));
+}
+
+.stat.good b { color: var(--ok); }
+
+@keyframes jw-alarm {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 44, 37, 0); }
+  50% { box-shadow: 0 0 0 5px rgba(217, 44, 37, 0.1); }
+}
+
+/* ---- 4. 里程碑时间轴：一条竖线串起检查点，走过的段变绿 ---- */
+.timeline { position: relative; }
+
+.timeline .list-row {
+  position: relative;
+  padding-left: 6px;
+}
+
+/* 本行中点到下一行中点的一段线 */
+.timeline .list-row::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  bottom: -2px;
+  width: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--border-strong) 85%, transparent);
+  transition: background 240ms var(--smooth-ease);
+}
+
+.timeline .list-row:last-child::before { display: none; }
+
+.timeline .list-row.done::before {
+  background: linear-gradient(180deg, var(--ok), color-mix(in srgb, var(--ok) 30%, var(--border-strong)));
+}
+
+/* 圆点压在线上，用面板色描一圈把线遮住 */
+.timeline .list-row .check {
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--bg-panel) 92%, transparent);
+}
+
+.timeline .list-row.done .check {
+  background: var(--ok);
+  border-color: var(--ok);
+  animation: jw-pop 340ms var(--spring-ease) both;
+}
+
+/* 尊重系统「减少动态效果」：这些装饰动画直接关掉 */
+@media (prefers-reduced-motion: reduce) {
+  .progress > i,
+  .goal-ring,
+  .list-row.done .check,
+  .timeline .list-row.done .check,
+  .stat.alarm {
+    animation: none;
+  }
+}
+

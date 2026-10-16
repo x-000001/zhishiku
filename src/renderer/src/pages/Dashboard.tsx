@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { api } from '../api';
 import { Empty, toast } from '../ui';
 import { fmtDate, relative } from '../format';
@@ -82,18 +82,23 @@ export default function Dashboard(props: {
               <b>{data.tasks.length}</b>
               <span>今天要做的</span>
             </div>
-            <div className="stat">
-              <b style={{ color: data.overdueCount ? 'var(--danger)' : undefined }}>{data.overdueCount}</b>
+            <div className={data.overdueCount ? 'stat alarm' : 'stat'}>
+              <b>{data.overdueCount}</b>
               <span>已经逾期</span>
             </div>
-            <div className="stat">
-              <b style={{ color: 'var(--ok)' }}>{data.doneTodayCount}</b>
+            <div className="stat good">
+              <b>{data.doneTodayCount}</b>
               <span>今天已完成</span>
             </div>
           </div>
           <div className="list">
             {data.tasks.map((task) => (
-              <div key={task.id} className="list-row">
+              <div
+                key={task.id}
+                className={
+                  task.status === 'done' ? 'list-row done' : task.overdue ? 'list-row overdue' : 'list-row'
+                }
+              >
                 <button
                   type="button"
                   className="check"
@@ -194,18 +199,30 @@ export default function Dashboard(props: {
           {data.goals.length === 0 ? (
             <Empty>还没有进行中的目标。</Empty>
           ) : (
-            data.goals.map((goal) => (
-              <div key={goal.id} style={{ marginBottom: 12 }}>
-                <div className="row" style={{ justifyContent: 'space-between', marginBottom: 5 }}>
-                  <span style={{ fontSize: 13 }}>{goal.title}</span>
-                  <span className="muted">{goal.progress}%</span>
+            data.goals.map((goal) => {
+              const pct = Math.max(0, Math.min(100, goal.progress));
+              return (
+                <div key={goal.id} className="goal-row">
+                  {/* 环形进度：百分比写进 CSS 变量，conic-gradient 画环，CSS 里给 --p 加了过渡 */}
+                  <div
+                    className="goal-ring"
+                    data-progress={goal.progress}
+                    style={{ '--p': `${pct}%` } as CSSProperties}
+                  >
+                    <span>{goal.progress}%</span>
+                  </div>
+                  <div className="grow">
+                    <div className="goal-title">{goal.title}</div>
+                    <div className="progress">
+                      <i style={{ width: `${pct}%` }} />
+                    </div>
+                    {goal.target_date ? (
+                      <div className="muted goal-date">目标日期 {goal.target_date}</div>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="progress">
-                  <i style={{ width: `${Math.min(100, goal.progress)}%` }} />
-                </div>
-                {goal.target_date ? <div className="muted" style={{ marginTop: 4 }}>目标日期 {goal.target_date}</div> : null}
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
@@ -222,7 +239,7 @@ export default function Dashboard(props: {
           ) : (
             <div className="list">
               {data.todayPlan.map((item) => (
-                <div key={item.id} className="list-row">
+                <div key={item.id} className={item.done ? 'list-row done' : 'list-row'}>
                   <button
                     type="button"
                     className={item.done ? 'check on' : 'check'}

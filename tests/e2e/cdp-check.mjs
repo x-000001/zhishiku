@@ -900,6 +900,86 @@ try {
   }
   await cdp.shot('home-card-hover');
 
+  // ---- 第五版 阶段6：首页可视化（进度条 / 环形目标进度 / 完成与逾期配色 / 里程碑时间轴） ----
+  // 先造一条逾期任务，让「已经逾期」那格真的亮起来，再回首页读 DOM
+  const yDay = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  await cdp.eval(`(async () => {
+    await window.api.invoke('task:create', { title: '逾期自检任务', due_at: ${JSON.stringify(yDay)}, priority: 'urgent' });
+    return true;
+  })()`);
+  await cdp.eval("location.hash = '/tasks'; true");
+  await sleep(500);
+  await cdp.eval("location.hash = '/'; true");
+  await sleep(1200);
+
+  const homeViz = await cdp.eval(`(() => {
+    const ring = document.querySelector('.goal-ring');
+    const ringCS = ring ? getComputedStyle(ring) : null;
+    const ringText = ring ? ((ring.querySelector('span') || {}).textContent || '').trim() : '';
+    const overdue = document.querySelector('.list-row.overdue');
+    const done = document.querySelector('.list-row.done');
+    const doneCheck = done ? done.querySelector('.check') : null;
+    const doneTitle = done ? done.querySelector('.title') : null;
+    const bar = document.querySelector('.goal-row .progress > i');
+    const alarmEl = document.querySelector('.stat.alarm');
+    return JSON.stringify({
+      ringBg: ringCS ? ringCS.backgroundImage : 'none',
+      ringText: ringText,
+      ringVar: ring ? (ring.style.getPropertyValue('--p') || '').trim() : 'none',
+      overdueRow: !!overdue,
+      overdueSub: overdue ? ((overdue.querySelector('.sub') || {}).textContent || '') : '',
+      overdueMark: overdue ? getComputedStyle(overdue, '::before').backgroundColor : 'none',
+      alarm: document.querySelectorAll('.stat.alarm').length,
+      alarmAnim: alarmEl ? getComputedStyle(alarmEl).animationName : 'none',
+      good: document.querySelectorAll('.stat.good').length,
+      doneRow: !!done,
+      doneCheckAnim: doneCheck ? getComputedStyle(doneCheck).animationName : 'none',
+      doneTitleLine: doneTitle ? getComputedStyle(doneTitle).textDecorationLine : 'none',
+      barGrad: bar ? getComputedStyle(bar).backgroundImage : 'none',
+      barAnim: bar ? getComputedStyle(bar).animationName : 'none'
+    });
+  })()`);
+  const viz = (() => {
+    try {
+      return JSON.parse(String(homeViz));
+    } catch {
+      return { err: String(homeViz) };
+    }
+  })();
+  results.push({
+    name: '第五版：首页目标进度是环形（conic-gradient + 环里带百分比）',
+    ok:
+      String(viz.ringBg).includes('conic-gradient') &&
+      /^\d+%$/.test(String(viz.ringText)) &&
+      String(viz.ringVar).endsWith('%'),
+    detail:
+      '背景=' + String(viz.ringBg).slice(0, 58) + ' 环里=' + viz.ringText + ' --p=' + viz.ringVar + (viz.err ? ' err=' + viz.err : '')
+  });
+  results.push({
+    name: '第五版：逾期任务有红杠红字，逾期那格统计卡在呼吸',
+    ok:
+      viz.overdueRow === true &&
+      String(viz.overdueSub).includes('已逾期') &&
+      viz.alarm >= 1 &&
+      String(viz.alarmAnim).includes('jw-alarm') &&
+      String(viz.overdueMark).startsWith('rgb'),
+    detail:
+      '逾期行=' + viz.overdueRow + ' 副标题=' + viz.overdueSub + ' 红杠=' + viz.overdueMark + ' 呼吸动画=' + viz.alarmAnim
+  });
+  results.push({
+    name: '第五版：完成项划掉并弹一下，进度条是渐变且从 0 长出来',
+    ok:
+      viz.doneRow === true &&
+      String(viz.doneCheckAnim).includes('jw-pop') &&
+      String(viz.doneTitleLine).includes('line-through') &&
+      String(viz.barGrad).includes('gradient') &&
+      String(viz.barAnim).includes('jw-grow') &&
+      viz.good >= 1,
+    detail:
+      '完成行=' + viz.doneRow + ' 勾动画=' + viz.doneCheckAnim + ' 标题=' + viz.doneTitleLine + ' 进度条动画=' + viz.barAnim + ' 绿格=' + viz.good
+  });
+  await cdp.shot('home-visual');
+
   // 回到知识库，后面的分类断言要用这一页
   await cdp.eval("location.hash = '/knowledge'; true");
   await sleep(900);
@@ -1628,6 +1708,85 @@ try {
     "(() => { const b = [...document.querySelectorAll('.editor-head button')].find((x) => (x.textContent || '').trim().indexOf('保存') === 0 && !x.disabled); return b ? (b.textContent || '').trim() : 'no-btn'; })()"
   );
   results.push({ name: '目标编辑页有「保存」按钮', ok: String(goalSave).startsWith('保存'), detail: String(goalSave) });
+
+  // ---- 第五版 阶段6：里程碑时间轴 ----
+  const msOpened = await cdp.eval(`(() => {
+    const row = [...document.querySelectorAll('.tree-item')].find((el) =>
+      ((el.querySelector('.name') || {}).textContent || '').includes('把知识库用起来')
+    );
+    if (!row) return 'no-row';
+    row.click();
+    return 'clicked';
+  })()`);
+  await sleep(900);
+  // 时间轴要「走过的段是绿的、没走的是灰的」，所以补两个还没完成的检查点
+  const msAdded = await cdp.eval(`(() => {
+    const input = [...document.querySelectorAll('input')].find((i) => (i.placeholder || '').includes('加一个里程碑'));
+    if (!input) return 'no-input';
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    const add = async (title) => {
+      setter.call(input, title);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await new Promise((r) => setTimeout(r, 700));
+    };
+    return (async () => {
+      await add('第 2 个检查点：跑通一次完整复习');
+      await add('第 3 个检查点：连续记满一周');
+      return 'added-2';
+    })();
+  })()`);
+  await sleep(1100);
+  const tlRaw = await cdp.eval(`(() => {
+    const list = document.querySelector('.timeline');
+    if (!list) return JSON.stringify({ timeline: false });
+    const rows = [...list.querySelectorAll('.list-row')];
+    const stats = rows.map((r, i) => {
+      const cs = getComputedStyle(r, '::before');
+      return {
+        done: r.classList.contains('done'),
+        last: i === rows.length - 1,
+        display: cs.display,
+        w: parseFloat(cs.width) || 0,
+        bg: cs.backgroundColor,
+        bgImg: cs.backgroundImage
+      };
+    });
+    const visible = stats.filter((s) => !s.last && s.display !== 'none' && s.w >= 1);
+    return JSON.stringify({
+      timeline: true,
+      rows: rows.length,
+      done: stats.filter((s) => s.done).length,
+      grey: visible.filter((s) => s.bg !== 'rgba(0, 0, 0, 0)' && !String(s.bgImg).includes('gradient')).length,
+      green: visible.filter((s) => String(s.bgImg).includes('gradient')).length,
+      lineW: visible[0] ? visible[0].w : 0,
+      doneCheckBg: (rows.find((r) => r.classList.contains('done')) || {}).className
+        ? getComputedStyle(rows.find((r) => r.classList.contains('done')).querySelector('.check')).backgroundColor
+        : 'none'
+    });
+  })()`);
+  const tl = (() => {
+    try {
+      return JSON.parse(String(tlRaw));
+    } catch {
+      return { err: String(tlRaw) };
+    }
+  })();
+  results.push({
+    name: '第五版：里程碑变成时间轴（一条竖线串起来，走过的段变绿）',
+    ok:
+      tl.timeline === true &&
+      tl.rows >= 3 &&
+      tl.done >= 1 &&
+      tl.grey >= 1 &&
+      tl.green >= 1 &&
+      Number(tl.lineW) >= 1,
+    detail:
+      '时间轴=' + tl.timeline + ' 检查点=' + tl.rows + ' 已完成=' + tl.done + ' 灰段=' + tl.grey + ' 绿段=' + tl.green +
+      ' 竖线宽=' + tl.lineW + 'px 勾=' + tl.doneCheckBg + ' 打开=' + msOpened + ' 添加=' + msAdded +
+      (tl.err ? ' err=' + tl.err : '')
+  });
+  await cdp.shot('goals-milestone-timeline');
 
   // 任务：先点开一行，抽屉里才有保存按钮
   await cdp.eval("location.hash = '/tasks'; true");
