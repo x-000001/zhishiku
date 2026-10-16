@@ -20,7 +20,6 @@
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -108,7 +107,7 @@ const targetDir = path.join(project, 'release');
 fs.mkdirSync(targetDir, { recursive: true });
 for (const file of produced) {
   fs.copyFileSync(path.join(outDir, file), path.join(targetDir, file));
-  log(`安装包：${path.join(targetDir, file)}（${(fs.statSync(path.join(targetDir, file)).size / 1048576).toFixed(1)} MB）`);
+  log(`安装包（构建产物，别在这儿双击）：${path.join(targetDir, file)}（${(fs.statSync(path.join(targetDir, file)).size / 1048576).toFixed(1)} MB）`);
 }
 
 // 6.1 绿色版目录也同步回来 —— 否则 release\win-unpacked 会一直停在上一次 npm run pack 的旧版本
@@ -120,32 +119,78 @@ if (fs.existsSync(unpackedSrc)) {
   log(`绿色版目录：${unpackedDst}（已同步成这次构建）`);
 }
 
-// 7. 再另存一份到项目目录之外 —— 项目目录里的那份双击会安装失败，见文件头说明
-const handoffDir =
-  process.env.JWKB_OUT_DIR || path.join(os.homedir(), 'Desktop', 'Jw知识库安装包');
+// 7. 交付目录：必须在**项目目录之外**，否则双击会安装失败（见文件头说明）。
+//    默认放 C:\JwKB（纯英文、路径短、好找），可用 JWKB_OUT_DIR 改。
+//    注意：不要把交付目录设到「桌面」—— DSH 沙箱对工作区外的写入可能被重定向，
+//    从命令行看到「写成功了」并不代表真实桌面上真有那份文件。
+const handoffRoot = process.env.JWKB_OUT_DIR || path.join(path.parse(project).root, 'JwKB');
+const setupDir = path.join(handoffRoot, 'setup');
+const portableDir = path.join(handoffRoot, 'portable');
+
 try {
-  fs.mkdirSync(handoffDir, { recursive: true });
+  fs.rmSync(setupDir, { recursive: true, force: true });
+  fs.mkdirSync(setupDir, { recursive: true });
   for (const file of produced) {
-    fs.copyFileSync(path.join(outDir, file), path.join(handoffDir, file));
+    fs.copyFileSync(path.join(outDir, file), path.join(setupDir, file));
   }
-  log(`可直接运行的副本：${handoffDir}`);
+  if (fs.existsSync(unpackedSrc)) {
+    fs.rmSync(portableDir, { recursive: true, force: true });
+    fs.cpSync(unpackedSrc, portableDir, { recursive: true });
+  }
+  fs.writeFileSync(
+    path.join(handoffRoot, '使用说明.txt'),
+    [
+      'Jw 知识库 —— 两个都在这儿，任选一个用：',
+      '',
+      '  办法一（推荐，免安装）：双击 portable\\Jw知识库.exe',
+      '  办法二（正式安装）：双击 setup\\' + produced[0],
+      '',
+      '重要：不要到项目目录 C:\\Users\\29785\\Desktop\\Jw的app\\release\\ 里双击安装包。',
+      '项目目录被加了「拒绝删除文件」的权限（沙箱保护工作区），安装器要在自己所在目录',
+      '写临时文件，会被拒，于是弹出：',
+      '  NSIS Error: Error writing temporary file. Make sure your temp folder is valid.',
+      '把安装包放在任何别的目录（比如这个文件夹）就正常。',
+      '',
+      '数据默认存在 D:\\Jw知识库\\ ，两个办法共用同一份数据，可以随便混着用。',
+      ''
+    ].join('\r\n'),
+    'utf8'
+  );
+  log(`交付目录：${handoffRoot}（setup\\ 安装包 + portable\\ 绿色版 + 使用说明.txt）`);
 } catch (err) {
-  log('另存副本失败（不影响 release\\ 里的产物）：' + err.message);
+  log('写交付目录失败（不影响后面 release\\ 里的产物）：' + err.message);
 }
 
-// 7.1 桌面上如果已经有「绿色版」文件夹，一并刷成这次构建（没有就不动）
-const greenDir =
-  process.env.JWKB_GREEN_DIR || path.join(os.homedir(), 'Desktop', 'Jw知识库（绿色版）');
-if (fs.existsSync(greenDir) && fs.existsSync(unpackedSrc)) {
-  try {
-    fs.rmSync(greenDir, { recursive: true, force: true });
-    fs.cpSync(unpackedSrc, greenDir, { recursive: true });
-    log(`绿色版已更新：${greenDir}`);
-  } catch (err) {
-    log('更新绿色版失败（请先退出正在运行的 Jw知识库，再重跑 npm run dist）：' + err.message);
+// 7.1 顺手把项目目录里的安装包删掉，避免手滑在项目目录里双击（删失败的旧版本也一并清）
+try {
+  const stale = fs
+    .readdirSync(targetDir)
+    .filter((f) => f.endsWith('.exe') || f.endsWith('.nsis.7z'));
+  for (const file of stale) {
+    fs.rmSync(path.join(targetDir, file), { force: true });
   }
+  fs.writeFileSync(
+    path.join(targetDir, '请先看这里.txt'),
+    [
+      '这个 release 目录里没有可以直接双击的安装包——是故意的。',
+      '',
+      '项目目录带「拒绝删除文件」权限（沙箱保护工作区），安装器要在自己所在目录写临时文件，',
+      '在这儿双击一定报：NSIS Error: Error writing temporary file. Make sure your temp folder is valid.',
+      '',
+      `安装包和绿色版都在：${handoffRoot}\\`,
+      '  setup\\     —— 安装程序',
+      '  portable\\  —— 免安装绿色版，双击 Jw知识库.exe 即用',
+      ''
+    ].join('\r\n'),
+    'utf8'
+  );
+  if (stale.length) log(`已清掉项目目录里的安装包：${stale.join('、')}`);
+} catch (err) {
+  log('清理项目目录里的安装包失败：' + err.message);
 }
 
 console.log('');
-console.log(`完成。请双击这个文件安装：${path.join(handoffDir, produced[0])}`);
-console.log('（release\\ 里那份是构建产物，留在项目目录里双击会报 NSIS 临时文件错误，别从那运行。）');
+console.log(`完成。两个办法任选一个：`);
+console.log(`  免安装：${path.join(portableDir, 'Jw知识库.exe')}`);
+console.log(`  装一下：${path.join(setupDir, produced[0])}`);
+console.log('（别在项目目录 release\\ 里双击安装包，那里会报 NSIS 临时文件错误。）');

@@ -12,27 +12,32 @@
 
 ### 办法一：绿色版（推荐，最省事）
 
-桌面上的 **「Jw知识库」快捷方式**指的就是它，双击即用：
+双击这个文件即用：
 
 ```
-C:\Users\29785\Desktop\Jw知识库（绿色版）\Jw知识库.exe
+C:\JwKB\portable\Jw知识库.exe
 ```
 
-不需要安装、不需要管理员权限、不写注册表。整个「Jw知识库（绿色版）」文件夹可以拷到任何盘、
+不需要安装、不需要管理员权限、不写注册表。整个 `C:\JwKB\portable` 文件夹可以拷到任何盘、
 任何目录（U 盘也行），里面的 `Jw知识库.exe` 双击就能跑。删掉文件夹就等于卸载。
+
+> 想要桌面图标：右键 `Jw知识库.exe` →「发送到」→「桌面快捷方式」。
 
 ### 办法二：安装版（会让桌面出现正式图标、可从控制面板卸载）
 
-安装包：`C:\Users\29785\Desktop\Jw知识库安装包\Jw知识库-安装包-0.1.0.exe`（约 108 MB）。
+安装包：`C:\JwKB\setup\Jw知识库-安装包-0.2.0.exe`（约 108 MB）。
 
 1. 双击 → 可能先被 Windows SmartScreen 拦一下，显示「Windows 已保护你的电脑」：
    因为安装包没买代码签名证书，显示「发布者未知」是正常的。点 **「更多信息」→「仍要运行」**。
 2. 然后一路「下一步」；安装位置可以自己改。
 3. 装完桌面出现「Jw知识库」图标，以后像普通软件一样双击打开。
 
-> 如果弹出 `NSIS Error: Error writing temporary file. Make sure your temp folder is valid.`，
-> 说明你运行的是**旧版**安装包。新版已经把那一步（安装器启动时调 PowerShell 去检查程序是否在
-> 运行、需要写临时文件）整个换成了不写临时文件的实现，见第五章「打包」。
+> **不要去项目目录 `C:\Users\29785\Desktop\Jw的app\release\` 里双击安装包。**
+> 那个目录被沙箱加了一条「Everyone 拒绝删除子目录和文件」的权限（保护工作区，属于预期行为）。
+> 安装器启动时要在自己所在目录写一次临时文件再替换，被这条权限拒绝，就会弹：
+> `NSIS Error: Error writing temporary file. Make sure your temp folder is valid.`
+> 放在 `C:\JwKB\setup\` 这类普通目录里就正常（安装器本身没问题，是「在哪个目录运行」的问题）。
+> 打好的安装包落在 `C:\JwKB\`，`release\` 里不再留安装包。
 
 第一次打开会自动建好数据目录 `D:\Jw知识库`。
 
@@ -127,26 +132,45 @@ npm run test:all       # 上面全部按顺序跑一遍
 
 ```powershell
 npm run pack           # 只生成绿色版，产出 release\win-unpacked\
-npm run dist           # 生成安装包，产出 release\Jw知识库-安装包-<版本>.exe
+npm run dist           # 生成安装包 + 绿色版，交付到 C:\JwKB\
 ```
 
-> **注意 `npm run dist` 必须在英文路径下打包。**
-> electron-builder 会调用 NSIS 的 `makensis.exe`，它的 `!tempfile` 宏会在「脚本所在目录」建临时文件——
-> 只要这个目录里有中文（本项目目录叫 `Jw的app`），就会报
-> `!tempfile: Unable to create temporary file!` 然后打包失败。
-> 所以 `npm run dist` 走的是 `.tools\build-installer.mjs`：它先把 `out\`、`resources\`、`package.json`
-> 复制到 `C:\jwkb-build`，用目录联接挂上 `node_modules`，在那边打完包再把 exe 拷回 `release\`，
-> 并另外往 `桌面\Jw知识库安装包\` 存一份可直接双击的副本（想换位置就设环境变量 `JWKB_OUT_DIR`）。
-> 想换暂存目录就设环境变量 `JWKB_BUILD_DIR`（同样必须是英文路径）。
->
-> **还有一个运行期的坑（已修）**：electron-builder 默认生成的安装器里，
-> 「检查程序是否已经在运行」这一步是用 `nsExec` 调 PowerShell 实现的，`nsExec` 需要写临时文件——
-> 在部分机器上这一步会直接失败，弹出 `NSIS Error: Error writing temporary file.
-> Make sure your temp folder is valid.`，安装器连窗口都出不来。
-> 修法是 `electron-builder.yml` 里加了 `nsis.include: installer.nsh`，由 `resources\installer.nsh`
-> 提供一个空的 `customCheckAppRunning` 宏，把这一步整个替换掉——安装流程从此不调 PowerShell、
-> 不写任何临时文件。代价：安装器不再帮你关掉正在运行的旧版本，升级前自己先退出程序。
-> （`resources\installer.nsh` 里只允许写 ASCII 注释：NSIS 读 include 文件用系统代码页，中文有编译风险。）
+打完包后**安装包不在 `release\` 里**，而在：
+
+```
+C:\JwKB\setup\Jw知识库-安装包-<版本>.exe     ← 双击这个安装
+C:\JwKB\portable\Jw知识库.exe                ← 免安装绿色版，双击即用
+C:\JwKB\使用说明.txt
+```
+
+交付目录可以用环境变量 `JWKB_OUT_DIR` 改（**不要设成桌面**，见下）。
+
+> **为什么安装包必须放在项目目录之外？**
+> 项目目录 `C:\Users\29785\Desktop\Jw的app` 上有一条「Everyone 拒绝 删除子目录和文件」的权限项
+> （DSH 沙箱为保护工作区加的，属于预期行为，不要手动删）。NSIS 安装器启动时会先在自己所在目录
+> 写一次临时文件，被这条权限拒绝，于是弹
+> `NSIS Error: Error writing temporary file. Make sure your temp folder is valid.`
+> —— 2026-10-16 就是在 `release\` 里双击踩到的。`build-installer.mjs` 现在打完包会把 `release\`
+> 里的 exe 删掉、只留 `win-unpacked\`，并写一份「请先看这里.txt」，免得再踩。
+
+> **为什么不能把交付目录设成「桌面」？**
+> DSH 沙箱对工作区之外的写入可能被重定向：命令行里复制成功、`Test-Path` 也返回 True，
+> 但真实桌面上什么都没有。所以默认交付到 `C:\JwKB`（盘根、纯英文、一定看得见）。
+> 这一条是 2026-10-16 用「换一条新命令重新 stat」的方式确认的。
+
+> **打包暂存路径**：`npm run dist` 走的是 `.tools\build-installer.mjs`，它先把 `out\`、`resources\`、
+> `package.json` 复制到 `C:\jwkb-build`，用目录联接挂上 `node_modules`，在那边打完包再拷回来。
+> 因为 electron-builder 调用的 `makensis.exe` 用 `!tempfile` 在「脚本所在目录」建临时文件，
+> 路径里有中文（本项目目录叫 `Jw的app`）就会报 `!tempfile: Unable to create temporary file!`。
+> 暂存目录可以用 `JWKB_BUILD_DIR` 改，同样必须是英文路径。
+
+> **安装器的另一处隐患（已修）**：electron-builder 默认生成的安装器里，「检查程序是否已经在运行」
+> 是用 `nsExec` 调 PowerShell 实现的，`nsExec` 要写临时文件；在部分机器上（PowerShell / CIM 被策略
+> 限制时）这一步会直接失败，连窗口都出不来。修法是 `electron-builder.yml` 里加
+> `nsis.include: installer.nsh`，由 `resources\installer.nsh` 提供一个空的 `customCheckAppRunning`
+> 宏把这一步替换掉——安装流程从此不调 PowerShell、不写临时文件。代价：安装器不再帮你关掉正在运行
+> 的旧版本，升级前自己先退出程序。（`resources\installer.nsh` 里只允许写 ASCII 注释：NSIS 读
+> include 文件用系统代码页，中文有编译风险。）
 
 ---
 
