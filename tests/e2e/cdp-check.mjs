@@ -645,6 +645,82 @@ try {
   });
   await cdp.shot('tasks-priority');
 
+  // ---- 优化项 6：笔记卡片拖动排序（真的拖一次） ----
+  await cdp.eval("location.hash = '/__bounce'; true");
+  await sleep(250);
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(900);
+  const catPicked = await cdp.eval(`(() => {
+    const hit = [...document.querySelectorAll('.tree-item')].find((el) => (el.innerText || '').includes('排序自检分类'));
+    if (!hit) return 'no-cat';
+    hit.click();
+    return 'ok';
+  })()`);
+  await sleep(800);
+  const listTitles = "(() => [...document.querySelectorAll('.kb-list-body .list-row .title')].map((e) => e.innerText.trim()))()";
+  const beforeDrag = await cdp.eval(listTitles);
+  const dragResult = await cdp.eval(`(() => {
+    const rows = [...document.querySelectorAll('.kb-list-body .list-row')];
+    if (rows.length < 3) return 'few:' + rows.length;
+    const dt = new DataTransfer();
+    const titleOf = (r) => ((r.querySelector('.title') || {}).innerText || '').trim();
+    const src = rows[0];
+    const dst = rows[2];
+    const info = { from: titleOf(src), to: titleOf(dst), draggable: src.getAttribute('draggable') };
+    src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+    const box = dst.getBoundingClientRect();
+    const init = { bubbles: true, dataTransfer: dt, clientX: box.left + 8, clientY: box.bottom - 2 };
+    dst.dispatchEvent(new DragEvent('dragover', init));
+    dst.dispatchEvent(new DragEvent('drop', init));
+    src.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+    return JSON.stringify(info);
+  })()`);
+  await sleep(900);
+  const afterDrag = await cdp.eval(listTitles);
+  results.push({
+    name: '笔记卡片可以拖动（卡片带 draggable、分类下能拿到 3 张）',
+    ok: catPicked === 'ok' && Array.isArray(beforeDrag) && beforeDrag.length >= 3,
+    detail: catPicked + ' 卡片=' + (Array.isArray(beforeDrag) ? beforeDrag.join('|') : beforeDrag)
+  });
+  const dragInfo = (() => {
+    try {
+      return JSON.parse(String(dragResult));
+    } catch {
+      return { from: '', to: '', draggable: String(dragResult) };
+    }
+  })();
+  const movedFrom = Array.isArray(afterDrag) ? afterDrag.indexOf(dragInfo.from) : -1;
+  const movedTo = Array.isArray(afterDrag) ? afterDrag.indexOf(dragInfo.to) : -1;
+  results.push({
+    name: '拖动后顺序立刻变了，卡片落在目标旁边',
+    ok:
+      JSON.stringify(afterDrag) !== JSON.stringify(beforeDrag) &&
+      movedFrom >= 0 &&
+      movedTo >= 0 &&
+      Math.abs(movedFrom - movedTo) === 1,
+    detail: '拖的「' + dragInfo.from + '」→ 现在位置 ' + movedFrom + '，目标「' + dragInfo.to + '」在 ' + movedTo + '；顺序=' + (Array.isArray(afterDrag) ? afterDrag.join('|') : afterDrag)
+  });
+  // 重新挂载页面（相当于关掉重开），顺序应当还是刚才拖完的样子
+  await cdp.eval("location.hash = '/__bounce'; true");
+  await sleep(250);
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(900);
+  await cdp.eval(`(() => {
+    const hit = [...document.querySelectorAll('.tree-item')].find((el) => (el.innerText || '').includes('排序自检分类'));
+    if (hit) hit.click();
+    return true;
+  })()`);
+  await sleep(800);
+  const afterReload = await cdp.eval(listTitles);
+  results.push({
+    name: '重开后顺序还是拖完的样子（顺序真的落到库里了）',
+    ok: JSON.stringify(afterReload) === JSON.stringify(afterDrag),
+    detail: '重开=' + (Array.isArray(afterReload) ? afterReload.join('|') : afterReload)
+  });
+  const dragHint = await cdp.eval("(() => [...document.querySelectorAll('.muted')].some((e) => (e.innerText || '').includes('拖动卡片可以调顺序')))()");
+  results.push({ name: '列表上方有「拖动卡片可以调顺序」的提示', ok: dragHint === true, detail: String(dragHint) });
+  await cdp.shot('knowledge-reorder');
+
   // ---- 第三版：富文本编辑器的界面行为 ----
   await cdp.eval("location.hash = '/__bounce'; true");
   await sleep(250);

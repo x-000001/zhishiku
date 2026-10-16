@@ -514,6 +514,28 @@ label.field {
   border-radius: var(--radius-sm);
   cursor: pointer;
   border: 1px solid transparent;
+  position: relative;
+}
+
+/* 优化项 6：拖动排序时，被拖的那张淡一点，目标位置画一条落点线 */
+.list-row.dragging {
+  opacity: 0.45;
+}
+.list-row.drop-before::before,
+.list-row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--brand);
+}
+.list-row.drop-before::before {
+  top: -1px;
+}
+.list-row.drop-after::after {
+  bottom: -1px;
 }
 
 .list-row:hover {

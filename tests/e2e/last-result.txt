@@ -93,10 +93,10 @@ PASS  排序后列表顺序就是拖完的顺序  —  位置=[0,1,2] 之前=[0,
 PASS  在某个分类里排序不影响别的分类  —  别的分类=1
 PASS  设置能读  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","versionKeep":20,"theme":"light","notifyEnabled":true,"closeToTray":true}
 PASS  设置能改并持久化  —  versionKeep=5
-PASS  手动备份成功  —  手动_2026-10-16_162559
+PASS  手动备份成功  —  手动_2026-10-16_163100
 PASS  备份列表可读  —  备份数=2
 PASS  插图真的复制进了数据目录的附件夹（原件删了也不影响）  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments\2026-10\e2e-pixel.png
-PASS  备份目录里有快照且含 kb.db  —  2026-10-16_162559, 手动_2026-10-16_162559
+PASS  备份目录里有快照且含 kb.db  —  2026-10-16_163059, 手动_2026-10-16_163100
 PASS  数据库文件落在数据目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.db
 PASS  附件目录已建好  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments
 PASS  页面 / 有实际内容  —  今日待办
@@ -157,9 +157,7 @@ PASS  页面 /knowledge 有实际内容  —  分类
 ＋
 全部笔记 · 8 篇
 🏷 标签
-📌
-知识管理测试笔记
-刚刚
+拖动卡片可以调顺序（只影响当
 PASS  页面 /tasks 有实际内容  —  视图
 ☀️
 今天
@@ -271,6 +269,10 @@ PASS  全选后整列都打上选中标记  —  选中行=3
 PASS  任务前面的小圆点带三档颜色类名  —  {"urgent":0,"important":2,"normal":1,"other":0}
 PASS  任务左右有优先级筛选按钮  —  全部|紧急|重要|一般
 PASS  点「紧急」后列表里只剩紧急任务  —  {"n":1,"allUrgent":true}
+PASS  笔记卡片可以拖动（卡片带 draggable、分类下能拿到 3 张）  —  ok 卡片=排序丙|排序甲|排序乙
+PASS  拖动后顺序立刻变了，卡片落在目标旁边  —  拖的「排序丙」→ 现在位置 1，目标「排序乙」在 2；顺序=排序甲|排序丙|排序乙
+PASS  重开后顺序还是拖完的样子（顺序真的落到库里了）  —  重开=排序甲|排序丙|排序乙
+PASS  列表上方有「拖动卡片可以调顺序」的提示  —  true
 PASS  点开笔记后出现富文本工具栏  —  {"open":"clicked","bar":true,"btns":9,"editable":true}
 PASS  正文区是可编辑的富文本容器  —  {"open":"clicked","bar":true,"btns":9,"editable":true}
 PASS  工具栏能插入表格、光标进单元格后多出增删行列按钮  —  插入表格✕|table=true|rowBtn=2|colBtn=2
@@ -283,6 +285,6 @@ PASS  深色主题能切换  —  dark|
 PASS  浅色主题能切回  —  light
 PASS  CSP 已收紧（打包版不联网）  —  default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: jw-att:; font-src 'self' data:; connect-src 'self'
 ------------------------------------------------
-合计 127 项，通过 127，失败 0
+合计 131 项，通过 131，失败 0
 截图目录：C:\Users\29785\Desktop\Jw的app\tests\e2e\shots
 应用进程：exit=null signal=SIGTERM

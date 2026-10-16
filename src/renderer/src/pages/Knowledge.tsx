@@ -5,6 +5,7 @@ import { fmtDate, relative } from '../format';
 import { diffLines, renderMarkdown } from '../../../shared/markdown';
 import { attachmentUrl, htmlToPlainText, sanitizeHtml } from '../../../shared/html';
 import * as rich from '../rich';
+import { applyOrder, moveWithinGroup } from '../reorder';
 import type { Attachment, Category, Id, Note, NoteListItem, NoteVersion, Tag } from '../../../shared/types';
 
 type NoteDetail = Note & { tags: Tag[]; attachments: Attachment[] };
@@ -26,6 +27,10 @@ export default function Knowledge(props: {
   const [tagId, setTagId] = useState<Id | null>(null);
   const [q, setQ] = useState('');
   const [list, setList] = useState<NoteListItem[]>([]);
+  const [dragId, setDragId] = useState<Id | null>(null);
+  const [dropAt, setDropAt] = useState<{ id: Id; after: boolean } | null>(null);
+  // 搜索或按标签筛出来的是一小撮子集，这时候拖动排序没有意义，关掉
+  const canReorder = sel !== 'trash' && !q.trim() && tagId === null;
   const [openId, setOpenId] = useState<Id | null>(null);
   const [note, setNote] = useState<NoteDetail | null>(null);
   const [title, setTitle] = useState('');
@@ -405,6 +410,22 @@ export default function Knowledge(props: {
     }
   };
 
+  /**
+   * 优化项 6：卡片拖动排序。
+   * 只重排「被拖动那张所在的分类」里的笔记，别的分类（以及置顶/筛选后的顺序）不受影响——
+   * 这就是「在某分类下排序只影响该分类」的落点。
+   */
+  const reorderTo = (draggedId: Id, targetId: Id, after: boolean): void => {
+    const ids = moveWithinGroup(list, draggedId, targetId, after);
+    if (!ids) return;
+    // 先在本地摆好，拖动松手就能看到效果，再落库
+    setList((prev) => applyOrder(prev, ids));
+    void api
+      .reorderNotes(ids)
+      .then(() => loadList())
+      .catch((err: Error) => toast('排序保存失败：' + err.message));
+  };
+
   const trash = async (id: Id): Promise<void> => {
     try {
       await api.trashNote(id);
@@ -660,6 +681,13 @@ export default function Knowledge(props: {
               </button>
             </div>
           ) : null}
+          {canReorder && list.length > 1 ? (
+            <div className="row" style={{ gap: 6 }}>
+              <span className="muted" style={{ flex: 1, fontSize: 12 }}>
+                拖动卡片可以调顺序（只影响当前分类）
+              </span>
+            </div>
+          ) : null}
         </div>
 
         <div className="kb-list-body">
@@ -675,9 +703,51 @@ export default function Knowledge(props: {
             list.map((item) => (
               <div
                 key={item.id}
-                className={openId === item.id ? 'list-row selected' : 'list-row'}
+                className={[
+                  'list-row',
+                  openId === item.id ? 'selected' : '',
+                  dragId === item.id ? 'dragging' : '',
+                  dropAt && dropAt.id === item.id ? (dropAt.after ? 'drop-after' : 'drop-before') : ''
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
                 draggable={sel !== 'trash'}
-                onDragStart={(e) => e.dataTransfer.setData('text/note-id', String(item.id))}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/note-id', String(item.id));
+                  e.dataTransfer.effectAllowed = 'move';
+                  setDragId(item.id);
+                }}
+                onDragEnd={() => {
+                  setDragId(null);
+                  setDropAt(null);
+                }}
+                onDragOver={(e) => {
+                  if (!canReorder || dragId === null || dragId === item.id) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  const box = e.currentTarget.getBoundingClientRect();
+                  const after = e.clientY > box.top + box.height / 2;
+                  if (!dropAt || dropAt.id !== item.id || dropAt.after !== after) {
+                    setDropAt({ id: item.id, after });
+                  }
+                }}
+                onDragLeave={(e) => {
+                  if (dropAt && dropAt.id === item.id && !e.currentTarget.contains(e.relatedTarget as Node)) {
+                    setDropAt(null);
+                  }
+                }}
+                onDrop={(e) => {
+                  if (!canReorder) return;
+                  const raw = e.dataTransfer.getData('text/note-id');
+                  const dropped = Number(raw);
+                  if (!raw || Number.isNaN(dropped) || dropped === item.id) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const after = dropAt && dropAt.id === item.id ? dropAt.after : false;
+                  reorderTo(dropped, item.id, after);
+                  setDragId(null);
+                  setDropAt(null);
+                }}
                 onClick={() => setOpenId(item.id)}
               >
                 <span>{item.is_pinned ? '📌' : '📄'}</span>
