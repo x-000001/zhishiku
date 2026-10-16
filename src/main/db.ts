@@ -1135,8 +1135,10 @@ export function listTasks(filter: TaskFilter = {}): Task[] {
   const where: string[] = ['deleted_at is null'];
   const args: unknown[] = [];
   switch (filter.view) {
+    // 今天视图故意不按 status 过滤：勾完就消失会让人以为任务被删了，
+    // 已完成的排到最后（见下面 order by）并显示成灰字删除线。
     case 'today':
-      where.push("status = 'todo' and due_at is not null and substr(due_at, 1, 10) <= ?");
+      where.push('due_at is not null and substr(due_at, 1, 10) <= ?');
       args.push(today);
       break;
     case 'overdue':
@@ -1153,6 +1155,8 @@ export function listTasks(filter: TaskFilter = {}): Task[] {
     default:
       break;
   }
+  if (filter.status === 'todo') where.push("status = 'todo'");
+  else if (filter.status === 'done') where.push("status = 'done'");
   if (filter.goalId != null) {
     where.push('goal_id = ?');
     args.push(filter.goalId);
@@ -1166,7 +1170,7 @@ export function listTasks(filter: TaskFilter = {}): Task[] {
   const limit = Math.min(Math.max(Number(filter.limit ?? 500) || 500, 1), 2000);
   const rows = all<Task>(
     `select * from task where ${where.join(' and ')}
-     order by status asc,
+     order by case when status = 'done' then 1 else 0 end asc,
               case when due_at is null then 1 else 0 end asc,
               substr(due_at, 1, 10) asc,
               priority desc, id desc
@@ -1177,7 +1181,7 @@ export function listTasks(filter: TaskFilter = {}): Task[] {
 }
 
 /** 各视图的真实条数：不受列表 500 条上限影响，左侧角标要的是准数。 */
-export function taskCounts(): Record<'today' | 'overdue' | 'upcoming' | 'all' | 'done', number> {
+export function taskCounts(): Record<'today' | 'overdue' | 'upcoming' | 'all' | 'todo' | 'done', number> {
   const today = todayLocal();
   const n = (sql: string, ...args: unknown[]): number =>
     Number(one<{ c: number }>(sql, ...args)?.c ?? 0);
@@ -1193,6 +1197,7 @@ export function taskCounts(): Record<'today' | 'overdue' | 'upcoming' | 'all' | 
       today
     ),
     all: n(`select count(*) as c ${from}`),
+    todo: n(`select count(*) as c ${from} and status = 'todo'`),
     done: n(`select count(*) as c ${from} and status = 'done'`)
   };
 }
@@ -1323,6 +1328,20 @@ export function toggleTask(id: Id, status?: TaskStatus): { task: Task | null; sp
 
 export function deleteTask(id: Id): void {
   run('update task set deleted_at = ? where id = ?', nowIso(), id);
+}
+
+/** 批量删除（多选模式用）：走和单条一样的软删除，返回真正删掉的条数。 */
+export function deleteTasks(ids: Id[]): number {
+  const clean = [...new Set(ids.map(Number).filter((n) => Number.isFinite(n)))];
+  if (clean.length === 0) return 0;
+  const now = nowIso();
+  let n = 0;
+  for (const id of clean) {
+    const before = one<{ c: number }>('select count(*) as c from task where id = ? and deleted_at is null', id);
+    run('update task set deleted_at = ? where id = ? and deleted_at is null', now, id);
+    if (Number(before?.c ?? 0) > 0) n += 1;
+  }
+  return n;
 }
 
 /** 本地「YYYY-MM-DD HH:mm」，只用来和 remind_at 做字符串比较。 */

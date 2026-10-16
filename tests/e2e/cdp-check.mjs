@@ -206,6 +206,30 @@ const CHECK_SCRIPT = `(async () => {
     const updated = await inv('task:list', { view: 'all' });
     rec('任务能行内改', updated.some((t) => t.id === t1 && t.title.includes('改过') && t.priority === 1), 'ok');
 
+    // ---- 优化项 4：勾完不消失 / 状态三档 / 批量删除 ----
+    const todayAfter = await inv('task:list', { view: 'today' });
+    rec(
+      '勾完的任务还留在今天列表里（勾完不消失）',
+      todayAfter.some((t) => t.id === t1 && t.status === 'done'),
+      '今天=' + todayAfter.length
+    );
+    rec(
+      '已完成的排在没做完的后面',
+      todayAfter.findIndex((t) => t.status === 'done') > todayAfter.findIndex((t) => t.status === 'todo'),
+      todayAfter.map((t) => t.status).join(',')
+    );
+    const onlyTodo = await inv('task:list', { view: 'all', status: 'todo' });
+    const onlyDone = await inv('task:list', { view: 'all', status: 'done' });
+    rec('状态筛选：未完成', onlyTodo.length > 0 && onlyTodo.every((t) => t.status === 'todo'), '未完成=' + onlyTodo.length);
+    rec('状态筛选：已完成', onlyDone.some((t) => t.id === t1) && onlyDone.every((t) => t.status === 'done'), '已完成=' + onlyDone.length);
+    const countsV3 = await inv('task:counts');
+    rec('角标多了未完成这一档', typeof countsV3.todo === 'number' && countsV3.todo === onlyTodo.length, 'todo=' + countsV3.todo);
+    const batchIds = onlyTodo.slice(0, 2).map((t) => t.id);
+    const removedCount = await inv('task:delete-many', { ids: batchIds });
+    rec('批量删除返回真正删掉的条数', removedCount === batchIds.length, '删了 ' + removedCount + '/' + batchIds.length);
+    const leftAll = await inv('task:list', { view: 'all' });
+    rec('批量删除后列表里没有它们了', batchIds.every((id) => !leftAll.some((t) => t.id === id)), '剩=' + leftAll.length);
+
     // ---- 首页 ----
     const dash = await inv('dash:overview');
     rec('首页数据能读', !!dash && Array.isArray(dash.tasks) && typeof dash.today === 'string', 'today=' + (dash && dash.today) + ' 待办=' + (dash && dash.tasks.length));
@@ -492,6 +516,48 @@ try {
     });
     await cdp.shot(name);
   }
+
+  // ---- 优化项 4：任务页的状态三档与多选界面 ----
+  await cdp.eval("location.hash = '/__bounce'; true");
+  await sleep(250);
+  await cdp.eval("location.hash = '/tasks'; true");
+  await sleep(800);
+  const statusTabs = await cdp.eval(
+    "(() => [...document.querySelectorAll('.kb-tree button')].map((b) => (b.innerText || '').trim()).join('|'))()"
+  );
+  results.push({
+    name: '任务页有状态三档按钮',
+    ok:
+      /全部/.test(String(statusTabs)) && /未完成/.test(String(statusTabs)) && /已完成/.test(String(statusTabs)),
+    detail: String(statusTabs).slice(0, 80)
+  });
+  const pickOn = await cdp.eval(`(() => {
+    const btn = [...document.querySelectorAll('button')].find((b) => (b.innerText || '').includes('多选'));
+    if (!btn) return 'no-btn';
+    btn.click();
+    return 'clicked';
+  })()`);
+  await sleep(500);
+  const boxes = await cdp.eval("document.querySelectorAll('.task-row input.pick').length");
+  results.push({
+    name: '多选模式每行出现复选框',
+    ok: pickOn === 'clicked' && Number(boxes) > 0,
+    detail: '复选框=' + boxes
+  });
+  const allBtn = await cdp.eval(`(() => {
+    const btn = [...document.querySelectorAll('button')].find((b) => (b.innerText || '').trim() === '全选');
+    if (!btn) return 'no-all';
+    btn.click();
+    return 'clicked';
+  })()`);
+  await sleep(400);
+  const pickedRows = await cdp.eval("document.querySelectorAll('.task-row.picked').length");
+  results.push({
+    name: '全选后整列都打上选中标记',
+    ok: allBtn === 'clicked' && Number(pickedRows) > 0,
+    detail: '选中行=' + pickedRows
+  });
+  await cdp.shot('tasks-multi');
 
   // ---- 第三版：富文本编辑器的界面行为 ----
   await cdp.eval("location.hash = '/__bounce'; true");

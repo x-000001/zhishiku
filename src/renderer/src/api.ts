@@ -126,12 +126,14 @@ export const api = {
   }) => call<{ ref: string }>('inbox:convert', payload),
 
   listTasks: (filter: TaskFilter) => call<Task[]>('task:list', filter),
-  taskCounts: () => call<Record<'today' | 'overdue' | 'upcoming' | 'all' | 'done', number>>('task:counts'),
+  taskCounts: () =>
+    call<Record<'today' | 'overdue' | 'upcoming' | 'all' | 'todo' | 'done', number>>('task:counts'),
   createTask: (input: Partial<Task> & { title: string }) => call<Id>('task:create', input),
   updateTask: (id: Id, patch: Partial<Task>) => call<boolean>('task:update', { id, patch }),
   toggleTask: (id: Id, status?: Task['status']) =>
     call<{ task: Task | null; spawned: Id | null }>('task:toggle', { id, status }),
   deleteTask: (id: Id) => call<boolean>('task:delete', { id }),
+  deleteTasks: (ids: Id[]) => call<number>('task:delete-many', { ids }),
 
   dashboard: () => call<DashboardData>('dash:overview'),
 

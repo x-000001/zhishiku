@@ -254,6 +254,8 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
     db.deleteTask(p.id);
     return true;
   });
+  // 多选模式一次删一批，返回真正删掉的条数
+  handle('task:delete-many', (p: { ids: Id[] }) => db.deleteTasks(p?.ids ?? []));
 
   /* ---------------- 首页 ---------------- */
 

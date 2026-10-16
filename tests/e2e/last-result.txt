@@ -28,7 +28,14 @@ PASS  勾掉普通任务不生成下一次  —  null
 PASS  勾掉重复任务会生成下一次  —  spawned=5
 PASS  重复任务生成了下一次、排在明天  —  下一跳=2026-10-17
 PASS  任务能行内改  —  ok
-PASS  首页数据能读  —  today=2026-10-16 待办=1
+PASS  勾完的任务还留在今天列表里（勾完不消失）  —  今天=3
+PASS  已完成的排在没做完的后面  —  todo,done,done
+PASS  状态筛选：未完成  —  未完成=3
+PASS  状态筛选：已完成  —  已完成=2
+PASS  角标多了未完成这一档  —  todo=3
+PASS  批量删除返回真正删掉的条数  —  删了 2/2
+PASS  批量删除后列表里没有它们了  —  剩=3
+PASS  首页数据能读  —  today=2026-10-16 待办=0
 PASS  首页统计了收集箱与最近笔记  —  待整理=0 最近笔记=3
 PASS  首页包含复习提醒结构  —  复习卡=0
 PASS  首页包含目标进度结构  —  目标=0
@@ -82,23 +89,20 @@ PASS  排序后列表顺序就是拖完的顺序  —  位置=[0,1,2] 之前=[0,
 PASS  在某个分类里排序不影响别的分类  —  别的分类=1
 PASS  设置能读  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","versionKeep":20,"theme":"light","notifyEnabled":true,"closeToTray":true}
 PASS  设置能改并持久化  —  versionKeep=5
-PASS  手动备份成功  —  手动_2026-10-16_161510
+PASS  手动备份成功  —  手动_2026-10-16_162000
 PASS  备份列表可读  —  备份数=2
 PASS  插图真的复制进了数据目录的附件夹（原件删了也不影响）  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments\2026-10\e2e-pixel.png
-PASS  备份目录里有快照且含 kb.db  —  2026-10-16_161510, 手动_2026-10-16_161510
+PASS  备份目录里有快照且含 kb.db  —  2026-10-16_161959, 手动_2026-10-16_162000
 PASS  数据库文件落在数据目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.db
 PASS  附件目录已建好  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments
 PASS  页面 / 有实际内容  —  今日待办
 去任务页
-2
+1
 今天要做的
 0
 已经逾期
 2
 今天已完成
-✓
-读书：深度工作第二章
-今天
 ✓
 提醒测试
 今天
@@ -109,7 +113,9 @@ PASS  页面 / 有实际内容  —  今日待办
 工作 · 刚刚 · 24 字
 📄
 排序丙
-排序自检分类 
+排序自检分类 · 刚刚 · 1 字
+📄
+把英
 PASS  页面 /inbox 有实际内容  —  随手记一条
 💡 想法
 📖 待读
@@ -153,17 +159,21 @@ PASS  页面 /knowledge 有实际内容  —  分类
 PASS  页面 /tasks 有实际内容  —  视图
 ☀️
 今天
-4
+3
 ⚠️
 已逾期
 0
 📆
 接下来
-2
+1
 📋
 全部
-6
-✅
+4
+状态
+全部
+4
+未完成
+2
 已完成
 2
 筛选
@@ -172,7 +182,7 @@ PASS  页面 /tasks 有实际内容  —  视图
 · 点日期改截止日
 · 回车快速加下一条
 ☀️ 今天
-2 条 · 今天到期，连同已经
+3 条
 PASS  页面 /plans 有实际内容  —  学习计划
 📅
 每天两小时学英语
@@ -246,6 +256,12 @@ C:\Users\29785\Desktop\Jw的app\.e2e-data
 C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.
 PASS  页面 /quick 有实际内容  —  回车存进收集箱，之后慢慢整理
 Esc 关闭
+PASS  任务页有状态三档按钮  —  全部
+4|未完成
+2|已完成
+2
+PASS  多选模式每行出现复选框  —  复选框=3
+PASS  全选后整列都打上选中标记  —  选中行=3
 PASS  点开笔记后出现富文本工具栏  —  {"open":"clicked","bar":true,"btns":9,"editable":true}
 PASS  正文区是可编辑的富文本容器  —  {"open":"clicked","bar":true,"btns":9,"editable":true}
 PASS  工具栏能插入表格、光标进单元格后多出增删行列按钮  —  插入表格✕|table=true|rowBtn=2|colBtn=2
@@ -258,6 +274,6 @@ PASS  深色主题能切换  —  dark|
 PASS  浅色主题能切回  —  light
 PASS  CSP 已收紧（打包版不联网）  —  default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: jw-att:; font-src 'self' data:; connect-src 'self'
 ------------------------------------------------
-合计 110 项，通过 110，失败 0
+合计 120 项，通过 120，失败 0
 截图目录：C:\Users\29785\Desktop\Jw的app\tests\e2e\shots
 应用进程：exit=null signal=SIGTERM

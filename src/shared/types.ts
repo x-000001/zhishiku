@@ -121,6 +121,8 @@ export interface ListFilter {
 
 export interface TaskFilter {
   view?: 'today' | 'all' | 'upcoming' | 'done' | 'overdue';
+  /** 状态筛选：不传或 'all' = 全部（含已完成，勾完不消失），'todo' = 未完成，'done' = 已完成 */
+  status?: 'all' | 'todo' | 'done';
   q?: string;
   goalId?: Id;
   /** 一次最多取多少条，默认 500、上限 2000（见 db.listTasks） */

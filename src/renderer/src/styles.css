@@ -1128,6 +1128,20 @@ label.field {
   border-color: var(--brand);
 }
 
+/* 多选模式（优化项 4）：选中行淡蓝底，左边多一个复选框 */
+.task-row.picked {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+
+.task-row input.pick {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  cursor: pointer;
+  accent-color: var(--brand);
+}
+
 .task-row input.inline-title {
   border: none;
   background: transparent;

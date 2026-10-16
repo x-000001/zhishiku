@@ -362,12 +362,44 @@ describe('任务与重复规则', () => {
     const doneId = db.createTask({ title: '已经做完的', due_at: today });
     db.toggleTask(doneId, 'done');
 
-    // 「今天」视图按产品约定把逾期的也一起列出来（界面上会标红），越早的排越前
-    expect(db.listTasks({ view: 'today' }).map((t) => t.title)).toEqual(['昨天就该做的', '今天的']);
+    // 「今天」视图按产品约定把逾期的也一起列出来（界面上会标红），越早的排越前；
+    // 已完成的也留在列表里，只是被排到最后（优化项 4：勾完不消失）
+    expect(db.listTasks({ view: 'today' }).map((t) => t.title)).toEqual([
+      '昨天就该做的',
+      '今天的',
+      '已经做完的'
+    ]);
     expect(db.listTasks({ view: 'overdue' }).map((t) => t.title)).toEqual(['昨天就该做的']);
     expect(db.listTasks({ view: 'upcoming' }).map((t) => t.title)).toEqual(['下周的']);
     expect(db.listTasks({ view: 'all' })).toHaveLength(4);
     expect(db.listTasks({ view: 'done' }).map((t) => t.title)).toEqual(['已经做完的']);
+  });
+
+  it('状态三档筛选：全部 / 未完成 / 已完成，勾完不消失', () => {
+    const a = db.createTask({ title: '甲', due_at: todayLocal() });
+    const b = db.createTask({ title: '乙', due_at: todayLocal() });
+    const c = db.createTask({ title: '丙', due_at: todayLocal() });
+    db.toggleTask(b, 'done');
+
+    expect(db.listTasks({ view: 'all', status: 'todo' }).map((t) => t.title).sort()).toEqual(['丙', '甲']);
+    expect(db.listTasks({ view: 'all', status: 'done' }).map((t) => t.title)).toEqual(['乙']);
+    expect(db.listTasks({ view: 'all' }).map((t) => t.title).sort()).toEqual(['丙', '乙', '甲']);
+    // 勾完不消失：今天视图里还在，只是排到最后
+    expect(db.listTasks({ view: 'today' }).map((t) => t.title)).toEqual(['丙', '甲', '乙']);
+    // 「接下来」视图仍然只列没做完的：已经做完的不该再算「接下来」
+    const future = db.createTask({ title: '下周', due_at: dayOffset(7) });
+    db.toggleTask(future, 'done');
+    expect(db.listTasks({ view: 'upcoming' })).toHaveLength(0);
+
+    // 批量删除走软删除，返回真正删掉的条数
+    const before = db.taskCounts();
+    expect(db.deleteTasks([a, c])).toBe(2);
+    expect(db.deleteTasks([])).toBe(0);
+    expect(db.deleteTasks([a])).toBe(0); // 已经删过的不再计数
+    expect(db.listTasks({ view: 'all', status: 'todo' })).toHaveLength(0);
+    expect(db.taskCounts().all).toBe(before.all - 2);
+    expect(db.taskCounts().todo).toBe(0);
+    expect(db.taskCounts().done).toBe(2);
   });
 
   it('优先级与截止日能改', () => {

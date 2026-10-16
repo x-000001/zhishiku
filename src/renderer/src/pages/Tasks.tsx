@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api';
-import { Empty, toast } from '../ui';
+import { Empty, ConfirmDialog, toast } from '../ui';
 import { PRIORITY_LABEL, REPEAT_LABEL, fmtDate, fmtDateTime, nextPriority, relative, todayLocal } from '../format';
 import type { GoalSummary, Id, Task, TaskFilter } from '../../../shared/types';
 
 const VIEWS: { key: NonNullable<TaskFilter['view']>; icon: string; label: string; hint: string }[] = [
-  { key: 'today', icon: '☀️', label: '今天', hint: '今天到期，连同已经逾期的' },
+  { key: 'today', icon: '☀️', label: '今天', hint: '今天到期，连同已经逾期的（完成的留在原地）' },
   { key: 'overdue', icon: '⚠️', label: '已逾期', hint: '截止日已经过去还没做完' },
   { key: 'upcoming', icon: '📆', label: '接下来', hint: '今天之后要做的' },
-  { key: 'all', icon: '📋', label: '全部', hint: '所有没做完的任务' },
-  { key: 'done', icon: '✅', label: '已完成', hint: '已经勾掉的任务' }
+  { key: 'all', icon: '📋', label: '全部', hint: '所有没做完的任务' }
+];
+
+/** 状态筛选三档（优化项 4）：勾完不消失，靠这里区分看没做完还是看做完的。 */
+const STATUSES: { key: NonNullable<TaskFilter['status']>; label: string; countKey: 'all' | 'todo' | 'done' }[] = [
+  { key: 'all', label: '全部', countKey: 'all' },
+  { key: 'todo', label: '未完成', countKey: 'todo' },
+  { key: 'done', label: '已完成', countKey: 'done' }
 ];
 
 function isOverdue(task: Task): boolean {
@@ -19,36 +25,47 @@ function isOverdue(task: Task): boolean {
 
 export default function Tasks(props: { refreshCount: () => void }): ReactNode {
   const [view, setView] = useState<NonNullable<TaskFilter['view']>>('today');
+  const [status, setStatus] = useState<NonNullable<TaskFilter['status']>>('all');
   const [q, setQ] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<Id | null>(null);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
+  const [pickMode, setPickMode] = useState(false);
+  const [picked, setPicked] = useState<Set<Id>>(() => new Set());
+  const [confirmBatch, setConfirmBatch] = useState(false);
   const addRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(
     (which = view) => {
       return Promise.all([
-        api.listTasks({ view: which, q: q.trim() || undefined }),
+        api.listTasks({ view: which, status, q: q.trim() || undefined }),
         api.taskCounts()
       ])
         .then(([rows, realCounts]) => {
           setTasks(rows);
           setCounts(realCounts);
+          // 勾选状态跟着列表走：删掉/改状态后不再留下的 id 自动从选中集合里消失
+          setPicked((prev) => {
+            if (prev.size === 0) return prev;
+            const alive = new Set(rows.map((r) => r.id));
+            const next = new Set([...prev].filter((id) => alive.has(id)));
+            return next.size === prev.size ? prev : next;
+          });
           props.refreshCount();
         })
         .catch((err: Error) => toast('读取任务失败：' + err.message))
         .finally(() => setLoading(false));
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [view, q]
+    [view, status, q]
   );
 
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view]);
+  }, [view, status]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 200);
@@ -119,7 +136,32 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
     }
   };
 
+  const togglePick = (id: Id): void => {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const batchRemove = async (): Promise<void> => {
+    const ids = [...picked];
+    setConfirmBatch(false);
+    if (ids.length === 0) return;
+    try {
+      const n = await api.deleteTasks(ids);
+      setPicked(new Set());
+      setSelected(null);
+      await load();
+      toast(`已删除 ${n} 条任务`);
+    } catch (err) {
+      toast('批量删除失败：' + (err as Error).message);
+    }
+  };
+
   const current = VIEWS.find((v) => v.key === view) ?? VIEWS[0];
+  const allPicked = tasks.length > 0 && tasks.every((t) => picked.has(t.id));
   const selectedTask = useMemo(() => tasks.find((t) => t.id === selected) ?? null, [tasks, selected]);
 
   return (
@@ -145,6 +187,29 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
           </div>
         ))}
 
+        <div style={{ height: 10 }} />
+        <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+          状态
+        </div>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          {STATUSES.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={status === item.key ? 'btn sm primary' : 'btn sm'}
+              onClick={() => {
+                setStatus(item.key);
+                setPicked(new Set());
+                setSelected(null);
+              }}
+            >
+              {item.label}
+              <span className="muted" style={{ marginLeft: 5 }}>
+                {counts[item.countKey] ?? 0}
+              </span>
+            </button>
+          ))}
+        </div>
         <div style={{ height: 10 }} />
         <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
           筛选
@@ -174,9 +239,45 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
             </span>
             <span className="muted" style={{ marginLeft: 8 }}>
               {tasks.length} 条 · {current.hint}
+              {pickMode ? ` · 已选 ${picked.size} 条` : ''}
               {tasks.length >= 500 ? '（只显示前 500 条，用搜索缩小范围）' : ''}
             </span>
             <span className="spacer" style={{ flex: 1 }} />
+            {pickMode ? (
+              <>
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() => setPicked(allPicked ? new Set() : new Set(tasks.map((t) => t.id)))}
+                >
+                  {allPicked ? '取消全选' : '全选'}
+                </button>
+                <button
+                  type="button"
+                  className="btn sm"
+                  disabled={picked.size === 0}
+                  style={
+                    picked.size
+                      ? { background: 'var(--danger)', borderColor: 'var(--danger)', color: '#fff' }
+                      : undefined
+                  }
+                  onClick={() => setConfirmBatch(true)}
+                >
+                  批量删除（{picked.size}）
+                </button>
+              </>
+            ) : null}
+            <button
+              type="button"
+              className={pickMode ? 'btn sm primary' : 'btn sm'}
+              title="打开后每行前面会出现复选框，可以一次删掉一批"
+              onClick={() => {
+                setPickMode(!pickMode);
+                setPicked(new Set());
+              }}
+            >
+              {pickMode ? '退出多选' : '☑ 多选'}
+            </button>
             <button
               type="button"
               className="btn sm"
@@ -207,9 +308,18 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
             tasks.map((task) => (
               <div key={task.id}>
                 <div
-                  className={`task-row${task.status === 'done' ? ' done' : ''}${selected === task.id ? ' selected' : ''}`}
-                  onClick={() => setSelected(selected === task.id ? null : task.id)}
+                  className={`task-row${task.status === 'done' ? ' done' : ''}${selected === task.id ? ' selected' : ''}${picked.has(task.id) ? ' picked' : ''}`}
+                  onClick={() => (pickMode ? togglePick(task.id) : setSelected(selected === task.id ? null : task.id))}
                 >
+                  {pickMode ? (
+                    <input
+                      type="checkbox"
+                      className="pick"
+                      checked={picked.has(task.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => togglePick(task.id)}
+                    />
+                  ) : null}
                   <button
                     type="button"
                     className={task.status === 'done' ? 'check on' : 'check'}
@@ -317,6 +427,17 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
           </button>
         </div>
       </div>
+
+      {confirmBatch ? (
+        <ConfirmDialog
+          title="批量删除任务"
+          message={`确定删掉选中的 ${picked.size} 条任务吗？删掉后不在这里显示，数据还在库里（软删除）。`}
+          confirmLabel={`删除 ${picked.size} 条`}
+          danger
+          onCancel={() => setConfirmBatch(false)}
+          onConfirm={batchRemove}
+        />
+      ) : null}
     </div>
   );
 }
