@@ -632,12 +632,74 @@ export function renameCategory(id: Id, name: string): void {
   run('update category set name = ?, updated_at = ? where id = ?', name.trim(), nowIso(), id);
 }
 
-/** 删除分类：子分类不动（上提一级），分类下笔记移入「未分类」。 */
+/**
+ * 删除分类。
+ * 优化项 7 的硬规矩：**分类下还有笔记（含子分类里的）就不许删**，
+ * 直接给一句人话让用户先搬走或删掉，免得点一下就把一整类笔记变成「未分类」。
+ * 空分类删掉时，子分类上提一级（不跟着一起没），作者是分类的 sort_order 邻位重排。
+ */
 export function deleteCategory(id: Id): void {
+  const notes = one<{ n: number }>(
+    `with recursive sub(cid) as (
+       select ? as cid
+       union all
+       select c.id from category c join sub on c.parent_id = sub.cid where c.deleted_at is null
+     )
+     select count(*) as n from note
+      where deleted_at is null and category_id in (select cid from sub)`,
+    id
+  );
+  if (Number(notes?.n ?? 0) > 0) throw new Error('该分类下还有笔记，请先移动或删除笔记');
   const now = nowIso();
-  run('update category set parent_id = null, updated_at = ? where parent_id = ?', now, id);
-  run('update note set category_id = null, updated_at = ? where category_id = ?', now, id);
+  const row = one<{ parent_id: Id | null }>('select parent_id from category where id = ?', id);
+  const parentId = row?.parent_id ?? null;
+  // 子分类上提一级，并排到新一层的最末尾（不跟原来那一层的旧邻居插队）
+  const kids = all<{ id: Id }>(
+    'select id from category where parent_id = ? and deleted_at is null order by sort_order, id',
+    id
+  );
   run('update category set deleted_at = ? where id = ?', now, id);
+  if (kids.length) {
+    const maxRow = one<{ m: number }>(
+      'select coalesce(max(sort_order), 0) as m from category where parent_id is ? and deleted_at is null',
+      parentId
+    );
+    let next = Number(maxRow?.m ?? 0);
+    for (const kid of kids) {
+      next += 1;
+      run(
+        'update category set parent_id = ?, sort_order = ?, updated_at = ? where id = ?',
+        parentId,
+        next,
+        now,
+        kid.id
+      );
+    }
+  }
+}
+
+/** 分类排序：跟同一个父分类下的上/下一条换位，并把这一层重新编号（防止历史 sort_order 撞车）。 */
+export function moveCategory(id: Id, dir: 'up' | 'down'): void {
+  const row = one<{ parent_id: Id | null }>(
+    'select parent_id from category where id = ? and deleted_at is null',
+    id
+  );
+  if (!row) throw new Error('这个分类不在了');
+  const siblings = all<{ id: Id }>(
+    'select id from category where parent_id is ? and deleted_at is null order by sort_order, id',
+    row.parent_id
+  );
+  const ids = siblings.map((s) => Number(s.id));
+  const pos = ids.indexOf(Number(id));
+  const target = dir === 'up' ? pos - 1 : pos + 1;
+  if (pos < 0 || target < 0 || target >= ids.length) return;
+  const tmp = ids[pos];
+  ids[pos] = ids[target];
+  ids[target] = tmp;
+  const now = nowIso();
+  ids.forEach((cid, i) => {
+    run('update category set sort_order = ?, updated_at = ? where id = ?', i + 1, now, cid);
+  });
 }
 
 /* ------------------------------------------------------------------ */

@@ -426,8 +426,17 @@ export default function Knowledge(props: {
       .catch((err: Error) => toast('排序保存失败：' + err.message));
   };
 
-  const trash = async (id: Id): Promise<void> => {
+  /** 优化项 7：分类排序——跟同一层的上/下一条换位（子分类各排各的）。 */
+  const moveCat = async (cat: Category, dir: 'up' | 'down'): Promise<void> => {
     try {
+      await api.moveCategory(cat.id, dir);
+      await loadCats();
+    } catch (err) {
+      toast('排序失败：' + (err as Error).message);
+    }
+  };
+
+  const trash = async (id: Id): Promise<void> => {    try {
       await api.trashNote(id);
       if (openId === id) setOpenId(null);
       await loadList();
@@ -611,13 +620,18 @@ export default function Knowledge(props: {
             onDragLeave={() => setDropTarget(null)}
             onRename={(cat) => setPromptFor({ kind: 'rename', cat, value: cat.name })}
             onDelete={(cat) => {
-              // 只有「含子内容」的分类才需要二次确认（PRD H3 允许弹确认的三处之一）
+              // 优化项 7：分类下还有笔记就拦下来（含子分类里的），先搬走或删掉再回来删分类
               const hasChild = cats.some((c) => c.parent_id === cat.id);
               const hasNote = (cat.note_count ?? 0) > 0;
-              if (hasChild || hasNote) setConfirmCatDel(cat);
+              if (hasNote) {
+                toast('该分类下还有笔记，请先移动或删除笔记');
+                return;
+              }
+              if (hasChild) setConfirmCatDel(cat);
               else void doDeleteCategory(cat);
             }}
             onAddChild={(parent) => setPromptFor({ kind: 'child', cat: parent, value: '' })}
+            onMove={(cat, dir) => void moveCat(cat, dir)}
           />
         ))}
 
@@ -1280,7 +1294,7 @@ export default function Knowledge(props: {
           title={`删除分类「${confirmCatDel.name}」？`}
           danger
           confirmLabel="删除分类"
-          message="这个分类下面还有子分类或笔记，删除后子分类会消失、笔记会变成「未分类」，笔记本身不会丢。"
+          message="这个分类下面还有子分类，删除后它们会往上提一级（子分类和里面的笔记都不会丢）。分类里如果有笔记，是删不掉的——要先把笔记搬走或删掉。"
           onCancel={() => setConfirmCatDel(null)}
           onConfirm={async () => {
             const cat = confirmCatDel;
@@ -1421,6 +1435,7 @@ function TreeNode(props: {
   onRename: (cat: Category) => void;
   onDelete: (cat: Category) => void;
   onAddChild: (cat: Category) => void;
+  onMove: (cat: Category, dir: 'up' | 'down') => void;
 }): ReactNode {
   const [open, setOpen] = useState(true);
   const { cat, children } = props.node;
@@ -1450,6 +1465,28 @@ function TreeNode(props: {
               }}
             >
               ＋
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              title="上移"
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onMove(cat, 'up');
+              }}
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              title="下移"
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onMove(cat, 'down');
+              }}
+            >
+              ↓
             </button>
             <button
               type="button"

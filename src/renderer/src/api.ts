@@ -75,6 +75,7 @@ export const api = {
   createCategory: (parentId: Id | null, name: string) => call<Id>('category:create', { parentId, name }),
   renameCategory: (id: Id, name: string) => call<boolean>('category:rename', { id, name }),
   deleteCategory: (id: Id) => call<boolean>('category:delete', { id }),
+  moveCategory: (id: Id, dir: 'up' | 'down') => call<boolean>('category:move', { id, dir }),
 
   listNotes: (filter: ListFilter) => call<NoteListItem[]>('note:list', filter),
   getNote: (id: Id) => call<(Note & { tags: Tag[]; attachments: Attachment[] }) | null>('note:get', { id }),

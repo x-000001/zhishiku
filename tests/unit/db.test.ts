@@ -124,12 +124,18 @@ describe('分类', () => {
     expect(db.categoryTree().some((c) => c.id === child)).toBe(false);
   });
 
-  it('删分类时：子分类上提一级，分类下的笔记回到未分类', () => {
+  it('删分类时：分类下有笔记就先拦下来；笔记清空后子分类上提一级', () => {
     const parent = db.createCategory(null, '父分类2');
     const child = db.createCategory(parent, '子分类2');
     const noteId = db.createNote({ title: '在父分类下的笔记', categoryId: parent });
+
+    // 优化项 7：非空分类不许删，提示先搬走笔记
+    expect(() => db.deleteCategory(parent)).toThrow('该分类下还有笔记，请先移动或删除笔记');
+    expect(db.categoryTree().some((c) => c.id === parent)).toBe(true);
+
+    // 把笔记移走（这里直接丢进回收站）之后就能删了，子分类挂到原来父分类的位置
+    db.trashNote(noteId);
     db.deleteCategory(parent);
-    expect(db.getNote(noteId)?.category_id).toBeNull();
     expect(db.categoryTree().find((c) => c.id === child)?.parent_id).toBeNull();
   });
 });

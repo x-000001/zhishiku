@@ -424,6 +424,38 @@ const CHECK_SCRIPT = `(async () => {
     const otherCatStill = await inv('note:list', { categoryId: catId });
     rec('在某个分类里排序不影响别的分类', Array.isArray(otherCatStill) && otherCatStill.length >= 1, '别的分类=' + (otherCatStill || []).length);
 
+    // ---- 优化项 7：分类树（多级 / 排序 / 非空不能删） ----
+    const subCat = await inv('category:create', { parentId: sortCat, name: '排序子分类' });
+    const tree2 = await inv('category:tree');
+    rec('能建子分类（parent_id 指对了）', (tree2.find((c) => c.id === subCat) || {}).parent_id === sortCat, 'parent_id=' + JSON.stringify((tree2.find((c) => c.id === subCat) || {}).parent_id));
+    let subDelErr = '';
+    try {
+      await inv('category:delete', { id: sortCat });
+    } catch (e) {
+      subDelErr = e && e.message;
+    }
+    rec('分类下还有笔记时删不掉，提示先搬走笔记', subDelErr === '该分类下还有笔记，请先移动或删除笔记', subDelErr || '（居然删成功了）');
+    rec('被拦下之后分类还在', (await inv('category:tree')).some((c) => c.id === sortCat) === true, '还在=' + (await inv('category:tree')).some((c) => c.id === sortCat));
+
+    const tmpCat = await inv('category:create', { parentId: null, name: '待删分类' });
+    const tmpSub = await inv('category:create', { parentId: tmpCat, name: '待删子分类' });
+    const tmpNote = await inv('note:create', { categoryId: tmpSub, title: '待删分类里的笔记', html: '<p>t</p>' });
+    let deepErr = '';
+    try {
+      await inv('category:delete', { id: tmpCat });
+    } catch (e) {
+      deepErr = e && e.message;
+    }
+    rec('笔记在子分类里，父分类同样删不掉（递归检查）', deepErr === '该分类下还有笔记，请先移动或删除笔记', deepErr || '（居然删成功了）');
+    await inv('note:move', { id: tmpNote.id, categoryId: null });
+    rec('笔记搬走之后分类就能删了', (await inv('category:delete', { id: tmpCat })) === true, 'tmpCat=' + tmpCat);
+    rec('删父分类后子分类上提一级，没有跟着一起没', (await inv('category:tree')).find((c) => c.id === tmpSub)?.parent_id === null, 'tmpSub.parent_id=' + JSON.stringify((await inv('category:tree')).find((c) => c.id === tmpSub)?.parent_id));
+
+    const roots = (await inv('category:tree')).filter((c) => c.parent_id === null).map((c) => c.name);
+    await inv('category:move', { id: tmpSub, dir: 'up' });
+    const roots2 = (await inv('category:tree')).filter((c) => c.parent_id === null).map((c) => c.name);
+    rec('分类能上移，顺序真的换了', roots2.indexOf('待删子分类') === roots.indexOf('待删子分类') - 1, JSON.stringify(roots) + ' → ' + JSON.stringify(roots2));
+
     // ---- 设置与备份 ----
     const settings = await inv('settings:get');
     rec('设置能读', !!settings && typeof settings.theme === 'string', JSON.stringify(settings));
@@ -720,6 +752,59 @@ try {
   const dragHint = await cdp.eval("(() => [...document.querySelectorAll('.muted')].some((e) => (e.innerText || '').includes('拖动卡片可以调顺序')))()");
   results.push({ name: '列表上方有「拖动卡片可以调顺序」的提示', ok: dragHint === true, detail: String(dragHint) });
   await cdp.shot('knowledge-reorder');
+
+  // ---- 优化项 7：分类排序按钮 + 非空分类删除拦截（界面） ----
+  const upBtnCount = await cdp.eval("(() => document.querySelectorAll('.tree-item [title=\"上移\"]').length)()");
+  const downBtnCount = await cdp.eval("(() => document.querySelectorAll('.tree-item [title=\"下移\"]').length)()");
+  results.push({
+    name: '每个分类行上都有「上移 / 下移」按钮',
+    ok: Number(upBtnCount) >= 2 && Number(upBtnCount) === Number(downBtnCount),
+    detail: '上移=' + upBtnCount + ' 下移=' + downBtnCount
+  });
+
+  const delClicked = await cdp.eval(`(() => {
+    const row = [...document.querySelectorAll('.tree-item')].find((el) => (el.innerText || '').includes('排序自检分类'));
+    if (!row) return 'no-row';
+    const del = row.querySelector('[title="删除分类"]');
+    if (!del) return 'no-del';
+    del.click();
+    return 'clicked';
+  })()`);
+  await sleep(400);
+  const toastText = await cdp.eval("(() => [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | '))()");
+  const stillRow = await cdp.eval("(() => [...document.querySelectorAll('.tree-item')].some((el) => (el.innerText || '').includes('排序自检分类')))()");
+  results.push({
+    name: '非空分类点删除会提示「请先移动或删除笔记」，分类还在',
+    ok: delClicked === 'clicked' && String(toastText).includes('该分类下还有笔记') && stillRow === true,
+    detail: delClicked + ' | 提示=' + String(toastText).slice(0, 60) + ' | 还在=' + stillRow
+  });
+
+  const upResult = await cdp.eval(`(() => {
+    const rows = [...document.querySelectorAll('.tree-item')].filter((el) => el.querySelector('[title="上移"]'));
+    if (rows.length < 2) return 'few';
+    const row = rows[1];
+    const name = (row.querySelector('.name') || {}).innerText || '';
+    const before = rows.map((r) => ((r.querySelector('.name') || {}).innerText || ''));
+    row.querySelector('[title="上移"]').click();
+    return JSON.stringify({ name, before });
+  })()`);
+  await sleep(700);
+  const treeOrder = await cdp.eval("(() => [...document.querySelectorAll('.tree-item')].filter((el) => el.querySelector('[title=\"上移\"]')).map((r) => ((r.querySelector('.name') || {}).innerText || '')))()");
+  const upInfo = (() => {
+    try {
+      return JSON.parse(String(upResult));
+    } catch {
+      return { name: '', before: [] };
+    }
+  })();
+  const beforeIdx = (upInfo.before || []).indexOf(upInfo.name);
+  const afterIdx = Array.isArray(treeOrder) ? treeOrder.indexOf(upInfo.name) : -1;
+  results.push({
+    name: '点「上移」之后分类真的往上挪了一位',
+    ok: beforeIdx > 0 && afterIdx === beforeIdx - 1,
+    detail: JSON.stringify(upInfo.before) + ' → ' + JSON.stringify(treeOrder)
+  });
+  await cdp.shot('knowledge-category-tree');
 
   // ---- 第三版：富文本编辑器的界面行为 ----
   await cdp.eval("location.hash = '/__bounce'; true");

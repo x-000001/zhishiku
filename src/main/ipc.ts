@@ -95,6 +95,10 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
     db.deleteCategory(p.id);
     return true;
   });
+  handle('category:move', (p: { id: Id; dir: 'up' | 'down' }) => {
+    db.moveCategory(p.id, p.dir);
+    return true;
+  });
 
   /* ---------------- 笔记 ---------------- */
 
