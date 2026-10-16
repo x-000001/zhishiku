@@ -148,10 +148,20 @@ export default function Settings(props: {
         <div className="card-head">
           <h2>备份与恢复</h2>
           <span className="spacer" />
-          <button type="button" className="btn sm" disabled={busy === 'backup'} onClick={() => void runBackup()}>
+          <button
+            type="button"
+            className={busy === 'backup' ? 'btn sm loading' : 'btn sm'}
+            disabled={busy === 'backup'}
+            onClick={() => void runBackup()}
+          >
             {busy === 'backup' ? '备份中…' : '立即备份'}
           </button>
-          <button type="button" className="btn sm" disabled={busy === 'check'} onClick={() => void checkIntegrity()}>
+          <button
+            type="button"
+            className={busy === 'check' ? 'btn sm loading' : 'btn sm'}
+            disabled={busy === 'check'}
+            onClick={() => void checkIntegrity()}
+          >
             {busy === 'check' ? '检查中…' : '数据库自检'}
           </button>
         </div>
@@ -252,7 +262,12 @@ export default function Settings(props: {
           <button type="button" className="btn" onClick={() => setForm(saved)} disabled={busy === 'save'}>
             放弃改动
           </button>
-          <button type="button" className="btn primary" onClick={() => void save()} disabled={busy === 'save'}>
+          <button
+            type="button"
+            className={busy === 'save' ? 'btn primary loading' : 'btn primary'}
+            onClick={() => void save()}
+            disabled={busy === 'save'}
+          >
             {busy === 'save' ? '保存中…' : '保存设置'}
           </button>
         </div>

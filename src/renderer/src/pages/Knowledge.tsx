@@ -887,7 +887,9 @@ export default function Knowledge(props: {
                 </button>
                 <button
                   type="button"
-                  className={saveState === 'dirty' ? 'btn primary sm' : 'btn sm'}
+                  className={['btn sm', saveState === 'dirty' ? 'primary' : '', saveState === 'saving' ? 'loading' : '']
+                    .filter(Boolean)
+                    .join(' ')}
                   onClick={() => void manualSave()}
                   title="Ctrl+S"
                 >

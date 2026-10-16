@@ -1158,6 +1158,227 @@ try {
     detail: '底色=' + paper.bodyBg + ' 字色=' + paper.fg + ' 对比度=' + paper.ratio + ':1'
   });
 
+  // ---- 第五版阶段5：按钮与输入框六态（默认 / 悬停 / 按下 / 聚焦 / 禁用 / 加载） ----
+  const pickSave = "[...document.querySelectorAll('.editor-head button')].find((b) => (b.textContent || '').includes('保存'))";
+  const btnDefaultRaw = await cdp.eval(`(() => {
+    const b = ${pickSave};
+    if (!b) return JSON.stringify({ err: 'no-btn' });
+    const r = b.getBoundingClientRect();
+    const cs = getComputedStyle(b);
+    return JSON.stringify({
+      x: Math.round(r.left + r.width / 2),
+      y: Math.round(r.top + r.height / 2),
+      bg: cs.backgroundColor,
+      border: cs.borderTopWidth + ' ' + cs.borderTopColor,
+      radius: cs.borderTopLeftRadius,
+      shadow: cs.boxShadow
+    });
+  })()`);
+  const btn = (() => {
+    try {
+      return JSON.parse(String(btnDefaultRaw));
+    } catch {
+      return { err: String(btnDefaultRaw) };
+    }
+  })();
+  results.push({
+    name: '第五版：按钮默认态有底色 / 描边 / 圆角',
+    ok: btn.bg !== 'rgba(0, 0, 0, 0)' && btn.radius !== '0px' && !btn.err,
+    detail: '底色=' + btn.bg + ' 描边=' + btn.border + ' 圆角=' + btn.radius + (btn.err ? ' err=' + btn.err : '')
+  });
+  if (typeof btn.x === 'number') {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: btn.x, y: btn.y });
+    await sleep(280);
+    const hoverRaw = await cdp.eval(`(() => {
+      const b = ${pickSave};
+      const cs = getComputedStyle(b);
+      const m = new DOMMatrix(cs.transform);
+      return JSON.stringify({ bg: cs.backgroundColor, ty: Math.round(m.m42 * 100) / 100 });
+    })()`);
+    const hov = (() => {
+      try {
+        return JSON.parse(String(hoverRaw));
+      } catch {
+        return { err: String(hoverRaw) };
+      }
+    })();
+    results.push({
+      name: '第五版：悬停态换底色 + 抬 1px',
+      ok: hov.bg !== btn.bg && hov.ty === -1,
+      detail: '底色 ' + btn.bg + ' → ' + hov.bg + '，位移 ' + hov.ty + 'px'
+    });
+    // 按下：CDP 的 mousePressed 偶尔不会立刻挂上 :active，读不到就再按一次
+    const readPress = async () => {
+      const raw = await cdp.eval(`(() => {
+        const b = ${pickSave};
+        const m = new DOMMatrix(getComputedStyle(b).transform);
+        return JSON.stringify({ sx: Math.round(m.m11 * 1000) / 1000, sy: Math.round(m.m22 * 1000) / 1000 });
+      })()`);
+      try {
+        return JSON.parse(String(raw));
+      } catch {
+        return { sx: 1, sy: 1, err: String(raw) };
+      }
+    };
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: btn.x,
+      y: btn.y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1
+    });
+    await sleep(180);
+    let press = await readPress();
+    if (Number(press.sx) === 1) {
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        x: 4,
+        y: 4,
+        button: 'left',
+        buttons: 0,
+        clickCount: 1
+      });
+      await sleep(160);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: btn.x, y: btn.y, buttons: 0 });
+      await sleep(120);
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mousePressed',
+        x: btn.x,
+        y: btn.y,
+        button: 'left',
+        buttons: 1,
+        clickCount: 1
+      });
+      await sleep(200);
+      press = await readPress();
+    }
+    // 松手丢到窗口角落，避免真的点到「保存」（这一步只验手感）
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: 4,
+      y: 4,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1
+    });
+    await sleep(200);
+    results.push({
+      name: '第五版：按下态缩到 0.97（「按进去」的手感）',
+      ok: Math.abs(Number(press.sx) - 0.97) < 0.02,
+      detail: '按下时 scaleX=' + press.sx + ' scaleY=' + press.sy
+    });
+  }
+
+  const focusRaw = await cdp.eval(`(async () => {
+    const inp = document.querySelector('.editor-foot input') || document.querySelector('.kb-list-head input');
+    if (!inp) return JSON.stringify({ err: 'no-input' });
+    inp.focus();
+    await new Promise((r) => setTimeout(r, 140));
+    const cs = getComputedStyle(inp);
+    return JSON.stringify({ focused: document.activeElement === inp, border: cs.borderTopColor, shadow: cs.boxShadow });
+  })()`);
+  const focusRing = (() => {
+    try {
+      return JSON.parse(String(focusRaw));
+    } catch {
+      return { err: String(focusRaw) };
+    }
+  })();
+  results.push({
+    name: '第五版：输入框聚焦态有品牌色描边 + 光环',
+    ok: focusRing.focused === true && String(focusRing.shadow) !== 'none',
+    detail: '描边=' + focusRing.border + ' 光环=' + focusRing.shadow + (focusRing.err ? ' err=' + focusRing.err : '')
+  });
+
+  let kbRing = { err: 'none' };
+  for (let i = 0; i < 8; i += 1) {
+    await cdp.send('Input.dispatchKeyEvent', {
+      type: 'rawKeyDown',
+      key: 'Tab',
+      code: 'Tab',
+      windowsVirtualKeyCode: 9,
+      nativeVirtualKeyCode: 9
+    });
+    await cdp.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Tab',
+      code: 'Tab',
+      windowsVirtualKeyCode: 9,
+      nativeVirtualKeyCode: 9
+    });
+    await sleep(120);
+    const raw = await cdp.eval(`(() => {
+      const el = document.activeElement;
+      if (!el || el === document.body) return JSON.stringify({ err: 'body' });
+      const cs = getComputedStyle(el);
+      return JSON.stringify({
+        tag: el.tagName + (el.className ? '.' + String(el.className).split(' ')[0] : ''),
+        fv: el.matches(':focus-visible'),
+        shadow: cs.boxShadow
+      });
+    })()`);
+    const got = (() => {
+      try {
+        return JSON.parse(String(raw));
+      } catch {
+        return { err: String(raw) };
+      }
+    })();
+    kbRing = got;
+    if (got.fv === true && String(got.shadow) !== 'none' && String(got.shadow) !== '') break;
+  }
+  results.push({
+    name: '第五版：键盘 Tab 聚焦时画 :focus-visible 光环',
+    ok: kbRing.fv === true && String(kbRing.shadow) !== 'none',
+    detail: JSON.stringify(kbRing)
+  });
+
+  const stateStylesRaw = await cdp.eval(`(() => {
+    const mk = (cls, off) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = cls;
+      b.textContent = '自检按钮';
+      if (off) b.setAttribute('disabled', 'disabled');
+      document.body.appendChild(b);
+      return b;
+    };
+    const d = mk('btn', true);
+    const dcs = getComputedStyle(d);
+    const dis = { opacity: dcs.opacity, cursor: dcs.cursor, shadow: dcs.boxShadow };
+    d.remove();
+    const l = mk('btn loading', false);
+    const lcs = getComputedStyle(l, '::before');
+    const load = {
+      w: lcs.width,
+      h: lcs.height,
+      anim: lcs.animationName,
+      iter: lcs.animationIterationCount,
+      radius: lcs.borderTopLeftRadius,
+      cursor: getComputedStyle(l).cursor
+    };
+    l.remove();
+    return JSON.stringify({ dis, load });
+  })()`);
+  const st = (() => {
+    try {
+      return JSON.parse(String(stateStylesRaw));
+    } catch {
+      return { err: String(stateStylesRaw) };
+    }
+  })();
+  results.push({
+    name: '第五版：禁用态 45% 透明 + not-allowed + 无投影',
+    ok: st.dis && st.dis.opacity === '0.45' && st.dis.cursor === 'not-allowed' && st.dis.shadow === 'none',
+    detail: JSON.stringify(st.dis)
+  });
+  results.push({
+    name: '第五版：加载态是 12px 转圈（无限循环，按钮不变宽）',
+    ok: st.load && st.load.w === '12px' && st.load.h === '12px' && st.load.anim === 'jw-spin' && st.load.iter === 'infinite',
+    detail: JSON.stringify(st.load)
+  });
+
   const tableInUi = await cdp.eval(`(async () => {
     const btn = [...document.querySelectorAll('.rt-toolbar button')].find((b) => b.title === '插入表格');
     if (!btn) return 'no-btn';

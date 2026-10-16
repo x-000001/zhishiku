@@ -2997,3 +2997,113 @@ label.field {
   border-top: 1px solid var(--glass-border);
 }
 
+/* ================= 第五版（阶段5）：按钮与输入框的六态 =================
+   六态 = 默认 / 悬停 / 按下 / 聚焦 / 禁用 / 加载。手感上的几个讲究：
+   - 悬停只抬 1px 并换底色，位移大了整排按钮会「跳舞」；
+   - 按下走 --quick-ease（60ms）并缩到 0.97，是「按进去」的动作感；
+   - 只有键盘聚焦（:focus-visible）才画品牌色光环，鼠标点出来的焦点不画，免得脏；
+   - 禁用降到 45% 透明 + not-allowed，并且不再响应悬停/按下（:not(:disabled)）；
+   - 加载态在文字前面转一个小圈，按钮宽度不变、不跳。 */
+.btn {
+  transition:
+    background 0.16s var(--smooth-ease),
+    border-color 0.16s var(--smooth-ease),
+    box-shadow 0.2s var(--smooth-ease),
+    color 0.16s var(--smooth-ease),
+    transform 0.12s var(--quick-ease);
+}
+
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+  transition-duration: 60ms;
+}
+
+.btn:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: var(--ring);
+}
+
+.btn.primary:hover:not(:disabled) {
+  box-shadow: 0 8px 22px -10px color-mix(in srgb, var(--brand) 75%, transparent);
+}
+
+.btn.primary:active:not(:disabled) {
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn.loading {
+  cursor: progress;
+  pointer-events: none;
+}
+
+.btn.loading::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: 0.7;
+  animation: jw-spin 0.7s linear infinite;
+}
+
+@keyframes jw-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 图标按钮（＋ / 🕘 / 🗑）：同一套六态，按下的位移小一点 */
+.icon-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.icon-btn:active:not(:disabled) {
+  transform: scale(0.92);
+  transition-duration: 60ms;
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* 输入类控件：默认 / 悬停 / 聚焦 / 禁用 / 只读 */
+:where(.content, .kb-editor, .drawer, .modal-body) :where(input, select, textarea) {
+  transition:
+    background 0.16s var(--smooth-ease),
+    border-color 0.16s var(--smooth-ease),
+    box-shadow 0.2s var(--smooth-ease);
+}
+
+:where(.content, .kb-editor, .drawer, .modal-body) :where(input, select, textarea):hover:not(:disabled):not(:focus) {
+  border-color: var(--border-strong);
+}
+
+:where(.content, .kb-editor, .drawer, .modal-body) :where(input, select, textarea):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--bg-sunken);
+}
+
+/* 只读框（展示用路径之类）：虚边 + 下沉底色，别让人以为能改 */
+:where(.content, .kb-editor, .drawer, .modal-body) :where(input, textarea)[readonly] {
+  background: var(--bg-sunken);
+  border-style: dashed;
+  cursor: default;
+}
+
