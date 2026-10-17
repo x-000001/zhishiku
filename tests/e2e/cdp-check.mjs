@@ -113,7 +113,9 @@ const child = spawn(
       JWKB_DATA_DIR: dataDir,
       JWKB_UPDATE_URL: stubUpdateUrl,
       JWKB_UPDATE_DIR: stubDownloadDir,
-      JWKB_UPDATE_DRYRUN: '1'
+      JWKB_UPDATE_DRYRUN: '1',
+      // 番茄钟最短时长临时降到 2 秒：不设这个的话一轮 25 分钟，e2e 等不起
+      JWKB_FOCUS_MIN_SECONDS: '2'
     },
     stdio: 'inherit'
   }
@@ -4010,6 +4012,312 @@ try {
       ' 标签还在=' +
       tagDeleted.stillHasTag +
       (tagDeleted.error ? ' 错误=' + tagDeleted.error : '')
+  });
+
+  /* ---------------- 第六版 / 阶段2：番茄钟（主进程计时） ---------------- */
+
+  // 右下角按钮 → 面板 → 选 25 分钟 → 开始
+  await cdp.eval("location.hash = '/'; true");
+  await sleep(560);
+  const focusStarted = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const fab = document.querySelector('.focus-fab');
+        if (!fab) return JSON.stringify({ error: '右下角没有番茄钟按钮' });
+        fab.click();
+        await sleep(260);
+        const panel = document.querySelector('.focus-panel');
+        if (!panel) return JSON.stringify({ error: '点开按钮后面板没出现' });
+        const presetBtns = [...panel.querySelectorAll('.focus-presets button')];
+        const presets = presetBtns.map((b) => (b.textContent || '').trim());
+        const preset25 = presetBtns.find((b) => (b.textContent || '').indexOf('25') >= 0);
+        if (preset25) preset25.click();
+        await sleep(140);
+        const start = [...panel.querySelectorAll('button')].find((b) => (b.textContent || '').indexOf('开始专注') >= 0);
+        if (start) start.click();
+        await sleep(900);
+        const clockEl = document.querySelector('.focus-clock');
+        const clock = ((clockEl && clockEl.textContent) || '').trim();
+        const state = await window.api.invoke('focus:state');
+        const livePanel = document.querySelector('.focus-panel');
+        const fabNow = document.querySelector('.focus-fab');
+        return JSON.stringify({
+          presets,
+          clock,
+          clockLen: clock.length,
+          minutes: Number(clock.slice(0, 2)),
+          clockHasColon: clock.indexOf(':') === 2,
+          status: state.status,
+          planned: state.plannedSeconds,
+          sessionId: state.sessionId,
+          hasPause: !!livePanel && (livePanel.textContent || '').indexOf('暂停') >= 0,
+          fabText: ((fabNow && fabNow.textContent) || '').trim()
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '阶段2：右下角番茄钟能打开，选 25 分钟开始后进入计时（按钮也变成倒计时）',
+    ok:
+      focusStarted.error === undefined &&
+      focusStarted.presets.length === 4 &&
+      focusStarted.presets.some((t) => t.indexOf('15') >= 0) &&
+      focusStarted.status === 'running' &&
+      focusStarted.planned === 1500 &&
+      focusStarted.sessionId !== null &&
+      focusStarted.clockLen === 5 &&
+      focusStarted.clockHasColon === true &&
+      (focusStarted.minutes === 24 || focusStarted.minutes === 25) &&
+      focusStarted.hasPause === true &&
+      String(focusStarted.fabText).indexOf('⏱') >= 0,
+    detail:
+      '时长选项=' +
+      JSON.stringify(focusStarted.presets) +
+      ' 面板时钟=' +
+      focusStarted.clock +
+      ' 状态=' +
+      focusStarted.status +
+      ' 计划=' +
+      focusStarted.planned +
+      ' 悬浮按钮=' +
+      focusStarted.fabText +
+      (focusStarted.error ? ' 错误=' + focusStarted.error : '')
+  });
+
+  // 暂停 → 剩余时间冻住；继续 → 重新往下走
+  const focusPaused = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const readClock = () => {
+          const el = document.querySelector('.focus-clock');
+          return el ? (el.textContent || '').trim() : '';
+        };
+        const panelBtn = (text) => {
+          const panel = document.querySelector('.focus-panel');
+          if (!panel) return null;
+          return [...panel.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === text) || null;
+        };
+        const pauseBtn = panelBtn('暂停');
+        if (!pauseBtn) return JSON.stringify({ error: '面板里没有暂停按钮' });
+        pauseBtn.click();
+        await sleep(700);
+        const frozen1 = readClock();
+        const pausedState = await window.api.invoke('focus:state');
+        await sleep(1500);
+        const frozen2 = readClock();
+        const resumeBtn = panelBtn('继续');
+        if (!resumeBtn) return JSON.stringify({ error: '暂停后没有继续按钮', frozen1, frozen2 });
+        resumeBtn.click();
+        await sleep(1400);
+        const runningClock = readClock();
+        const resumedState = await window.api.invoke('focus:state');
+        return JSON.stringify({
+          frozen1,
+          frozen2,
+          runningClock,
+          pausedStatus: pausedState.status,
+          pausedRemaining: pausedState.remainingMs,
+          resumedStatus: resumedState.status,
+          resumedRemaining: resumedState.remainingMs
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '阶段2：暂停后剩余时间冻住（1.5 秒不动），继续后重新开始走',
+    ok:
+      focusPaused.error === undefined &&
+      focusPaused.pausedStatus === 'paused' &&
+      focusPaused.frozen1 === focusPaused.frozen2 &&
+      focusPaused.resumedStatus === 'running' &&
+      focusPaused.resumedRemaining < focusPaused.pausedRemaining &&
+      focusPaused.runningClock !== focusPaused.frozen2,
+    detail:
+      '暂停读数=' +
+      focusPaused.frozen1 +
+      '→' +
+      focusPaused.frozen2 +
+      ' 继续后=' +
+      focusPaused.runningClock +
+      ' 剩余毫秒 ' +
+      focusPaused.pausedRemaining +
+      '→' +
+      focusPaused.resumedRemaining +
+      (focusPaused.error ? ' 错误=' + focusPaused.error : '')
+  });
+
+  // 放弃这一轮 → 回到空闲，且不计入统计
+  const focusAbandoned = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const panel = document.querySelector('.focus-panel');
+        if (!panel) return JSON.stringify({ error: '面板不见了' });
+        const giveUp = [...panel.querySelectorAll('button')].find((b) => (b.textContent || '').indexOf('放弃') >= 0);
+        if (!giveUp) return JSON.stringify({ error: '没有放弃按钮' });
+        giveUp.click();
+        await sleep(1100);
+        const state = await window.api.invoke('focus:state');
+        const summary = await window.api.invoke('focus:summary');
+        const toast = [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ');
+        const nowPanel = document.querySelector('.focus-panel');
+        return JSON.stringify({
+          status: state.status,
+          toast: toast.slice(0, 120),
+          hasStartBtn: !!nowPanel && (nowPanel.textContent || '').indexOf('开始专注') >= 0,
+          todayCount: summary.todayCount,
+          todaySeconds: summary.todaySeconds
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '阶段2：放弃这一轮回到空闲，并明确说明不计入专注时长',
+    ok:
+      focusAbandoned.error === undefined &&
+      focusAbandoned.status === 'idle' &&
+      String(focusAbandoned.toast).indexOf('这一轮先不算了') >= 0 &&
+      focusAbandoned.hasStartBtn === true &&
+      focusAbandoned.todayCount === 0 &&
+      focusAbandoned.todaySeconds === 0,
+    detail:
+      '状态=' +
+      focusAbandoned.status +
+      ' 提示=' +
+      focusAbandoned.toast +
+      ' 今日=' +
+      focusAbandoned.todayCount +
+      '次/' +
+      focusAbandoned.todaySeconds +
+      '秒' +
+      (focusAbandoned.error ? ' 错误=' + focusAbandoned.error : '')
+  });
+
+  await cdp.shot('focus-panel');
+
+  // 任务详情里的「开始专注」：联动记下 taskId，运行中不能再开一轮
+  await cdp.eval("location.hash = '/tasks'; true");
+  await sleep(760);
+  const focusTask = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const row = document.querySelector('.task-row');
+        if (!row) return JSON.stringify({ error: '任务列表是空的' });
+        row.click();
+        await sleep(560);
+        const drawer = document.querySelector('.drawer');
+        if (!drawer) return JSON.stringify({ error: '任务详情没打开' });
+        const btn = [...drawer.querySelectorAll('button')].find((b) => (b.textContent || '').indexOf('开始专注') >= 0);
+        if (!btn) return JSON.stringify({ error: '任务详情里没有开始专注按钮' });
+        btn.click();
+        await sleep(1000);
+        const state = await window.api.invoke('focus:state');
+        const toast = [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ');
+        let dupError = '';
+        try {
+          await window.api.invoke('focus:start', { plannedSeconds: 1500 });
+        } catch (err) {
+          dupError = String((err && err.message) || err);
+        }
+        return JSON.stringify({
+          status: state.status,
+          taskId: state.taskId,
+          taskTitle: state.taskTitle,
+          toast: toast.slice(0, 120),
+          dupError: dupError.slice(0, 120)
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '阶段2：任务详情「开始专注」会记下 taskId；运行中再开一轮会被拒绝',
+    ok:
+      focusTask.error === undefined &&
+      focusTask.status === 'running' &&
+      focusTask.taskId !== null &&
+      String(focusTask.taskTitle || '').length > 0 &&
+      String(focusTask.toast).indexOf('专注开始') >= 0 &&
+      String(focusTask.dupError).indexOf('上一轮还没结束') >= 0,
+    detail:
+      '状态=' +
+      focusTask.status +
+      ' taskId=' +
+      focusTask.taskId +
+      ' 任务=' +
+      focusTask.taskTitle +
+      ' 提示=' +
+      focusTask.toast +
+      ' 重复开始报错=' +
+      focusTask.dupError +
+      (focusTask.error ? ' 错误=' + focusTask.error : '')
+  });
+
+  // 2 秒一轮真跑完：跨页面切来切去也不影响，到点自动进 5 分钟休息，再跳过休息
+  const focusFinished = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const idle = await window.api.invoke('focus:abandon');
+        const started = await window.api.invoke('focus:start', { plannedSeconds: 2 });
+        location.hash = '/settings';
+        await sleep(520);
+        const mid = await window.api.invoke('focus:state');
+        location.hash = '/review';
+        await sleep(420);
+        let now = await window.api.invoke('focus:state');
+        const deadline = Date.now() + 6000;
+        while (now.status === 'running' && Date.now() < deadline) {
+          await sleep(180);
+          now = await window.api.invoke('focus:state');
+        }
+        const summary = await window.api.invoke('focus:summary');
+        const skipped = await window.api.invoke('focus:skip-break');
+        const final = await window.api.invoke('focus:state');
+        return JSON.stringify({
+          idleStatus: idle.status,
+          startedStatus: started.status,
+          midStatus: mid.status,
+          afterStatus: now.status,
+          restRemaining: now.remainingMs,
+          todayCount: summary.todayCount,
+          todaySeconds: summary.todaySeconds,
+          skippedStatus: skipped.status,
+          finalStatus: final.status
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '阶段2：2 秒一轮真跑完 → 自动进 5 分钟休息并计入统计；切页不影响计时',
+    ok:
+      focusFinished.error === undefined &&
+      focusFinished.idleStatus === 'idle' &&
+      focusFinished.startedStatus === 'running' &&
+      focusFinished.midStatus === 'running' &&
+      focusFinished.afterStatus === 'break' &&
+      Number(focusFinished.restRemaining) > 240000 &&
+      Number(focusFinished.restRemaining) <= 300000 &&
+      Number(focusFinished.todayCount) >= 1 &&
+      Number(focusFinished.todaySeconds) >= 2 &&
+      focusFinished.skippedStatus === 'idle' &&
+      focusFinished.finalStatus === 'idle',
+    detail:
+      '切成设置页时=' +
+      focusFinished.midStatus +
+      ' 到点后=' +
+      focusFinished.afterStatus +
+      ' 休息剩余毫秒=' +
+      focusFinished.restRemaining +
+      ' 今日=' +
+      focusFinished.todayCount +
+      '次/' +
+      focusFinished.todaySeconds +
+      '秒 跳过休息后=' +
+      focusFinished.finalStatus +
+      (focusFinished.error ? ' 错误=' + focusFinished.error : '')
   });
 
   await cdp.eval("location.hash = '/'; true");

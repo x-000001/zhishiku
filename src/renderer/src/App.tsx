@@ -13,6 +13,7 @@ import NextGoals from './pages/NextGoals';
 import Plans from './pages/Plans';
 import Review from './pages/Review';
 import QuickCapture from './pages/QuickCapture';
+import FocusDock from './focus';
 import type { SearchHit } from '../../shared/types';import { toastError } from './errors';
 
 export interface RouteProps {
@@ -349,6 +350,7 @@ export default function App(): ReactNode {
       </main>
 
       {searchOpen ? <SearchModal onClose={() => setSearchOpen(false)} openNote={openNote} /> : null}
+      <FocusDock />
       <ToastHost />
       <ContextMenuHost />
     </div>

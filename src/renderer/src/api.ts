@@ -6,6 +6,8 @@ import type {
   CalendarEntry,
   Category,
   DashboardData,
+  FocusState,
+  FocusSummary,
   Goal,
   GoalDetail,
   GoalHorizon,
@@ -56,10 +58,15 @@ function call<T>(channel: string, payload?: unknown): Promise<T> {
 
 /** 渲染进程用的事件通道白名单。 */
 export function onEvent(
-  channel: 'nav:go' | 'capture:focus' | 'notice:due' | 'update:progress',
+  channel: 'nav:go' | 'capture:focus' | 'notice:due' | 'update:progress' | 'focus:state',
   listener: (payload: unknown) => void
 ): () => void {
   return bridge.on(channel, listener);
+}
+
+/** 番茄钟状态变化（主进程是唯一计时源，渲染层只镜像）。 */
+export function onFocusState(listener: (state: FocusState) => void): () => void {
+  return bridge.on('focus:state', (payload) => listener(payload as FocusState));
 }
 
 /** 下载安装包的进度（主进程推过来，不在渲染层发请求）。 */
@@ -274,7 +281,17 @@ export const api = {
   /** 安装程序已启动：关掉本应用，让 NSIS 能覆盖文件。 */
   quitForUpdate: () => call<boolean>('update:quit'),
   /** 复制文本到系统剪贴板（目前只有更新提示里的下载链接用）。 */
-  copyText: (text: string) => call<boolean>('system:copy-text', { text })
+  copyText: (text: string) => call<boolean>('system:copy-text', { text }),
+
+  /* ---------------- 第六版：番茄钟（主进程计时） ---------------- */
+  focusState: () => call<FocusState>('focus:state'),
+  startFocus: (plannedSeconds: number, taskId: Id | null = null, taskTitle: string | null = null) =>
+    call<FocusState>('focus:start', { plannedSeconds, taskId, taskTitle }),
+  pauseFocus: () => call<FocusState>('focus:pause'),
+  resumeFocus: () => call<FocusState>('focus:resume'),
+  abandonFocus: () => call<FocusState>('focus:abandon'),
+  skipBreak: () => call<FocusState>('focus:skip-break'),
+  focusSummary: () => call<FocusSummary>('focus:summary')
 };
 
 export type Api = typeof api;

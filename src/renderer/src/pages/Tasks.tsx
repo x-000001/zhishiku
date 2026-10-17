@@ -6,6 +6,7 @@ import { showContextMenu } from '../menu';
 import { PRIORITY_LABEL, PRIORITY_ORDER, REPEAT_LABEL, fmtDate, fmtDateTime, nextPriority, relative, todayLocal } from '../format';
 import { SaveButton, useManualSave } from '../save';
 import type { GoalSummary, Id, Task, TaskFilter, TaskPriority } from '../../../shared/types';import { toastError } from '../errors';
+import { DEFAULT_FOCUS_MINUTES } from '../../../shared/focus';
 
 const VIEWS: { key: NonNullable<TaskFilter['view']>; icon: string; label: string; hint: string }[] = [
   { key: 'today', icon: '☀️', label: '今天', hint: '今天到期，连同已经逾期的（完成的留在原地）' },
@@ -568,6 +569,14 @@ function TaskDrawer(props: {
     void run(() => props.onSave({ note }));
   };
 
+  // 阶段2：任务联动番茄钟——记下 taskId/taskTitle，一个任务同时只能有一轮专注
+  const startFocus = (): void => {
+    void api
+      .startFocus(DEFAULT_FOCUS_MINUTES * 60, task.id, task.title)
+      .then(() => toast('专注开始，右下角能看到剩余时间'))
+      .catch((err) => toastError('开始专注失败：', err));
+  };
+
   return (
     <div className="drawer">
       <div className="row">
@@ -646,6 +655,14 @@ function TaskDrawer(props: {
           }}
         />
       </Field>
+      <div className="row" style={{ marginTop: 4 }}>
+        <span className="muted" style={{ flex: 1 }}>
+          用番茄钟专注这份任务；时间在主进程里算，切页、收面板都不会停
+        </span>
+        <button type="button" className="btn sm" onClick={startFocus}>
+          ⏱ 开始专注
+        </button>
+      </div>
       <div className="row" style={{ marginTop: 4 }}>
         <span className="muted" style={{ flex: 1 }}>
           改完点一下保存，立刻写进数据文件

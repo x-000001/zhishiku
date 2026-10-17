@@ -453,6 +453,58 @@ export interface UpdateCheck {
   checkedAt: number;
 }
 
+/* ------------------------------------------------------------------ */
+/* 第六版：番茄钟专注计时                                               */
+/* ------------------------------------------------------------------ */
+
+/** 一条会话是「专注」还是「休息」。 */
+export type FocusKind = 'focus' | 'break';
+
+/** 计时器当前状态：idle 没开始、running 专注中、paused 暂停、break 休息倒计时。 */
+export type FocusStatus = 'idle' | 'running' | 'paused' | 'break';
+
+/**
+ * 主进程是唯一计时源，这是它同步给渲染层的快照。
+ * 渲染层只用 endAt - Date.now() 算剩余，不自己数秒，也不靠 setInterval 累加。
+ */
+export interface FocusState {
+  status: FocusStatus;
+  kind: FocusKind;
+  /** 数据库里那条会话的 id；idle 时为 null */
+  sessionId: number | null;
+  /** 这次计划多久（秒） */
+  plannedSeconds: number;
+  /** 结束时刻（epoch 毫秒）。running / break 时用它算剩余；paused 或 idle 时为 null */
+  endAt: number | null;
+  /** 暂停/初始状态下冻结的剩余毫秒；running 时也同步算好，渲染层做兜底 */
+  remainingMs: number;
+  /** 联动任务（任务详情里点「开始专注」时带上） */
+  taskId: number | null;
+  taskTitle: string | null;
+  /** 开始时刻（ISO 字符串，写进库的就是它） */
+  startedAt: string | null;
+}
+
+/** 今日/本周统计：只算正常做完的专注（不含放弃、不含休息）。 */
+export interface FocusSummary {
+  todayCount: number;
+  todaySeconds: number;
+  weekCount: number;
+  weekSeconds: number;
+}
+
+/** 一条历史会话记录。 */
+export interface FocusSession {
+  id: number;
+  kind: FocusKind;
+  status: 'running' | 'paused' | 'done' | 'abandoned';
+  taskId: Id | null;
+  startedAt: string;
+  endedAt: string | null;
+  plannedSeconds: number;
+  actualSeconds: number;
+}
+
 /** preload 暴露给渲染进程的接口。 */
 export interface KbApi {
   invoke<T = unknown>(channel: string, payload?: unknown): Promise<T>;

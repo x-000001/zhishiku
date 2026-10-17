@@ -15,6 +15,9 @@ import type {
   CalendarEntry,
   Category,
   DashboardData,
+  FocusKind,
+  FocusSession,
+  FocusSummary,
   Goal,
   GoalDetail,
   GoalHorizon,
@@ -50,7 +53,7 @@ import type {
   TaskPriority,
   TaskStatus
 } from '../shared/types';
-import { SCHEMA } from './schema';
+import { FOCUS_SCHEMA, SCHEMA } from './schema';
 
 let db: DatabaseSync | null = null;
 let paths: DataPaths | null = null;
@@ -150,7 +153,7 @@ function snippetAround(content: string, query: string, len = 90): string {
 /* 建表与迁移                                                          */
 /* ------------------------------------------------------------------ */
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 /** 给老库补列：SQLite 没有 ADD COLUMN IF NOT EXISTS，先查表结构再决定。 */
 function addColumnIfMissing(table: string, column: string, decl: string): void {
@@ -215,6 +218,7 @@ function backfillNoteSort(): void {
 function migrate(): void {
   const database = requireDb();
   database.exec(SCHEMA);
+  database.exec(FOCUS_SCHEMA);
   const row = one<{ user_version: number }>('PRAGMA user_version');
   const current = Number(row?.user_version ?? 0);
   if (current < 2) {
@@ -264,6 +268,11 @@ function migrate(): void {
     // v4 → v5：标签全局管理。表结构不用动（tag / note_tag 第一版就有），
     // 只补一个按标签反查的索引 —— 引用数统计和「点标签筛选」都靠它。
     database.exec('CREATE INDEX IF NOT EXISTS idx_note_tag_tag ON note_tag(tag_id)');
+  }
+  if (current < 6) {
+    // v5 → v6：番茄钟专注计时。只加 focus_sessions 表和它的时间索引，
+    // 已有表一列都不动；老用户升级后历史为空，从第一次点「开始专注」开始记。
+    database.exec(FOCUS_SCHEMA);
   }
   if (current < SCHEMA_VERSION) {
     database.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
@@ -2248,4 +2257,144 @@ export function periodStats(from: string, to: string): {
       to
     )
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* 第六版：番茄钟专注计时                                               */
+/* ------------------------------------------------------------------ */
+
+/** 进行中的计时器状态存在 meta 表里，重启应用能接着走。 */
+const FOCUS_STATE_KEY = 'focus:current';
+
+interface FocusRow {
+  id: number;
+  kind: string;
+  task_id: number | null;
+  started_at: string;
+  ended_at: string | null;
+  planned_seconds: number;
+  actual_seconds: number;
+  status: string;
+}
+
+function toFocusSession(row: FocusRow): FocusSession {
+  return {
+    id: row.id,
+    kind: row.kind === 'break' ? 'break' : 'focus',
+    status:
+      row.status === 'done' || row.status === 'abandoned' || row.status === 'paused'
+        ? row.status
+        : 'running',
+    taskId: row.task_id,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    plannedSeconds: Number(row.planned_seconds),
+    actualSeconds: Number(row.actual_seconds)
+  };
+}
+
+/** 开一条新会话（专注或休息），返回会话 id。 */
+export function createFocusSession(input: {
+  kind: FocusKind;
+  taskId: Id | null;
+  plannedSeconds: number;
+  startedAt: string;
+}): number {
+  const res = run(
+    `insert into focus_sessions (kind, task_id, started_at, planned_seconds, actual_seconds, status, created_at)
+     values (?, ?, ?, ?, 0, 'running', ?)`,
+    input.kind,
+    input.taskId,
+    input.startedAt,
+    Math.max(0, Math.round(input.plannedSeconds)),
+    new Date().toISOString()
+  );
+  return Number(res.lastInsertRowid);
+}
+
+/** 中途暂停/继续：只挪状态，不改计划时长。 */
+export function setFocusSessionStatus(id: Id, status: 'running' | 'paused'): void {
+  run('update focus_sessions set status = ? where id = ?', status, id);
+}
+
+/** 结束一条会话：done 正常做完，abandoned 中途放弃。 */
+export function finishFocusSession(
+  id: Id,
+  input: { status: 'done' | 'abandoned'; actualSeconds: number; endedAt: string }
+): void {
+  run(
+    'update focus_sessions set status = ?, actual_seconds = ?, ended_at = ? where id = ?',
+    input.status,
+    Math.max(0, Math.round(input.actualSeconds)),
+    input.endedAt,
+    id
+  );
+}
+
+export function focusSessionById(id: Id): FocusSession | null {
+  const row = one<FocusRow>('select * from focus_sessions where id = ?', id);
+  return row ? toFocusSession(row) : null;
+}
+
+/**
+ * 今日 / 本周统计。只算 kind='focus' 且 status='done' 的会话：
+ * 休息不算专注时长，放弃的会话保留记录但不计入总时长。
+ * started_at 统一存 ISO 字符串，字典序即时间序，所以直接用 >= 比。
+ */
+export function focusSummary(now = new Date()): FocusSummary {
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const mondayOffset = (startOfDay.getDay() + 6) % 7;
+  const startOfWeek = new Date(
+    startOfDay.getFullYear(),
+    startOfDay.getMonth(),
+    startOfDay.getDate() - mondayOffset
+  );
+  const rows = all<{ started_at: string; actual_seconds: number }>(
+    `select started_at, actual_seconds from focus_sessions
+     where kind = 'focus' and status = 'done' and started_at >= ?`,
+    startOfWeek.toISOString()
+  );
+  const dayStart = startOfDay.toISOString();
+  const summary: FocusSummary = { todayCount: 0, todaySeconds: 0, weekCount: 0, weekSeconds: 0 };
+  for (const row of rows) {
+    summary.weekCount += 1;
+    summary.weekSeconds += Number(row.actual_seconds) || 0;
+    if (row.started_at >= dayStart) {
+      summary.todayCount += 1;
+      summary.todaySeconds += Number(row.actual_seconds) || 0;
+    }
+  }
+  return summary;
+}
+
+/** 把「现在进行中的计时器」写进 meta，重启后由主进程读回来接着走。 */
+export function saveFocusState(json: string): void {
+  setSetting(FOCUS_STATE_KEY, json);
+}
+
+export function loadFocusState(): string | null {
+  return getSetting(FOCUS_STATE_KEY);
+}
+
+export function clearFocusState(): void {
+  run('delete from meta where key = ?', FOCUS_STATE_KEY);
+}
+
+/**
+ * 启动时收尾：上次异常退出留下的 running / paused 记录统一标成 abandoned，
+ * 免得统计里出现永远走不完的会话。keepId 是这次要接上的那一条（可以为 null）。
+ */
+export function closeDanglingFocusSessions(keepId: Id | null, endedAt: string): void {
+  if (keepId === null) {
+    run(
+      `update focus_sessions set status = 'abandoned', ended_at = ? where status in ('running', 'paused')`,
+      endedAt
+    );
+    return;
+  }
+  run(
+    `update focus_sessions set status = 'abandoned', ended_at = ? where status in ('running', 'paused') and id <> ?`,
+    endedAt,
+    keepId
+  );
 }

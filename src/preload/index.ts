@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-const ALLOWED_EVENTS = new Set(['nav:go', 'capture:focus', 'notice:due', 'update:progress']);
+const ALLOWED_EVENTS = new Set(['nav:go', 'capture:focus', 'notice:due', 'update:progress', 'focus:state']);
 
 const api = {
   async invoke<T = unknown>(channel: string, payload?: unknown): Promise<T> {

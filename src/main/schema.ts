@@ -236,3 +236,24 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
   tokenize = 'unicode61'
 );
 `;
+
+/**
+ * 第六版（番茄钟）：专注/休息会话表。
+ * 单独抽出来，是因为「新库建表」和「老库 v5 → v6 迁移」要用同一段 SQL，
+ * 复制两份迟早会漂移。
+ */
+export const FOCUS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS focus_sessions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind            TEXT NOT NULL DEFAULT 'focus',
+  task_id         INTEGER REFERENCES task(id) ON DELETE SET NULL,
+  started_at      TEXT NOT NULL,
+  ended_at        TEXT,
+  planned_seconds INTEGER NOT NULL,
+  actual_seconds  INTEGER NOT NULL DEFAULT 0,
+  status          TEXT NOT NULL,
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_focus_started ON focus_sessions(started_at DESC);
+`;
+

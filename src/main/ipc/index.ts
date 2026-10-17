@@ -9,6 +9,7 @@ import { registerPlans } from './plans';
 import { registerReview } from './review';
 import { registerSystem, registerWindow } from './system';
 import { registerUpdate } from './update';
+import { registerFocus } from './focus';
 
 /**
  * 把全部 IPC 通道挂上。原来是 400 行一个函数，现在按域分开放：
@@ -44,5 +45,6 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
   registerReview(handle);
   registerSystem(handle, deps);
   registerUpdate(handle);
+  registerFocus(handle);
   registerWindow(handleWindow);
 }
