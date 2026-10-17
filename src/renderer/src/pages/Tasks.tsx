@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { Empty, ConfirmDialog, toast } from '../ui';
+import { showContextMenu } from '../menu';
 import { PRIORITY_LABEL, PRIORITY_ORDER, REPEAT_LABEL, fmtDate, fmtDateTime, nextPriority, relative, todayLocal } from '../format';
 import { SaveButton, useManualSave } from '../save';
 import type { GoalSummary, Id, Task, TaskFilter, TaskPriority } from '../../../shared/types';
@@ -344,6 +345,22 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
                 <div
                   className={`task-row${task.status === 'done' ? ' done' : ''}${selected === task.id ? ' selected' : ''}${picked.has(task.id) ? ' picked' : ''}`}
                   onClick={() => (pickMode ? togglePick(task.id) : setSelected(selected === task.id ? null : task.id))}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    showContextMenu(e, [
+                      {
+                        label: task.status === 'done' ? '取消完成' : '标记完成',
+                        onSelect: () => void toggle(task)
+                      },
+                      ...PRIORITY_ORDER.map((p, i) => ({
+                        label: `优先级：${PRIORITY_LABEL[p] ?? p}`,
+                        hint: task.priority === p ? '当前' : undefined,
+                        separator: i === 0,
+                        onSelect: () => void patch(task.id, { priority: p as TaskPriority })
+                      })),
+                      { label: '删除', danger: true, separator: true, onSelect: () => void remove(task) }
+                    ]);
+                  }}
                 >
                   {pickMode ? (
                     <input

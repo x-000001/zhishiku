@@ -197,6 +197,72 @@ await cdp.send('Emulation.clearDeviceMetricsOverride');
 await cdp.eval('window.dispatchEvent(new Event("resize")); true');
 await sleep(700);
 
+// ---- 第五版（阶段10）：右键菜单与弹窗（打包版也要有毛玻璃、自动聚焦、退场） ----
+await cdp.eval("location.hash = '#/knowledge'; true");
+await sleep(900);
+const ctxPack = await cdp.eval(`(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const out = { items: [], glass: '', pos: '', leaving: false, gone: false, anim: '', focusIn: false };
+  const rows = [...document.querySelectorAll('.kb-tree .tree-item')];
+  let opened = null;
+  for (const row of rows) {
+    const b = row.getBoundingClientRect();
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: Math.round(b.left + 40), clientY: Math.round(b.top + 12) }));
+    await sleep(120);
+    const m = document.querySelector('.ctx-menu');
+    if (m) { opened = m; break; }
+  }
+  if (!opened) return out;
+  const cs = getComputedStyle(opened);
+  out.items = [...opened.querySelectorAll('.ctx-item .ctx-label')].map((b) => b.textContent.trim());
+  out.glass = String(cs.getPropertyValue('backdrop-filter') || '');
+  out.pos = cs.getPropertyValue('position');
+  const rename = [...opened.querySelectorAll('.ctx-item')].find((b) => b.textContent.includes('改名字'));
+  if (!rename) return out;
+  rename.click();
+  await sleep(340);
+  const dlg = document.querySelector('.modal');
+  if (!dlg) return out;
+  const dc = getComputedStyle(dlg);
+  out.anim = String(dc.animationName);
+  const focused = document.activeElement;
+  out.focusIn = !!(focused && dlg.contains(focused) && (focused.tagName === 'INPUT' || focused.tagName === 'TEXTAREA'));
+  const x = dlg.querySelector('.modal-head .icon-btn');
+  if (!x) return out;
+  x.click();
+  await sleep(80);
+  out.leaving = !!document.querySelector('.modal-backdrop.leaving');
+  await sleep(340);
+  out.gone = !document.querySelector('.modal');
+  return out;
+})()`);
+check(
+  '打包版右键分类行弹出毛玻璃菜单',
+  ctxPack.items.some((t) => t.includes('改名字')) && /blur\(20px\)/.test(String(ctxPack.glass)) && ctxPack.pos === 'fixed',
+  `项目=${ctxPack.items.join('/' )} 滤镜=${String(ctxPack.glass).slice(0, 30)} 位置=${ctxPack.pos}`
+);
+check(
+  '打包版弹窗入场只动 transform/opacity，点 × 先播退场再卸',
+  /jw-modal-in/.test(String(ctxPack.anim)) && ctxPack.focusIn === true && ctxPack.leaving === true && ctxPack.gone === true,
+  `动画=${ctxPack.anim} 焦点进输入框=${ctxPack.focusIn} 退场类=${ctxPack.leaving} 卸干净=${ctxPack.gone}`
+);
+// 截图要有菜单在画面里：再打开一次拍完就关
+await cdp.eval(`(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const rows = [...document.querySelectorAll('.kb-tree .tree-item')];
+  for (const row of rows) {
+    const b = row.getBoundingClientRect();
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: Math.round(b.left + 40), clientY: Math.round(b.top + 12) }));
+    await sleep(140);
+    if (document.querySelector('.ctx-menu')) return true;
+  }
+  return false;
+})()`);
+await sleep(200);
+await cdp.shot('packaged-ctx-menu');
+await cdp.eval("document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 2, clientY: 2 })); true");
+await sleep(240);
+
 // ---- 第五版（阶段8）：主题记忆 —— 真的重启一次进程，验证首帧就是存下来的主题 ----
 await cdp.eval(`window.api.invoke('settings:set', { key: 'theme', value: 'dark' })`);
 await sleep(600);

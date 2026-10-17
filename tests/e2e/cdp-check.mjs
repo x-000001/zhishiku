@@ -2599,6 +2599,311 @@ try {
     detail: `拖之前=class:${resizeLock.before.resizing} 拖之中=class:${resizeLock.during.resizing} 过渡:${resizeLock.during.dur} 停手后=class:${resizeLock.after.resizing} 过渡:${resizeLock.after.dur}`
   });
 
+  // ---------------------------------------------------------------
+  // 第五版（阶段10）：弹窗与右键菜单
+  // ---------------------------------------------------------------
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(760);
+
+  // 回归：全局搜索靠「搜索框聚焦」打开，关掉时不能把焦点还回去（否则 onFocus 立刻又弹一次）
+  await cdp.eval("(() => { const i = document.querySelector('.searchbox input'); if (i) i.focus(); return true; })()");
+  await sleep(460);
+  const paletteReopened = await cdp.eval("(() => !!document.querySelector('.modal.search-modal'))()");
+  await cdp.eval("(() => { const b = document.querySelector('.modal-head .icon-btn'); if (b) b.click(); return true; })()");
+  await sleep(220);
+  const paletteGone = await cdp.eval("(async () => { const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); await sleep(320); return !document.querySelector('.modal.search-modal'); })()");
+  results.push({
+    name: '第五版：关掉全局搜索不会自己又弹回来（焦点没还给搜索框）',
+    ok: paletteReopened === true && paletteGone === true,
+    detail: '聚焦后打开=' + paletteReopened + ' 点×后已关=' + paletteGone
+  });
+
+  const closeAnyModal = async () => {
+    await cdp.eval(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 8; i += 1) {
+        if (!document.querySelector('.modal')) return true;
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+        await sleep(240);
+      }
+      return !document.querySelector('.modal');
+    })()`);
+  };
+
+  const clearCtxMenu = async () => {
+    await cdp.eval(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      if (document.querySelector('.ctx-menu')) {
+        document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 1, clientY: 1 }));
+        await sleep(340);
+      }
+      return !document.querySelector('.ctx-menu');
+    })()`);
+  };
+  await closeAnyModal();
+  await clearCtxMenu();
+  const ctxNote = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const row = document.querySelector('.kb-list-body .list-row');
+    if (!row) return { error: '没有笔记行' };
+    row.scrollIntoView({ block: 'center' });
+    await sleep(160);
+    const r = row.getBoundingClientRect();
+    const fire = (x, y) =>
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+    fire(Math.round(r.left + 80), Math.round(r.top + 14));
+    await sleep(140);
+    const m = document.querySelector('.ctx-menu');
+    if (!m) return { error: '右键笔记行没弹出菜单' };
+    const cs = getComputedStyle(m);
+    const items = [...m.querySelectorAll('.ctx-item .ctx-label')].map((b) => b.textContent.trim());
+    const glass = String(cs.getPropertyValue('backdrop-filter') || '');
+    const pos = cs.getPropertyValue('position');
+    const z = cs.getPropertyValue('z-index');
+    document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 2, clientY: 2 }));
+    await sleep(300);
+    const closedByOutside = !document.querySelector('.ctx-menu');
+    fire(window.innerWidth - 4, window.innerHeight - 4);
+    await sleep(140);
+    const m2 = document.querySelector('.ctx-menu');
+    const b2 = m2 ? m2.getBoundingClientRect() : null;
+    const staysInside = b2
+      ? b2.right <= window.innerWidth + 1 && b2.bottom <= window.innerHeight + 1 && b2.left >= 0 && b2.top >= 0
+      : false;
+    document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 2, clientY: 2 }));
+    await sleep(300);
+    return { items, glass, pos, z, closedByOutside, staysInside };
+  })()`);
+  results.push({
+    name: '第五版：右键笔记行弹出毛玻璃菜单（贴鼠标、挨着窗口边会自己往里收、点外面就关）',
+    ok:
+      !!ctxNote.items &&
+      ctxNote.items.some((t) => t.includes('移到回收站')) &&
+      ctxNote.items.some((t) => t.includes('打开')) &&
+      /blur\(20px\)/.test(String(ctxNote.glass)) &&
+      ctxNote.pos === 'fixed' &&
+      ctxNote.closedByOutside === true &&
+      ctxNote.staysInside === true,
+    detail: `项目=${(ctxNote.items || []).join('/')} 滤镜=${String(ctxNote.glass).slice(0, 34)} 位置=${ctxNote.pos} 点外面关=${ctxNote.closedByOutside} 右下角留得住=${ctxNote.staysInside}`
+  });
+  // 截图要有菜单在画面里：单独再打开一次，拍完再关
+  await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const row = document.querySelector('.kb-list-body .list-row');
+    const r = row.getBoundingClientRect();
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: Math.round(r.left + 80), clientY: Math.round(r.top + 12) }));
+    await sleep(260);
+    return !!document.querySelector('.ctx-menu');
+  })()`);
+  await cdp.shot('ctx-menu');
+  await clearCtxMenu();
+  const ctxKeys = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const row = document.querySelector('.kb-list-body .list-row');
+    const r = row.getBoundingClientRect();
+    row.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: Math.round(r.left + 80),
+        clientY: Math.round(r.top + 14)
+      })
+    );
+    await sleep(150);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    await sleep(90);
+    const activeEl = document.querySelector('.ctx-menu .ctx-item.active');
+    const activeText = activeEl ? activeEl.textContent.trim() : '';
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await sleep(60);
+    const leaving = !!document.querySelector('.ctx-menu.leaving');
+    await sleep(260);
+    return { activeText, leaving, gone: !document.querySelector('.ctx-menu') };
+  })()`);
+  results.push({
+    name: '第五版：右键菜单能用键盘上下选、Esc 关掉（先播完退场再卸）',
+    ok: ctxKeys.activeText.length > 0 && ctxKeys.leaving === true && ctxKeys.gone === true,
+    detail: `高亮=${ctxKeys.activeText} 退场类=${ctxKeys.leaving} 关干净=${ctxKeys.gone}`
+  });
+
+  await clearCtxMenu();
+  const ctxModal = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const openMenu = async (row) => {
+      const r = row.getBoundingClientRect();
+      row.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          clientX: Math.round(r.left + 40),
+          clientY: Math.round(r.top + 10)
+        })
+      );
+      await sleep(150);
+      return document.querySelector('.ctx-menu');
+    };
+    const rows = [...document.querySelectorAll('.kb-tree .tree-item')];
+    let items = [];
+    let menu = null;
+    for (const row of rows) {
+      menu = await openMenu(row);
+      if (menu) {
+        items = [...menu.querySelectorAll('.ctx-item .ctx-label')].map((b) => b.textContent.trim());
+        break;
+      }
+    }
+    if (!items.length) return { error: '分类行没有右键菜单' };
+    const rename = [...document.querySelectorAll('.ctx-menu .ctx-item')].find((b) => b.textContent.includes('改名字'));
+    if (!rename) return { error: '分类菜单里没有改名字', items };
+    rename.click();
+    await sleep(320);
+    const dlg = document.querySelector('.modal');
+    if (!dlg) return { error: '改名字没弹出弹窗', items };
+    const box = dlg.getBoundingClientRect();
+    const cs = getComputedStyle(dlg);
+    const focused = document.activeElement;
+    const focusIn = !!(focused && dlg.contains(focused) && (focused.tagName === 'INPUT' || focused.tagName === 'TEXTAREA'));
+    const glass = String(cs.getPropertyValue('backdrop-filter') || '');
+    const props = String(cs.transitionProperty);
+    const anim = String(cs.animationName);
+    const x = dlg.querySelector('.modal-head .icon-btn');
+    if (!x) return { error: '没找到关闭按钮', items };
+    x.click();
+    await sleep(70);
+    const leaving = !!document.querySelector('.modal-backdrop.leaving');
+    let gone = false;
+    for (let i = 0; i < 18 && !gone; i += 1) {
+      await sleep(80);
+      gone = !dlg.isConnected;
+    }
+    return { items, glass, props, anim, focusIn, leaving, gone, rest: [...document.querySelectorAll('.modal-head span')].map((s) => s.textContent).join('|'), w: Math.round(box.width) };
+  })()`);
+  results.push({
+    name: '第五版：弹窗入场只动 transform/opacity（带毛玻璃、焦点自动落在输入框），关闭时先播完退场再卸',
+    ok:
+      !!ctxModal.items &&
+      ctxModal.items.some((t) => t.includes('新建子分类')) &&
+      /jw-modal-in/.test(String(ctxModal.anim)) &&
+      /blur\(20px\)/.test(String(ctxModal.glass)) &&
+      ctxModal.focusIn === true &&
+      !/\b(width|height|margin|left|top|padding)\b/.test(String(ctxModal.props)) &&
+      ctxModal.leaving === true &&
+      ctxModal.gone === true,
+    detail: `分类菜单=${(ctxModal.items || []).join('/')} 动画=${ctxModal.anim} 滤镜=${String(ctxModal.glass).slice(0, 30)} 焦点进了输入框=${ctxModal.focusIn} 点×后播退场=${ctxModal.leaving} 卸干净=${ctxModal.gone} 残留弹窗=${ctxModal.rest}`
+  });
+
+  const ctxTask = await cdp.eval("location.hash = '/tasks'; true");
+  await sleep(760);
+  await clearCtxMenu();
+  const taskMenu = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const row = document.querySelector('.task-row');
+    if (!row) return { error: '没有任务行' };
+    const r = row.getBoundingClientRect();
+    row.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: Math.round(r.left + 60),
+        clientY: Math.round(r.top + 12)
+      })
+    );
+    await sleep(150);
+    const m = document.querySelector('.ctx-menu');
+    const items = m ? [...m.querySelectorAll('.ctx-item .ctx-label')].map((b) => b.textContent.trim()) : [];
+    document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 2, clientY: 2 }));
+    await sleep(280);
+    return { items, closed: !document.querySelector('.ctx-menu') };
+  })()`);
+  results.push({
+    name: '第五版：右键任务行能标记完成 / 改优先级 / 删除',
+    ok:
+      !!taskMenu.items &&
+      taskMenu.items.some((t) => t.includes('标记完成') || t.includes('取消完成')) &&
+      taskMenu.items.some((t) => t.includes('优先级')) &&
+      taskMenu.items.some((t) => t.includes('删除')) &&
+      taskMenu.closed === true,
+    detail: `项目=${(taskMenu.items || []).join('/')} 关掉=${taskMenu.closed}`
+  });
+
+  await setViewport(720, 860);
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(760);
+
+  await closeAnyModal();
+  await clearCtxMenu();
+  const sheet = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const rows = [...document.querySelectorAll('.kb-tree .tree-item')];
+    let items = [];
+    for (const row of rows) {
+      const r = row.getBoundingClientRect();
+      row.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          clientX: Math.round(r.left + 40),
+          clientY: Math.round(r.top + 10)
+        })
+      );
+      await sleep(60);
+      const m = document.querySelector('.ctx-menu');
+      if (m) {
+        items = [...m.querySelectorAll('.ctx-item .ctx-label')].map((b) => b.textContent.trim());
+        break;
+      }
+    }
+    const rename = [...document.querySelectorAll('.ctx-menu .ctx-item')].find((b) => b.textContent.includes('改名字'));
+    if (!rename) return { error: '窄窗口下分类菜单没有改名字', items };
+    rename.click();
+    await sleep(340);
+    const dlg = document.querySelector('.modal');
+    if (!dlg) return { error: '窄窗口下没弹出弹窗', items };
+    const cs = getComputedStyle(dlg);
+    const box = dlg.getBoundingClientRect();
+    const out = {
+      anim: String(cs.animationName),
+      w: Math.round(box.width),
+      inner: window.innerWidth,
+      radius: String(cs.borderTopLeftRadius),
+      top: Math.round(box.top),
+      bottom: Math.round(box.bottom),
+      innerH: window.innerHeight
+    };
+    return out;
+  })()`);
+  await cdp.shot('modal-sheet');
+  const sheetClosed = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const dlg = document.querySelector('.modal');
+    if (!dlg) return { error: '弹窗没了' };
+    const x = dlg.querySelector('.modal-head .icon-btn');
+    if (!x) return { error: '没找到关闭按钮' };
+    x.click();
+    await sleep(70);
+    const leaving = !!document.querySelector('.modal-backdrop.leaving');
+    let gone = false;
+    for (let i = 0; i < 18 && !gone; i += 1) {
+      await sleep(80);
+      gone = !dlg.isConnected;
+    }
+    return { leaving, gone, rest: [...document.querySelectorAll('.modal-head span')].map((s) => s.textContent).join('|') };
+  })()`);
+  results.push({
+    name: '第五版：窗口 <768 时弹窗从底部升起、占满整宽（底部面板）',
+    ok:
+      sheet.anim === 'jw-sheet-in' &&
+      sheet.w >= sheet.inner - 26 &&
+      sheet.top < sheet.innerH &&
+      sheet.bottom >= sheet.innerH - 16 &&
+      sheetClosed.leaving === true &&
+      sheetClosed.gone === true,
+    detail: `动画=${sheet.anim} 宽=${sheet.w}/${sheet.inner} 圆角=${sheet.radius} 顶=${sheet.top} 底=${sheet.bottom}/${sheet.innerH} 退场类=${sheetClosed.leaving} 关干净=${sheetClosed.gone} 残留弹窗=${sheetClosed.rest}`
+  });
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+  await cdp.eval('window.dispatchEvent(new Event("resize")); true');
+  await sleep(700);
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {

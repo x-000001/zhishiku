@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, onEvent } from './api';
 import { Modal, ToastHost, toast } from './ui';
+import { ContextMenuHost } from './menu';
 import Dashboard from './pages/Dashboard';
 import Inbox from './pages/Inbox';
 import Knowledge from './pages/Knowledge';
@@ -328,6 +329,7 @@ export default function App(): ReactNode {
 
       {searchOpen ? <SearchModal onClose={() => setSearchOpen(false)} openNote={openNote} /> : null}
       <ToastHost />
+      <ContextMenuHost />
     </div>
   );
 }

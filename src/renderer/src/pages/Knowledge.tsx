@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { api, pathForFile } from '../api';
 import { ConfirmDialog, Empty, Modal, toast } from '../ui';
+import { showContextMenu, type MenuItem } from '../menu';
 import { fmtDate, relative } from '../format';
 import { diffLines, renderMarkdown } from '../../../shared/markdown';
 import { attachmentUrl, htmlToPlainText, sanitizeHtml } from '../../../shared/html';
@@ -811,6 +812,34 @@ export default function Knowledge(props: {
                   setDropAt(null);
                 }}
                 onClick={() => setOpenId(item.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  const items: MenuItem[] =
+                    sel === 'trash'
+                      ? [
+                          {
+                            label: '还原',
+                            onSelect: () => {
+                              void api.restoreNote(item.id).then(() => {
+                                void loadList();
+                                toast('已还原');
+                              });
+                            }
+                          },
+                          { label: '彻底删除', danger: true, separator: true, onSelect: () => setConfirmPurge(item.id) }
+                        ]
+                      : [
+                          { label: '打开', onSelect: () => setOpenId(item.id) },
+                          {
+                            label: item.is_pinned ? '取消置顶' : '置顶',
+                            onSelect: () => {
+                              void api.togglePin(item.id).then(() => loadList());
+                            }
+                          },
+                          { label: '移到回收站', danger: true, separator: true, onSelect: () => void trash(item.id) }
+                        ];
+                  showContextMenu(e, items);
+                }}
               >
                 <span>{item.is_pinned ? '📌' : '📄'}</span>
                 <div className="grow">
@@ -1448,12 +1477,14 @@ function TreeRow(props: {
   onDropNote?: (noteId: Id) => void;
   onDragEnter?: () => void;
   onDragLeave?: () => void;
+  onContextMenu?: (e: ReactMouseEvent<HTMLDivElement>) => void;
   actions?: ReactNode;
 }): ReactNode {
   return (
     <div
       className={props.drop ? 'tree-item selected' : props.selected ? 'tree-item selected' : 'tree-item'}
       onClick={props.onSelect}
+      onContextMenu={props.onContextMenu}
       onDragOver={(e) => {
         if (props.onDropNote) e.preventDefault();
       }}
@@ -1503,6 +1534,16 @@ function TreeNode(props: {
         onDropNote={(noteId) => props.onDropNote(noteId, cat.id)}
         onDragEnter={() => props.onDragEnter(cat.id)}
         onDragLeave={props.onDragLeave}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          showContextMenu(e, [
+            { label: '新建子分类', onSelect: () => props.onAddChild(cat) },
+            { label: '改名字', onSelect: () => props.onRename(cat) },
+            { label: '上移', onSelect: () => props.onMove(cat, 'up') },
+            { label: '下移', onSelect: () => props.onMove(cat, 'down') },
+            { label: '删除分类', danger: true, separator: true, onSelect: () => props.onDelete(cat) }
+          ]);
+        }}
         actions={
           <>
             <button
