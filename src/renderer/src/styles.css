@@ -5008,3 +5008,49 @@ blockquote.ai-summary b {
     max-height: 30vh;
   }
 }
+
+/* 0.8.0：AI 生成中的「停止生成」 */
+.ai-stop {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border-strong));
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-card));
+}
+
+.ai-stop:hover {
+  background: color-mix(in srgb, var(--danger) 14%, var(--bg-card));
+}
+
+.ai-stopped {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.ai-stop-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 26%, transparent);
+}
+
+.ai-stop-bar > span {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 第八版：导出 Markdown 的结果文字（长路径也别撑破卡片） */
+.export-progress {
+  word-break: break-all;
+  line-height: 1.6;
+}
+

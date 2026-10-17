@@ -40,6 +40,10 @@ const POS_KEY = 'jw-focus-fab-pos';
 const DRAG_THRESHOLD = 4;
 /** 贴边时至少留这么多像素在窗口里 */
 const EDGE = 8;
+/** 0.8.0：松手时离左/右边缘小于这个距离，就自动吸附过去 */
+const SNAP_DISTANCE = 50;
+/** 吸附到边上时预留的边距（比 EDGE 大一点，看着不贴死） */
+const SNAP_MARGIN = 16;
 
 type FabPos = { tx: number; ty: number };
 const DEFAULT_POS: FabPos = { tx: 0, ty: 0 };
@@ -82,6 +86,25 @@ function clampPos(tx: number, ty: number, dock: HTMLElement | null): FabPos {
   const maxY = window.innerHeight - EDGE - h - baseTop;
   const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), Math.max(lo, hi));
   return { tx: clamp(tx, minX, maxX), ty: clamp(ty, minY, maxY) };
+}
+
+/**
+ * 0.8.0：边缘吸附。
+ * 松手时算一下悬浮球离窗口左/右边缘还有多远，小于 SNAP_DISTANCE 就把横向位置
+ * 吸到 SNAP_MARGIN 处；纵向保持用户拖到的高度。最后再过一次 clampPos，保证不会飞出窗口。
+ */
+function snapToEdge(pos: FabPos, dock: HTMLElement | null): FabPos {
+  const w = dock?.offsetWidth || 120;
+  const baseLeft = window.innerWidth - 18 - w;
+  const left = baseLeft + pos.tx;
+  const right = window.innerWidth - (left + w);
+  let tx = pos.tx;
+  if (left < SNAP_DISTANCE) {
+    tx = SNAP_MARGIN - baseLeft;
+  } else if (right < SNAP_DISTANCE) {
+    tx = window.innerWidth - SNAP_MARGIN - w - baseLeft;
+  }
+  return clampPos(tx, pos.ty, dock);
 }
 
 export default function FocusDock(): ReactNode {
@@ -162,8 +185,10 @@ export default function FocusDock(): ReactNode {
       window.setTimeout(() => {
         suppressClick.current = false;
       }, 400);
-      setPos(drag.last);
-      savePos(drag.last);
+      // 松手后先算吸附：近边就吸过去，坐标再持久化（动画由 CSS 的 --spring-ease 负责）
+      const snapped = snapToEdge(drag.last, dock);
+      setPos(snapped);
+      savePos(snapped);
     };
     window.addEventListener('pointermove', onMove, { passive: false });
     window.addEventListener('pointerup', onEnd);

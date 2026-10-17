@@ -4,6 +4,35 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 `主.次.修订`。
 
+## [0.8.0] - 2026-10-19
+
+发布：[GitHub Release v0.8.0](https://github.com/x-000001/zhishiku/releases/tag/v0.8.0)（附件 JwKB-Setup-0.8.0.exe，112,537,948 字节）
+
+### 新增
+
+- **AI 能中途停了**：划词对比弹窗、全文摘要 / 分类整理 / 知识联想在生成中都有「■ 停止生成」按钮。点了立刻通过 IPC 让主进程 `AbortController.abort()` 中断网络请求；**已生成的内容保留在弹窗里**，可以继续「确认替换」/「复制」，也可以「重新生成」。中断后按钮立刻恢复默认状态（不会卡在 loading），也不会抛错或崩掉。
+- **番茄钟桌面联动**：
+  - **任务栏进度条**：专注中通过 `win.setProgressBar()` 在任务栏图标上显示绿色进度；暂停、放弃、进休息、结束时 `setProgressBar(-1)` 清除。
+  - **到点强提醒**：专注结束时除了系统通知，还会 `win.flashFrame(true)` 让任务栏图标闪烁，用户点回应用窗口（`win.once('focus')`）就停。
+  - 便携版 / 系统不支持时静默降级（`try-catch`），不影响其他功能。
+- **番茄钟悬浮球边缘吸附**：拖拽松手时，若离左 / 右边缘不足 50px，用现有弹簧曲线（`--spring-ease`）自动贴边（留 16px 边距）；吸附用 `transform: translate()` 做动画（不触发重排），吸附后的坐标照常写入 `localStorage`。
+- **导出全库为 Markdown**（设置页「导出数据」卡片）：
+  - 点「导出全部数据为 Markdown」→ 系统原生「选择文件夹」→ 按知识库分类树建目录，每篇笔记一个 `.md`（文件名取标题，重名自动加序号），未分类的放「未分类」目录。
+  - 富文本转标准 Markdown（标题 / 列表 / 引用 / 代码 / 表格 / 粗斜体 / 删除线 / 链接 / 图片 / 分割线），用自己写的小转换器，**不引新依赖**。
+  - 笔记里的图片原样拷进导出目录的 `attachments/`，正文改成相对路径，Obsidian 等软件直接能看。
+  - 导出在主进程进行，逐篇通过 IPC 推「正在导出第 5/50 篇…」进度，完成弹 Toast，还能一键「打开文件夹」。
+
+### 变更
+
+- 版本号 0.7.0 → 0.8.0；`package-lock.json` 顶层版本同步。
+- 新增文件：`src/main/html-to-md.ts`、`src/main/export.ts`、`src/main/ipc/export.ts`、`tests/unit/html-to-md.test.ts`、`tests/unit/export.test.ts`；`src/renderer/src/ai.tsx` 的弹窗加停止按钮与「已停止」状态；`src/renderer/src/focus.tsx` 加吸边计算；`src/main/focus.ts` 的 `FocusDeps` 多了两个可选钩子 `progress` / `flash`（老的调用方不用改）。
+- 数据库、`user_version`（仍是 6）、既有 IPC 通道、现有 DOM 结构与类名都没动。
+
+### 验证
+
+- typecheck 0 错、单测 **292**（21 个文件；新增 `html-to-md.test.ts` 18 条、`export.test.ts` 9 条、番茄钟任务栏 4 条：进度比例、暂停清空、到点闪任务栏、API 抛错不崩）、e2e **277/277**（新增 16 条：AI 停止后按钮复位 / 内容保留 / 仍可确认替换、悬浮球吸边与位置记忆、设置页导出卡片与进度完成、真的写出 `.md` 且按分类分目录、标准 Markdown 无 HTML 标签、图片进 attachments 且相对路径），强杀 **6/6**、打包自检 **23/23**。
+- 原有 261 条 e2e 断言全过：只加了新断言，没改旧断言的类名与 DOM 结构。
+
 ## [0.7.0] - 2026-10-19
 
 发布：[GitHub Release v0.7.0](https://github.com/x-000001/zhishiku/releases/tag/v0.7.0)（附件 JwKB-Setup-0.7.0.exe，112,532,876 字节）

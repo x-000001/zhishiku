@@ -93,6 +93,8 @@ const stubServer = http.createServer((req, res) => {
         connection: 'keep-alive'
       });
       // 拆成小段慢慢发，让「打字机效果」在测试里是真实可见的
+      // /ai-slow/ = 每块慢 300ms，专门用来测「生成中手动停止」（0.8.0）
+      const chunkDelay = url.startsWith('/ai-slow/') ? 300 : 12;
       const pieces = reply.match(/[\s\S]{1,5}/g) ?? [];
       let index = 0;
       const timer = setInterval(() => {
@@ -108,7 +110,7 @@ const stubServer = http.createServer((req, res) => {
         }
         res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: pieces[index] } }] }) + '\n\n');
         index += 1;
-      }, 12);
+      }, chunkDelay);
     });
     return;
   }
@@ -167,6 +169,8 @@ stubPort = stubServer.address().port;
 const stubUpdateUrl = `http://127.0.0.1:${stubPort}/releases/latest`;
 /* 下载目录指到测试数据目录里，方便断言文件真的落盘；DRYRUN 让「立即安装」不真跑安装程序 */
 const stubDownloadDir = path.join(dataDir, 'update-download');
+/* 导出 Markdown 的落盘目录：设了 JWKB_EXPORT_DIR 主进程就不再弹「选择文件夹」 */
+const exportDir = path.join(dataDir, 'export-md');
 
 const child = spawn(
   exe,
@@ -191,6 +195,7 @@ const child = spawn(
       JWKB_UPDATE_URL: stubUpdateUrl,
       JWKB_UPDATE_DIR: stubDownloadDir,
       JWKB_UPDATE_DRYRUN: '1',
+      JWKB_EXPORT_DIR: exportDir,
       // 番茄钟最短时长临时降到 2 秒：不设这个的话一轮 25 分钟，e2e 等不起
       JWKB_FOCUS_MIN_SECONDS: '2'
     },
@@ -1875,17 +1880,32 @@ try {
         })()`)
       )
     );
-  const hoverNav = async (st) => {
+  // 悬停后要对准“稳定后的”图标中心再移一次：侧栏折叠动画还在跑时 rect 会漂，
+  // 只按旧坐标移过去可能悬在图标外，气泡要等布局稳了才真正开始淡入。
+  // 然后轮询等过渡走完（0.32s 延迟 + 0.14s 淡入），不是降低标准——断言仍是 opacity === 1。
+  const hoverNav = async (st, wantVisible) => {
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: st.cx, y: st.cy, buttons: 0 });
-    await sleep(620);
-    return tipRead();
+    await sleep(300);
+    const again = await tipRead();
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: again.cx, y: again.cy, buttons: 0 });
+    if (!wantVisible) {
+      await sleep(360);
+      return tipRead();
+    }
+    const t0 = Date.now();
+    let last = await tipRead();
+    while (Date.now() - t0 < 2000 && last.opacity < 0.999) {
+      await sleep(80);
+      last = await tipRead();
+    }
+    return last;
   };
-  const expandedTip = await hoverNav(await tipRead());
+  const expandedTip = await hoverNav(await tipRead(), false);
   await toggleSidebar(true);
   await sleep(120);
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 4, y: 4, buttons: 0 });
   await sleep(120);
-  const collapsedTip = await hoverNav(await tipRead());
+  const collapsedTip = await hoverNav(await tipRead(), true);
   // 气泡现在真能从 60px 侧栏里探出来（.nav 放开裁剪 + 侧栏抬层级），
   // 所以这张截图就是真实的悬停态，不需要任何临时注入
   await cdp.shot('sidebar-nav-tip');
@@ -4553,6 +4573,71 @@ try {
       (fabBounds.error ? ' 错误=' + fabBounds.error : '')
   });
 
+  // 2.5) 0.8.0：边缘吸附 —— 松手时离边不到 50px 就吸到 16px（并写回 localStorage）
+  const fabSnap = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const fab = document.querySelector('.focus-fab');
+        if (!fab) return JSON.stringify({ error: '没有番茄钟按钮' });
+        const fire = (el, type, x, y) =>
+          el.dispatchEvent(
+            new PointerEvent(type, { pointerId: 11, bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, pointerType: 'mouse' })
+          );
+        const dragToLeft = async (targetLeft) => {
+          const rect = fab.getBoundingClientRect();
+          const cx = rect.left + rect.width / 2;
+          const cy = rect.top + rect.height / 2;
+          const dx = targetLeft - rect.left;
+          fire(fab, 'pointerdown', cx, cy);
+          await sleep(30);
+          fire(window, 'pointermove', cx + dx, cy);
+          await sleep(40);
+          fire(window, 'pointerup', cx + dx, cy);
+          await sleep(460); // 等弹簧动画走完
+          return fab.getBoundingClientRect();
+        };
+        // 先拖到窗口中间（远离两边），再分别停在离左/右边缘 30px 处松手
+        await dragToLeft(Math.round(window.innerWidth / 2 - 60));
+        const leftStop = await dragToLeft(30);
+        const savedLeft = JSON.parse(localStorage.getItem('jw-focus-fab-pos') || 'null');
+        await dragToLeft(Math.round(window.innerWidth - leftStop.width - 30));
+        const rightStop = await fab.getBoundingClientRect();
+        const savedRight = JSON.parse(localStorage.getItem('jw-focus-fab-pos') || 'null');
+        const transition = getComputedStyle(fab.parentElement).transition;
+        return JSON.stringify({
+          leftStop: Math.round(leftStop.left),
+          leftSaved: savedLeft,
+          rightStop: Math.round(window.innerWidth - rightStop.right),
+          rightSaved: savedRight,
+          transition
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '0.8.0：悬浮球松手时离左右边缘不到 50px 会自动吸到 16px，并记住吸附后的位置',
+    ok:
+      fabSnap.error === undefined &&
+      Math.abs(Number(fabSnap.leftStop) - 16) <= 2 &&
+      Math.abs(Number(fabSnap.rightStop) - 16) <= 2 &&
+      !!fabSnap.leftSaved &&
+      !!fabSnap.rightSaved &&
+      String(fabSnap.transition).includes('0.18s'),
+    detail:
+      '贴左边=' +
+      fabSnap.leftStop +
+      'px 贴右边=' +
+      fabSnap.rightStop +
+      'px 存的=' +
+      JSON.stringify(fabSnap.leftSaved) +
+      '→' +
+      JSON.stringify(fabSnap.rightSaved) +
+      ' 动画=' +
+      String(fabSnap.transition).slice(0, 52) +
+      (fabSnap.error ? ' 错误=' + fabSnap.error : '')
+  });
+
   // 3) 刷新页面：位置从 localStorage 读回来，按钮还在上次停的地方
   await cdp.eval('location.reload(); true');
   await sleep(2200);
@@ -4904,6 +4989,128 @@ try {
     )
   );
   results.push(...aiOffline);
+
+  // 10) 手动停止生成（0.8.0）：中断后保留已生成内容，还能确认替换/复制
+  const aiStop = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    await window.api.invoke('ai:config:set', { baseUrl: 'http://127.0.0.1:${stubPort}/ai-slow/v1' });
+    const before = q('.rt-editor') ? q('.rt-editor').innerText : '';
+    selectText(8);
+    await waitFor(() => q('.ai-bubble'), 4000);
+    clickText('.ai-bubble .ai-bubble-btn', '润色');
+    const stopBtn = await waitFor(() => q('.ai-stop'), 5000);
+    rec('AI：生成中提供「■ 停止生成」按钮', !!stopBtn, stopBtn ? (stopBtn.textContent || '').trim() : '没有按钮');
+    await waitFor(() => { const el = q('.ai-preview-out'); return el && (el.textContent || '').trim().length > 0 ? el : null; }, 6000);
+    if (stopBtn) stopBtn.click();
+    const stopped = await waitFor(() => { const badge = q('.ai-stopped'); return badge && !q('.ai-stop') ? badge : null; }, 5000);
+    const kept = (txt('.ai-preview-out') || '').trim();
+    rec('AI：停止后按钮恢复、不卡在生成中', !!stopped && !q('.ai-stop'), '已停止标记=' + String(!!stopped));
+    rec('AI：停止后已生成内容保留在弹窗里', kept.length > 0 && /这是润色/.test(kept), '保留=' + kept.length + ' 字：' + kept.slice(0, 30));
+    rec('AI：停止不算报错（没有红字提示）', !q('.modal.ai-preview .ai-error-text') && !q('.modal.ai-preview .ai-error-bar'), '');
+    const confirmBtn = q('.ai-confirm');
+    rec('AI：停止后仍可「确认替换」/「复制」', !!confirmBtn && !confirmBtn.disabled && !!q('.modal.ai-preview .ai-foot .btn'), '确认按钮可用=' + String(!!confirmBtn && !confirmBtn.disabled));
+    if (confirmBtn) confirmBtn.click();
+    await sleep(500);
+    const after = q('.rt-editor') ? q('.rt-editor').innerText : '';
+    rec('AI：停止后确认替换能把已生成部分写进正文', after !== before && /这是润色/.test(after), '写回=' + /这是润色/.test(after));
+    rec('AI：替换后预览弹窗关闭', !q('.modal.ai-preview'), '');
+    await window.api.invoke('ai:config:set', { baseUrl: 'http://127.0.0.1:${stubPort}/ai/v1' });
+    await sleep(300);
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiStop);
+
+  // 11) 导出全库为 Markdown（0.8.0 任务四）：设置页按钮 → 主进程按分类写 .md + 拷图片
+  try {
+    fs.rmSync(exportDir, { recursive: true, force: true });
+  } catch {
+    /* 第一次跑没有这个目录 */
+  }
+  const exportUi = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    const q=(s)=>document.querySelector(s);
+    const qa=(s)=>[...document.querySelectorAll(s)];
+    const sleep=(ms)=>new Promise((r)=>setTimeout(r,ms));
+    const waitFor=async(fn,ms=5000)=>{const t0=Date.now();while(Date.now()-t0<ms){try{const v=fn();if(v)return v;}catch{}await sleep(60);}return null;};
+    const out=[];
+    const rec=(name,ok,detail)=>out.push({name,ok:!!ok,detail:detail===undefined?'':String(detail).slice(0,220)});
+    location.hash='/settings';
+    const card=await waitFor(()=>q('.export-card'),5000);
+    rec('0.8.0：设置页有「导出数据」卡片和 Markdown 按钮', !!card && !!q('.export-md-btn'), card?(q('.export-md-btn').textContent||'').trim():'卡片没出现');
+    if (!card) return JSON.stringify(out);
+    const btn=await waitFor(()=>q('.export-md-btn'),4000);
+    if (btn) btn.click();
+    const done=await waitFor(()=>q('.export-progress')&&/导出完成/.test(q('.export-progress').textContent||''),20000);
+    rec('0.8.0：点导出后能跑完并显示结果（进度 → 完成）', !!done, done?(q('.export-progress').textContent||'').trim():'没等到完成');
+    rec('0.8.0：导出结束后按钮不是一直转圈', !q('.export-md-btn')||!q('.export-md-btn').classList.contains('loading'), (q('.export-md-btn')||{}).textContent||'');
+    rec('0.8.0：导出完成没有报错 Toast（显示的是完成提示）', qa('.toast-wrap').every((t)=>!/失败/.test(t.textContent||'')), qa('.toast-wrap').map((t)=>t.textContent).join(' | ').slice(0,80));
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...exportUi);
+
+  // 落盘检查：目录结构 / .md 内容 / 图片拷贝
+  const exportMdFiles = [];
+  const walkExport = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walkExport(full);
+      else if (entry.name.toLowerCase().endsWith('.md')) exportMdFiles.push(full);
+    }
+  };
+  walkExport(exportDir);
+  const exportedTexts = exportMdFiles.map((file) => ({ file, text: fs.readFileSync(file, 'utf8') }));
+  const attachmentsDir = path.join(exportDir, 'attachments');
+  const attachmentFiles = [];
+  if (fs.existsSync(attachmentsDir)) {
+    const walkFiles = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walkFiles(full);
+        else attachmentFiles.push(full);
+      }
+    };
+    walkFiles(attachmentsDir);
+  }
+  const imagesInMd = exportedTexts.filter((item) => item.text.includes('!['));
+  const badImageRefs = exportedTexts.filter((item) => item.text.includes('jw-att://'));
+
+  results.push({
+    name: '0.8.0：真的写出了 .md 文件（按分类建目录，不是一坨全在根上）',
+    ok:
+      exportMdFiles.length >= 3 &&
+      exportedTexts.some((item) => path.dirname(item.file) !== path.dirname(exportMdFiles[0])),
+    detail: '共 ' + exportMdFiles.length + ' 篇，示例：' + exportMdFiles.slice(0, 3).map((f) => path.relative(exportDir, f)).join(' / ')
+  });
+  results.push({
+    name: '0.8.0：导出的 .md 是标准 Markdown（有 # 标题、没有 HTML 标签）',
+    ok:
+      exportedTexts.length > 0 &&
+      exportedTexts.every((item) => item.text.startsWith('# ') || item.text.startsWith('---')) &&
+      exportedTexts.every((item) => !/<(p|div|span|h[1-6]|strong|ul|li)\b/i.test(item.text)),
+    detail: exportedTexts.length > 0 ? exportedTexts[0].text.split('\n').slice(0, 2).join(' / ') : '没有文件'
+  });
+  results.push({
+    name: '0.8.0：图片拷进了 attachments，正文里换成相对路径（Obsidian 能直接看）',
+    ok:
+      badImageRefs.length === 0 &&
+      imagesInMd.every((item) => /!\[[^\]]*\]\(([^)]+)\)/.test(item.text) && !/!\[[^\]]*\]\(jw-att:/.test(item.text)),
+    detail: '图片引用 ' + imagesInMd.length + ' 篇，attachments 里 ' + attachmentFiles.length + ' 个文件'
+  });
+  results.push({
+    name: '0.8.0：导出结果能被重新读出来（文件非空、不是占位）',
+    ok: exportedTexts.length > 0 && exportedTexts.every((item) => item.text.trim().length > 0),
+    detail: exportedTexts.length > 0 ? '最小文件 ' + Math.min(...exportedTexts.map((item) => item.text.length)) + ' 字节' : '没有文件'
+  });
 
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);

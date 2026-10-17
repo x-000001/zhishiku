@@ -505,6 +505,23 @@ export interface FocusSession {
   actualSeconds: number;
 }
 
+/** 导出进度：正在导第 done/total 篇，title 是这篇的标题。 */
+export interface ExportProgress {
+  done: number;
+  total: number;
+  title: string;
+}
+
+/** 导出全库为 Markdown 的结果（canceled 表示用户在选择文件夹那步取消了）。 */
+export interface ExportMarkdownResult {
+  canceled: boolean;
+  dir: string;
+  folders: number;
+  notes: number;
+  attachments: number;
+  missing: string[];
+}
+
 /** preload 暴露给渲染进程的接口。 */
 export interface KbApi {
   invoke<T = unknown>(channel: string, payload?: unknown): Promise<T>;

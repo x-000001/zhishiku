@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { api, onUpdateProgress } from '../api';
+import { api, onExportProgress, onUpdateProgress } from '../api';
 import { ConfirmDialog, Modal, toast } from '../ui';
 import { fmtDateTime } from '../format';
 import { describeSaveError, saveStamp } from '../save';
@@ -47,8 +47,14 @@ export default function Settings(props: {
   const [aiBusy, setAiBusy] = useState<'save' | 'test' | ''>('');
   const [aiTestText, setAiTestText] = useState('');
 
+  /* 第八版：导出全库为 Markdown */
+  const [exporting, setExporting] = useState(false);
+  const [exportText, setExportText] = useState('');
+
   // 卸载时自动退订，不留在渲染进程里
   useEffect(() => onUpdateProgress(setProgress), []);
+  // 导出进度：主进程每写完一篇推一次
+  useEffect(() => onExportProgress((p) => setExportText(`正在导出第 ${p.done}/${p.total} 篇：${p.title}`)), []);
 
   const load = useCallback(() => {
     void api.appInfo().then(setInfo).catch((e: Error) => toast('读不到数据目录信息：' + e.message));
@@ -282,6 +288,38 @@ export default function Settings(props: {
     }
   };
 
+  /**
+   * 导出全库为 Markdown：主进程弹「选择文件夹」，然后按分类树写 .md + attachments。
+   * 进度由 onExportProgress 推过来；完成后给一个「打开文件夹」的近路。
+   */
+  const exportMarkdown = async (): Promise<void> => {
+    setExporting(true);
+    setExportText('正在准备导出…');
+    try {
+      const result = await api.exportMarkdown();
+      if (result.canceled) {
+        setExportText('');
+        toast('已取消导出');
+        return;
+      }
+      const missingText = result.missing.length > 0 ? `，有 ${result.missing.length} 张图片没找到` : '';
+      setExportText(
+        `导出完成：${result.notes} 篇笔记、${result.folders} 个分类目录、${result.attachments} 个附件${missingText}。目录：${result.dir}`
+      );
+      toast(`导出完成：${result.notes} 篇笔记${missingText}`, {
+        actionLabel: '打开文件夹',
+        onAction: () => {
+          void api.exportReveal(result.dir).catch((err: Error) => toast('打不开这个文件夹：' + err.message));
+        }
+      });
+    } catch (err) {
+      setExportText('');
+      toastError('导出失败：', err);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <>
       <div className="card">
@@ -374,6 +412,26 @@ export default function Settings(props: {
             </div>
           ))
         )}
+      </div>
+
+      <div className="card export-card">
+        <div className="card-head">
+          <h2>导出数据</h2>
+          <span className="spacer" />
+          <button
+            type="button"
+            className={exporting ? 'btn sm loading export-md-btn' : 'btn sm export-md-btn'}
+            disabled={exporting}
+            onClick={() => void exportMarkdown()}
+          >
+            {exporting ? '导出中…' : '导出所有数据为 Markdown'}
+          </button>
+        </div>
+        <p className="muted">
+          选一个文件夹，会按知识库的分类建目录，每篇笔记导成一个 .md；图片复制到 attachments 里并改好相对路径，
+          用 Obsidian、Typora 这类软件能直接打开。
+        </p>
+        {exportText ? <p className="muted export-progress">{exportText}</p> : null}
       </div>
 
       <div className="card">

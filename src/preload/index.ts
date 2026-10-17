@@ -6,7 +6,8 @@ const ALLOWED_EVENTS = new Set([
   'notice:due',
   'update:progress',
   'focus:state',
-  'ai:stream'
+  'ai:stream',
+  'export:progress'
 ]);
 
 const api = {

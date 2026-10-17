@@ -23,6 +23,10 @@ export interface FocusDeps {
   emit(state: FocusState): void;
   /** 把快照写进 meta 表（idle 时传 null 表示清掉） */
   persist(state: FocusState | null): void;
+  /** 任务栏进度（0~1 专注中、null 表示清掉）—— 平台不支持时由 Electron 层静默降级 */
+  progress?(ratio: number | null): void;
+  /** 到点强提醒：闪一下任务栏图标（用户点回应用后 Electron 层负责停） */
+  flash?(): void;
 }
 
 export interface FocusStartInput {
@@ -101,6 +105,16 @@ export function createFocus(deps: FocusDeps): FocusRuntime {
     const snapshot: FocusState = { ...state, remainingMs: remainingAt(now) };
     deps.emit(snapshot);
     deps.persist(snapshot.status === 'idle' ? null : snapshot);
+    // 任务栏进度条：只有「专注中」显示，暂停 / 休息 / 空闲都清掉（Electron 里 -1 = 隐藏）
+    if (deps.progress) {
+      try {
+        const running = snapshot.status === 'running' && snapshot.kind === 'focus' && snapshot.plannedSeconds > 0;
+        const ratio = running ? Math.min(1, Math.max(0, 1 - snapshot.remainingMs / (snapshot.plannedSeconds * 1000))) : null;
+        deps.progress(ratio);
+      } catch {
+        /* 平台不支持进度条就静默跳过，不能影响计时本身 */
+      }
+    }
   }
 
   function resetToIdle(): void {
@@ -125,6 +139,12 @@ export function createFocus(deps: FocusDeps): FocusRuntime {
     const finished = { ...state };
     finishRow('done', finished.plannedSeconds, now);
     deps.notify('专注结束', `这一轮 ${formatSpan(finished.plannedSeconds)} 完成了，休息 5 分钟吧`);
+    // 到点强提醒：任务栏图标闪烁，用户点回窗口后由 Electron 层停掉
+    try {
+      deps.flash?.();
+    } catch {
+      /* 平台不支持闪烁就静默跳过 */
+    }
 
     const breakSessionId = db.createFocusSession({
       kind: 'break',

@@ -13,6 +13,8 @@ import type {
   CalendarEntry,
   Category,
   DashboardData,
+  ExportMarkdownResult,
+  ExportProgress,
   FocusState,
   FocusSummary,
   Goal,
@@ -65,10 +67,22 @@ function call<T>(channel: string, payload?: unknown): Promise<T> {
 
 /** 渲染进程用的事件通道白名单。 */
 export function onEvent(
-  channel: 'nav:go' | 'capture:focus' | 'notice:due' | 'update:progress' | 'focus:state' | 'ai:stream',
+  channel:
+    | 'nav:go'
+    | 'capture:focus'
+    | 'notice:due'
+    | 'update:progress'
+    | 'focus:state'
+    | 'ai:stream'
+    | 'export:progress',
   listener: (payload: unknown) => void
 ): () => void {
   return bridge.on(channel, listener);
+}
+
+/** 导出 Markdown 的进度：主进程每写完一篇推一次。 */
+export function onExportProgress(listener: (progress: ExportProgress) => void): () => void {
+  return bridge.on('export:progress', (payload) => listener(payload as ExportProgress));
 }
 
 /** AI 流式输出：主进程把增量一段段推过来（渲染层从不自己发请求）。 */
@@ -312,7 +326,13 @@ export const api = {
   aiTestConfig: () => call<{ ok: true; model: string; reply: string }>('ai:config:test'),
   /** 发起一次 AI 请求：立刻拿 requestId，文字随后从 onAiStream 推来。 */
   aiRun: (payload: AiRunPayload) => call<AiRunResult>('ai:run', payload),
-  aiCancel: (requestId: number) => call<boolean>('ai:cancel', { requestId })
+  aiCancel: (requestId: number) => call<boolean>('ai:cancel', { requestId }),
+
+  /* ---------------- 第八版：导出全库为 Markdown ---------------- */
+  /** 主进程弹系统「选择文件夹」→ 按分类树写 .md 和 attachments，进度走 onExportProgress。 */
+  exportMarkdown: () => call<ExportMarkdownResult>('export:markdown'),
+  /** 在资源管理器里打开刚导出的文件夹（只允许打开真实存在的目录）。 */
+  exportReveal: (dir: string) => call<boolean>('export:reveal', { dir })
 };
 
 export type Api = typeof api;

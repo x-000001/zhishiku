@@ -233,6 +233,89 @@ describe('番茄钟：重启后接上 / 收尾', () => {
   });
 });
 
+/**
+ * 第八版任务二：番茄钟和系统任务栏联动（Windows 任务栏进度条 + 到点闪任务栏）。
+ * 引擎只负责算「进度该是多少」，真正调 setProgressBar / flashFrame 的是 ipc/focus.ts，
+ * 所以这里用假 deps 记录调用序列，验证状态机在每个转折点都通知对了。
+ */
+describe('番茄钟：任务栏进度条与到点强提醒', () => {
+  let progressCalls: (number | null)[] = [];
+  let flashCount = 0;
+
+  function makeTaskbarDeps(): FocusDeps {
+    return {
+      ...makeDeps(),
+      progress: (ratio) => progressCalls.push(ratio),
+      flash: () => {
+        flashCount += 1;
+      }
+    };
+  }
+
+  beforeEach(() => {
+    progressCalls = [];
+    flashCount = 0;
+  });
+
+  it('开始专注时进度从 0 起算，走了一半就是 0.5', () => {
+    const focus = createFocus(makeTaskbarDeps());
+    focus.start({ plannedSeconds: 600 });
+    expect(progressCalls.at(-1)).toBe(0);
+
+    advance(300_000);
+    focus.pause();
+    focus.resume();
+    expect(progressCalls.at(-1)).toBeCloseTo(0.5, 2);
+    for (const ratio of progressCalls) {
+      if (ratio !== null) expect(ratio).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('暂停 / 放弃 / 进入休息 / 回到空闲都会把进度条清掉（传 null）', () => {
+    const focus = createFocus(makeTaskbarDeps());
+    focus.start({ plannedSeconds: 120 });
+    expect(progressCalls.at(-1)).toBe(0);
+
+    focus.pause();
+    expect(progressCalls.at(-1)).toBeNull();
+
+    focus.resume();
+    expect(progressCalls.at(-1)).not.toBeNull();
+
+    focus.abandon();
+    expect(progressCalls.at(-1)).toBeNull();
+
+    const second = createFocus(makeTaskbarDeps());
+    second.start({ plannedSeconds: 60 });
+    advance(60_000);
+    expect(second.state().status).toBe('break');
+    expect(progressCalls.at(-1)).toBeNull();
+  });
+
+  it('专注到点会闪一次任务栏；休息到点或放弃不会闪', () => {
+    const focus = createFocus(makeTaskbarDeps());
+    focus.start({ plannedSeconds: 60 });
+    advance(60_000);
+    expect(focus.state().status).toBe('break');
+    expect(flashCount).toBe(1);
+
+    advance(BREAK_SECONDS * 1000);
+    expect(focus.state().status).toBe('idle');
+    expect(flashCount).toBe(1);
+
+    focus.start({ plannedSeconds: 60 });
+    focus.abandon();
+    expect(flashCount).toBe(1);
+  });
+
+  it('没有传 progress / flash 依赖时引擎照样能跑（老调用方零破坏）', () => {
+    const focus = createFocus(makeDeps());
+    focus.start({ plannedSeconds: 60 });
+    advance(60_000);
+    expect(focus.state().status).toBe('break');
+  });
+});
+
 function focusSnapshot(): FocusState | null {
   const raw = db.loadFocusState();
   return raw === null ? null : (JSON.parse(raw) as FocusState);

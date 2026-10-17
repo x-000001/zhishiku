@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AI_ACTION_LABELS,
   AI_QUICK_ACTIONS,
@@ -29,6 +29,8 @@ export interface AiRunState {
   /** 已经收到的文字（流式累加） */
   text: string;
   done: boolean;
+  /** 用户主动点了「停止生成」：done 为真但保留已生成内容，不算出错 */
+  stopped: boolean;
   error: string | null;
   requestId: number | null;
 }
@@ -40,7 +42,7 @@ export interface AiRunHandle {
   reset: () => void;
 }
 
-const EMPTY_RUN: AiRunState = { text: '', done: false, error: null, requestId: null };
+const EMPTY_RUN: AiRunState = { text: '', done: false, stopped: false, error: null, requestId: null };
 
 /**
  * AI 请求 hook：start 立刻拿 requestId，文字随后从 ai:stream 事件推过来。
@@ -58,6 +60,9 @@ export function useAiRun(): AiRunHandle {
         setState((prev) => ({ ...prev, text: prev.text + event.delta }));
       } else if (event.type === 'done') {
         setState((prev) => ({ ...prev, text: event.text || prev.text, done: true }));
+      } else if (event.message === '已取消') {
+        // 用户点了「停止生成」：保留已经收到的文字，不当成错误弹红字
+        setState((prev) => ({ ...prev, done: true, stopped: true, error: null }));
       } else {
         setState((prev) => ({ ...prev, done: true, error: event.message }));
       }
@@ -82,10 +87,10 @@ export function useAiRun(): AiRunHandle {
     try {
       const { requestId } = await api.aiRun(payload);
       idRef.current = requestId;
-      setState({ text: '', done: false, error: null, requestId });
+      setState({ text: '', done: false, stopped: false, error: null, requestId });
     } catch (err) {
       idRef.current = null;
-      setState({ text: '', done: true, error: errText(err), requestId: null });
+      setState({ text: '', done: true, stopped: false, error: errText(err), requestId: null });
     }
   }, []);
 
@@ -93,7 +98,8 @@ export function useAiRun(): AiRunHandle {
     const id = idRef.current;
     idRef.current = null;
     if (id != null) void api.aiCancel(id).catch(() => {});
-    setState((prev) => ({ ...prev, done: true }));
+    // 保留已经收到的文字：用户可以接着复制/替换，只是后面不再有新内容
+    setState((prev) => ({ ...prev, done: true, stopped: true, error: null }));
   }, []);
 
   const reset = useCallback(() => {
@@ -110,6 +116,28 @@ export function useAiRun(): AiRunHandle {
 function TypingCaret(props: { show: boolean }): ReactNode {
   if (!props.show) return null;
   return <span className="ai-caret" aria-hidden="true" />;
+}
+
+/** 还在生成（loading 或 streaming）时为真。 */
+function isRunning(state: AiRunState): boolean {
+  return !state.done && !state.error;
+}
+
+/**
+ * 0.8.0：生成过程中的「停止生成」。
+ * 点了之后主进程 abort() 掉网络请求，已经收到的文字留在弹窗里，可以继续复制/替换。
+ */
+function AiStop(props: { onStop: () => void }): ReactNode {
+  return (
+    <button
+      type="button"
+      className="btn sm ai-stop"
+      title="中断这次生成；已经生成的内容会留下，可以继续复制或替换"
+      onClick={props.onStop}
+    >
+      ■ 停止生成
+    </button>
+  );
 }
 
 /** 把 AI 的纯文本结果排成两栏对比里能读的样子（保留换行，别的都转义）。 */
@@ -199,7 +227,7 @@ export function AiPreviewModal(props: {
   onConfirm: (text: string) => void;
   onClose: () => void;
 }): ReactNode {
-  const { state, start } = useAiRun();
+  const { state, start, cancel } = useAiRun();
   const [lang, setLang] = useState<AiLangValue>(props.initialLang);
   const label = AI_ACTION_LABELS[props.action];
   const isTranslate = props.action === 'translate';
@@ -240,6 +268,7 @@ export function AiPreviewModal(props: {
       footer={
         <div className="ai-foot">
           <span className="spacer" style={{ flex: 1 }} />
+          {isRunning(state) ? <AiStop onStop={cancel} /> : null}
           <button type="button" className="btn" onClick={props.onClose}>
             取消
           </button>
@@ -281,7 +310,8 @@ export function AiPreviewModal(props: {
           <div className="ai-col">
             <div className="ai-col-head">
               AI 结果
-              {!state.done && !state.error ? <span className="ai-busy">生成中…</span> : null}
+              {isRunning(state) ? <span className="ai-busy">生成中…</span> : null}
+              {state.stopped ? <span className="ai-stopped">已停止</span> : null}
             </div>
             <pre className="ai-preview-out">
               {state.error ? (
@@ -289,7 +319,7 @@ export function AiPreviewModal(props: {
               ) : (
                 <span dangerouslySetInnerHTML={{ __html: plainLines(state.text) }} />
               )}
-              <TypingCaret show={!state.done && !state.error} />
+              <TypingCaret show={isRunning(state)} />
             </pre>
           </div>
         </div>
@@ -298,6 +328,14 @@ export function AiPreviewModal(props: {
             <span>{state.error}</span>
             <button type="button" className="btn sm" onClick={restart}>
               重试
+            </button>
+          </div>
+        ) : null}
+        {state.stopped ? (
+          <div className="ai-stop-bar">
+            <span>已经停止生成，后半段没要。留下的是已经生成的部分，可以复制或直接替换。</span>
+            <button type="button" className="btn sm" onClick={restart}>
+              重新生成
             </button>
           </div>
         ) : null}
@@ -320,7 +358,7 @@ export function AiSummaryModal(props: {
   onUndo: () => boolean;
   onClose: () => void;
 }): ReactNode {
-  const { state, start } = useAiRun();
+  const { state, start, cancel } = useAiRun();
   const startedRef = useRef(false);
   const insertedRef = useRef(false);
   const [inserted, setInserted] = useState(false);
@@ -332,13 +370,24 @@ export function AiSummaryModal(props: {
   }, [start, props.noteText, props.title]);
 
   useEffect(() => {
-    if (insertedRef.current || !state.done || state.error) return;
+    // 主动停止的不自动插入：只把已经生成的部分留在弹窗里，插不插由用户再点一下
+    if (insertedRef.current || !state.done || state.error || state.stopped) return;
     const text = state.text.trim();
     if (!text) return;
     insertedRef.current = true;
     setInserted(true);
     props.onInsert(text);
-  }, [state.done, state.error, state.text, props]);
+  }, [state.done, state.error, state.stopped, state.text, props]);
+
+  /** 停止之后手动把「已经生成的部分」插到开头。 */
+  const insertPartial = (): void => {
+    const text = state.text.trim();
+    if (!text || insertedRef.current) return;
+    insertedRef.current = true;
+    setInserted(true);
+    props.onInsert(text);
+    toast('已把生成到的部分插到笔记开头');
+  };
 
   const undo = (): void => {
     if (!props.onUndo()) {
@@ -371,6 +420,18 @@ export function AiSummaryModal(props: {
       footer={
         <div className="ai-foot">
           <span className="spacer" style={{ flex: 1 }} />
+          {isRunning(state) ? <AiStop onStop={cancel} /> : null}
+          {state.stopped && !inserted ? (
+            <button
+              type="button"
+              className="btn ai-insert-partial"
+              onClick={insertPartial}
+              disabled={!state.text.trim()}
+              title="把已经生成到的部分插到笔记开头"
+            >
+              插入已生成部分
+            </button>
+          ) : null}
           <button type="button" className="btn" onClick={copy} disabled={!state.text.trim()}>
             复制
           </button>
@@ -395,7 +456,13 @@ export function AiSummaryModal(props: {
             <span className="ai-error-text">{state.error}</span>
           ) : (
             <span>
-              {state.done ? (inserted ? '摘要已插到笔记开头（引用块）' : '摘要生成完了') : '正在总结这篇笔记…'}
+              {state.done
+                ? inserted
+                  ? '摘要已插到笔记开头（引用块）'
+                  : state.stopped
+                    ? '已停止生成（没有自动插入，可以点「插入已生成部分」）'
+                    : '摘要生成完了'
+                : '正在总结这篇笔记…'}
             </span>
           )}
           {state.done && !state.error ? (
@@ -406,7 +473,7 @@ export function AiSummaryModal(props: {
         </div>
         <pre className="ai-summary-out">
           {state.error ? '' : <span>{state.text}</span>}
-          <TypingCaret show={!state.done && !state.error} />
+          <TypingCaret show={isRunning(state)} />
         </pre>
         <p className="ai-tip">
           插进去的是一整块引用，不想要了可以按「撤销插入」，或者直接在编辑器里 <kbd>Ctrl+Z</kbd> 整块撤销。
@@ -426,7 +493,7 @@ export function AiTagsModal(props: {
   onApplyCategory: (name: string) => boolean;
   onClose: () => void;
 }): ReactNode {
-  const { state, start } = useAiRun();
+  const { state, start, cancel } = useAiRun();
   const startedRef = useRef(false);
   const [added, setAdded] = useState<string[]>([]);
 
@@ -477,6 +544,7 @@ export function AiTagsModal(props: {
       footer={
         <div className="ai-foot">
           <span className="spacer" style={{ flex: 1 }} />
+          {isRunning(state) ? <AiStop onStop={cancel} /> : null}
           {state.done && !state.error ? (
             <button type="button" className="btn" onClick={restart}>
               重新分析
@@ -496,8 +564,15 @@ export function AiTagsModal(props: {
               重试
             </button>
           </div>
-        ) : !state.done ? (
+        ) : isRunning(state) ? (
           <p className="ai-busy">正在读这篇笔记，想标签和分类…</p>
+        ) : state.stopped ? (
+          <div className="ai-stop-bar">
+            <span>已停止生成，这一次没拿到完整的标签结果。</span>
+            <button type="button" className="btn sm" onClick={restart}>
+              重新分析
+            </button>
+          </div>
         ) : !suggestion ? (
           <div className="ai-error-bar">
             <span>AI 的回复里没找到标签，再试一次吧</span>
@@ -568,7 +643,7 @@ export function AiRelatedModal(props: {
   onNewNote: (item: AiRelatedItem) => void | Promise<void>;
   onClose: () => void;
 }): ReactNode {
-  const { state, start } = useAiRun();
+  const { state, start, cancel } = useAiRun();
   const startedRef = useRef(false);
 
   useEffect(() => {
@@ -605,6 +680,7 @@ export function AiRelatedModal(props: {
       footer={
         <div className="ai-foot">
           <span className="spacer" style={{ flex: 1 }} />
+          {isRunning(state) ? <AiStop onStop={cancel} /> : null}
           {state.done && !state.error ? (
             <button type="button" className="btn" onClick={restart}>
               换一批
@@ -624,8 +700,15 @@ export function AiRelatedModal(props: {
               重试
             </button>
           </div>
-        ) : !state.done ? (
+        ) : isRunning(state) ? (
           <p className="ai-busy">正在找相关的问题和知识点…</p>
+        ) : state.stopped ? (
+          <div className="ai-stop-bar">
+            <span>已停止生成，这一次没拿到完整的联想结果。</span>
+            <button type="button" className="btn sm" onClick={restart}>
+              重新分析
+            </button>
+          </div>
         ) : !items ? (
           <div className="ai-error-bar">
             <span>AI 的回复里没找到能看的联想，再试一次吧</span>
