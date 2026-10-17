@@ -61,9 +61,24 @@ export function readLayout(): Layout {
 function useLayout(): Layout {
   const [layout, setLayout] = useState<Layout>(readLayout);
   useEffect(() => {
-    const onResize = () => setLayout(readLayout());
+    const root = document.documentElement;
+    let timer = 0;
+    const onResize = () => {
+      setLayout(readLayout());
+      // 第五版（阶段9 修正）：拖窗口期间给 <html> 挂 .is-resizing，
+      // CSS 会在这段时间里关掉所有插值/动画 —— 窗口每帧都在改尺寸，
+      // 再叠一层 180ms 的宽度插值等于每帧多一次重排，肉眼就是掉帧。
+      // 停手 150ms 后自动摘掉，点按钮折叠、抽屉滑出这些非拖动动画不受影响。
+      root.classList.add('is-resizing');
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => root.classList.remove('is-resizing'), 150);
+    };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.clearTimeout(timer);
+      root.classList.remove('is-resizing');
+    };
   }, []);
   return layout;
 }

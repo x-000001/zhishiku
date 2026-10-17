@@ -2489,9 +2489,36 @@ try {
     ok: backBand.layout === 'wide' && backBand.sbW >= 224 && backBand.burger === 'none' && backBand.overflowX <= 1,
     detail: `宽=${backBand.w} 档=${backBand.layout} 侧栏=${backBand.sbW}px 汉堡=${backBand.burger} 横向溢出=${backBand.overflowX}`
   });
+  // 第五版（阶段9 手感修正）：拖窗口时先锁住插值 —— 窗口每帧都在改尺寸，
+  // 同一条时间轴上再跑 180ms 的宽度插值，等于每帧多一次重排，跨档那一下就掉帧。
+  const resizeLock = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const sb = document.querySelector('.sidebar');
+    const read = () => ({
+      resizing: document.documentElement.classList.contains('is-resizing'),
+      dur: getComputedStyle(sb).transitionDuration
+    });
+    const before = read();
+    window.dispatchEvent(new Event('resize'));
+    await sleep(40);
+    const during = read();
+    await sleep(360);
+    const after = read();
+    return { before, during, after };
+  })()`);
+  results.push({
+    name: '第五版：拖窗口时先锁住插值，停手 150ms 后自己恢复',
+    ok:
+      resizeLock.before.resizing === false &&
+      resizeLock.during.resizing === true &&
+      /^0s/.test(resizeLock.during.dur) &&
+      resizeLock.after.resizing === false &&
+      /0\.18s/.test(resizeLock.after.dur),
+    detail: `拖之前=class:${resizeLock.before.resizing} 拖之中=class:${resizeLock.during.resizing} 过渡:${resizeLock.during.dur} 停手后=class:${resizeLock.after.resizing} 过渡:${resizeLock.after.dur}`
+  });
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
-
 } catch (err) {
   results.push({ name: '自检过程没崩', ok: false, detail: err && err.message });
 } finally {

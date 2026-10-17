@@ -14,10 +14,12 @@ release/
 .pack-data/
 .pack-ud/
 .dev-data/
+.perf-data/
 tests/e2e/ud/
 tests/e2e/ud-kill/
 .tools/check-packaged-ud/
 .tools/electron-smoke/
+.tools/perf-ud/
 
 # 日志
 *.log
