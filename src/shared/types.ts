@@ -370,6 +370,33 @@ export interface AppInfo {
   windowsBuild?: number;
 }
 
+/* ---------------- 设置页「检查更新」（手动联网，一次一个请求） ---------------- */
+
+export type UpdateStatus = 'newer' | 'latest' | 'no-release';
+
+export interface UpdateRelease {
+  /** 去掉 v 前缀的版本号，例如 0.3.1 */
+  version: string;
+  /** 原始 tag_name，例如 v0.3.1 */
+  tag: string;
+  /** 发布页地址（「复制下载链接」复制的就是它） */
+  url: string;
+  /** 更新说明，截断到 600 字以内，弹窗里直接显示 */
+  notes: string;
+  /** 发布时间（ISO 字符串），没给就是空串 */
+  publishedAt: string;
+}
+
+export interface UpdateCheck {
+  status: UpdateStatus;
+  /** 当前运行的版本 */
+  current: string;
+  /** GitHub 上最新的 Release；仓库还没发过版本时为 null */
+  latest: UpdateRelease | null;
+  /** 这次检查的时间（毫秒时间戳） */
+  checkedAt: number;
+}
+
 /** preload 暴露给渲染进程的接口。 */
 export interface KbApi {
   invoke<T = unknown>(channel: string, payload?: unknown): Promise<T>;

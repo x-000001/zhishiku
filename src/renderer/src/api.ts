@@ -35,7 +35,8 @@ import type {
   SearchHit,
   Tag,
   Task,
-  TaskFilter
+  TaskFilter,
+  UpdateCheck
 } from '../../shared/types';
 
 const raw = window.api;
@@ -240,7 +241,15 @@ export const api = {
   listBackups: () => call<BackupEntry[]>('backup:list'),
   runBackup: () => call<BackupEntry>('backup:run'),
   restoreBackup: (name: string) => call<{ preRestore: string }>('backup:restore', { name }),
-  deleteBackup: (name: string) => call<boolean>('backup:delete', { name })
+  deleteBackup: (name: string) => call<boolean>('backup:delete', { name }),
+
+  /**
+   * 设置页「检查更新」：主进程联网查一次 GitHub 的 latest Release。
+   * 断网 / 超时 / 接口变了都会以中文消息 reject，调用方 catch 后 toast 出来即可。
+   */
+  checkUpdate: () => call<UpdateCheck>('update:check'),
+  /** 复制文本到系统剪贴板（目前只有更新提示里的下载链接用）。 */
+  copyText: (text: string) => call<boolean>('system:copy-text', { text })
 };
 
 export type Api = typeof api;

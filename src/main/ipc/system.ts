@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, shell } from 'electron';
+import { BrowserWindow, clipboard, dialog, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import * as db from '../db';
@@ -48,6 +48,14 @@ export function registerSystem(handle: Handle, deps: IpcDeps): void {
   handle('backup:reveal', () => shell.openPath(deps.getPaths().backups));
   handle('data:reveal', () => shell.openPath(deps.getPaths().root));
   handle('data:integrity', () => db.integrityCheck());
+
+  /** 写系统剪贴板要走主进程（渲染层在沙箱里，不让直接碰 clipboard）。 */
+  handle('system:copy-text', (p: { text: string }) => {
+    const text = typeof p?.text === 'string' ? p.text : '';
+    if (!text) throw new Error('没有要复制的内容');
+    clipboard.writeText(text);
+    return true;
+  });
 }
 
 /** 自绘标题栏的三个点：要拿到「发消息的那个窗口」，所以单走一条注册路径。 */

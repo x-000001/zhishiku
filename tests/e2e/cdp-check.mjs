@@ -7,6 +7,7 @@
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,6 +21,30 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 fs.rmSync(dataDir, { recursive: true, force: true });
 fs.mkdirSync(shotDir, { recursive: true });
 
+/* 「检查更新」是唯一会联网的功能：测试里不让它真连 GitHub，
+   用本地 stub 服务器顶替（主进程读 JWKB_UPDATE_URL 这个仅测试用的环境变量）。
+   mode 在断言里切换：newer = 返回一个比当前新的版本；hang = 不响应，用来测 5 秒超时。 */
+let stubUpdateMode = 'newer';
+let stubDelayMs = 0; // 让「正在连接…」这个加载态能被稳定观察到（本地回包太快会瞬过）
+const stubServer = http.createServer((req, res) => {
+  if (stubUpdateMode === 'hang') return; // 故意不回包，让客户端超时
+  const reply = () => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        tag_name: 'v9.9.9',
+        html_url: 'https://github.com/x-000001/zhishiku/releases/tag/v9.9.9',
+        body: '这是一条测试用的更新说明。',
+        published_at: '2026-10-18T10:00:00Z'
+      })
+    );
+  };
+  if (stubDelayMs > 0) setTimeout(reply, stubDelayMs);
+  else reply();
+});
+await new Promise((resolve) => stubServer.listen(0, '127.0.0.1', resolve));
+const stubUpdateUrl = `http://127.0.0.1:${stubServer.address().port}/releases/latest`;
+
 const child = spawn(
   exe,
   [
@@ -29,7 +54,7 @@ const child = spawn(
     '--disable-gpu',
     `--user-data-dir=${path.join(root, 'tests', 'e2e', 'ud')}`
   ],
-  { cwd: root, env: { ...process.env, JWKB_DATA_DIR: dataDir }, stdio: 'inherit' }
+  { cwd: root, env: { ...process.env, JWKB_DATA_DIR: dataDir, JWKB_UPDATE_URL: stubUpdateUrl }, stdio: 'inherit' }
 );
 
 let exitInfo = null;
@@ -3496,6 +3521,125 @@ try {
     return true;
   })()`);
 
+  // ---- 设置页「检查更新」：唯一会联网的功能，测试里指向本地 stub 服务器 ----
+  await cdp.eval("location.hash = '/settings'; true");
+  await sleep(800);
+
+  const updCard = JSON.parse(String(await cdp.eval(`(() => {
+    const heads = [...document.querySelectorAll('.card h2')].map((h) => (h.textContent || '').trim());
+    const btn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '检查更新');
+    const ver = (document.body.innerText.match(/当前版本 [0-9.]+/) || [''])[0];
+    return JSON.stringify({ hasCard: heads.includes('软件更新'), hasBtn: !!btn, ver });
+  })()`)));
+  results.push({
+    name: '设置页出现「软件更新」卡片和「检查更新」按钮（旁边写着当前版本）',
+    ok: updCard.hasCard === true && updCard.hasBtn === true && /^当前版本 \d+\.\d+\.\d+$/.test(String(updCard.ver)),
+    detail: '卡片=' + updCard.hasCard + ' 按钮=' + updCard.hasBtn + ' ' + updCard.ver
+  });
+
+  stubUpdateMode = 'newer';
+  stubDelayMs = 400; // 回包慢一点，加载态才看得见（断言依赖它）
+  const updRun = JSON.parse(String(await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const btn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '检查更新');
+    if (!btn) return JSON.stringify({ found: false });
+    btn.click();
+    let loading = { text: '', disabled: false };
+    for (let i = 0; i < 40; i += 1) {
+      await sleep(30);
+      const now = (btn.textContent || '').trim();
+      if (now !== '检查更新') {
+        loading = { text: now, disabled: btn.disabled === true };
+        break;
+      }
+    }
+    let modal = null;
+    for (let i = 0; i < 60; i += 1) {
+      await sleep(100);
+      modal = document.querySelector('.modal-backdrop .modal');
+      if (modal) break;
+    }
+    const title = modal ? (modal.querySelector('.modal-head span')?.textContent || '').trim() : '';
+    const body = modal ? (modal.querySelector('.modal-body')?.innerText || '') : '';
+    const foot = modal ? [...modal.querySelectorAll('.modal-foot .btn')].map((b) => (b.textContent || '').trim()) : [];
+    return JSON.stringify({ found: true, loading, title, body: body.slice(0, 200), foot });
+  })()`)));
+  results.push({
+    name: '点「检查更新」→ 按钮变「正在连接…」并禁用 → 有新版本时弹窗（版本号 + 说明 + 复制链接）',
+    ok:
+      updRun.found === true &&
+      updRun.loading.text === '正在连接…' &&
+      updRun.loading.disabled === true &&
+      /新版本/.test(String(updRun.title)) &&
+      /9\.9\.9/.test(String(updRun.body)) &&
+      updRun.foot.includes('复制下载链接') &&
+      updRun.foot.includes('知道了'),
+    detail:
+      '按钮=' + (updRun.loading ? updRun.loading.text : '?') +
+      ' 标题=' + updRun.title +
+      ' 说明=' + String(updRun.body || '').slice(0, 40) +
+      ' 按钮=' + (updRun.foot || []).join('/')
+  });
+  await cdp.shot('settings-update-new');
+  stubDelayMs = 0;
+
+  const updCopy = String(await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const modal = document.querySelector('.modal-backdrop .modal');
+    if (!modal) return 'no-modal';
+    const copy = [...modal.querySelectorAll('.modal-foot .btn')].find((b) => (b.textContent || '').trim() === '复制下载链接');
+    if (!copy) return 'no-copy';
+    copy.click();
+    await sleep(600);
+    const texts = [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ');
+    const done = [...modal.querySelectorAll('.modal-foot .btn')].find((b) => (b.textContent || '').trim() === '知道了');
+    if (done) done.click();
+    await sleep(450);
+    return texts || 'no-toast';
+  })()`));
+  results.push({
+    name: '点「复制下载链接」→ 写入剪贴板并提示「下载链接已复制」，关掉弹窗',
+    ok: updCopy.includes('下载链接已复制'),
+    detail: String(updCopy).slice(0, 100)
+  });
+
+  // 断网 / 超时：stub 不回包，5 秒后必须给中文提示，按钮要恢复、界面不能卡死
+  stubUpdateMode = 'hang';
+  const updTimeout = JSON.parse(String(await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const btn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '检查更新');
+    if (!btn) return JSON.stringify({ found: false });
+    btn.click();
+    const t0 = Date.now();
+    let texts = '';
+    for (let i = 0; i < 90; i += 1) {
+      await sleep(100);
+      texts = [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ');
+      if (texts.includes('超时')) break;
+    }
+    return JSON.stringify({
+      found: true,
+      seconds: Math.round((Date.now() - t0) / 100) / 10,
+      texts: texts.slice(0, 160),
+      btnText: (btn.textContent || '').trim(),
+      alive: !!document.querySelector('.card h2')
+    });
+  })()`)));
+  results.push({
+    name: '断网 / 超时：5 秒内给出「网络连接超时」中文提示，按钮恢复、界面不崩',
+    ok:
+      updTimeout.found === true &&
+      /网络连接超时/.test(String(updTimeout.texts)) &&
+      updTimeout.seconds >= 4.5 &&
+      updTimeout.seconds <= 9 &&
+      updTimeout.btnText === '检查更新' &&
+      updTimeout.alive === true,
+    detail:
+      '等待=' + updTimeout.seconds + 's 提示=' + String(updTimeout.texts).slice(0, 70) + ' 按钮=' + updTimeout.btnText
+  });
+  await cdp.shot('settings-update-timeout');
+  stubUpdateMode = 'newer';
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {
@@ -3507,6 +3651,13 @@ try {
     // 忽略
   }
   await sleep(300);
+  // 先把 stub 服务器关掉（含挂住不回包的那条连接），再关应用
+  try {
+    stubServer.closeAllConnections?.();
+    stubServer.close();
+  } catch {
+    // 忽略
+  }
   child.kill();
   await sleep(1200);
 }

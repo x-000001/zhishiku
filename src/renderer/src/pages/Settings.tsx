@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api';
-import { ConfirmDialog, toast } from '../ui';
+import { ConfirmDialog, Modal, toast } from '../ui';
 import { fmtDateTime } from '../format';
 import { describeSaveError, saveStamp } from '../save';
-import type { AppInfo, AppSettings, BackupEntry } from '../../../shared/types';
+import type { AppInfo, AppSettings, BackupEntry, UpdateCheck } from '../../../shared/types';
 import { toastError } from '../errors';
 
 export default function Settings(props: {
@@ -17,6 +17,9 @@ export default function Settings(props: {
   const [restoring, setRestoring] = useState<BackupEntry | null>(null);
   const [busy, setBusy] = useState('');
   const [integrity, setIntegrity] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [update, setUpdate] = useState<UpdateCheck | null>(null);
+  const [lastCheck, setLastCheck] = useState<{ at: string; text: string } | null>(null);
 
   const load = useCallback(() => {
     void api.appInfo().then(setInfo).catch((e: Error) => toast('读不到数据目录信息：' + e.message));
@@ -112,6 +115,29 @@ export default function Settings(props: {
     }
   };
 
+  const runUpdateCheck = async () => {
+    setChecking(true);
+    try {
+      const res = await api.checkUpdate();
+      const at = fmtDateTime(new Date(res.checkedAt).toISOString());
+      if (res.status === 'newer' && res.latest) {
+        setLastCheck({ at, text: '发现新版本 ' + res.latest.version });
+        setUpdate(res);
+      } else if (res.status === 'no-release') {
+        setLastCheck({ at, text: '还没有发布版本' });
+        toast('GitHub 上还没有发布版本，当前 ' + res.current + ' 已是最新', { ttl: 6000 });
+      } else {
+        setLastCheck({ at, text: '已是最新' });
+        toast('已是最新版本 ' + res.current);
+      }
+    } catch (err) {
+      setLastCheck({ at: fmtDateTime(new Date().toISOString()), text: '检查失败' });
+      toastError('检查更新失败：', err);
+    } finally {
+      setChecking(false);
+    }
+  };
+
   return (
     <>
       <div className="card">
@@ -204,6 +230,34 @@ export default function Settings(props: {
             </div>
           ))
         )}
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h2>软件更新</h2>
+          <span className="spacer" />
+          <button
+            type="button"
+            className={checking ? 'btn sm loading' : 'btn sm'}
+            disabled={checking}
+            onClick={() => void runUpdateCheck()}
+            title="连一次网，看看 GitHub 上有没有新版本"
+          >
+            {checking ? '正在连接…' : '检查更新'}
+          </button>
+        </div>
+        <div className="set-row">
+          <div className="txt">
+            <b>当前版本 {info?.version ?? '读取中…'}</b>
+            <p>
+              点「检查更新」连一次网，看看 GitHub 上有没有新版本。只有点的时候才联网，不轮询、不常驻；
+              查不到或断网只多一条提示，本地读写完全不受影响。
+            </p>
+          </div>
+        </div>
+        <p className="muted">
+          {lastCheck ? '最近一次检查：' + lastCheck.at + ' · ' + lastCheck.text : '还没有检查过。'}
+        </p>
       </div>
 
       <div className="card">
@@ -309,6 +363,42 @@ export default function Settings(props: {
           onCancel={() => setRestoring(null)}
           onConfirm={doRestore}
         />
+      ) : null}
+      {update && update.latest ? (
+        <Modal
+          title="发现新版本"
+          onClose={() => setUpdate(null)}
+          width={520}
+          footer={
+            <>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  void api
+                    .copyText(update.latest?.url ?? '')
+                    .then(() => toast('下载链接已复制'))
+                    .catch((err) => toastError('复制失败：', err));
+                }}
+              >
+                复制下载链接
+              </button>
+              <button type="button" className="btn primary" onClick={() => setUpdate(null)}>
+                知道了
+              </button>
+            </>
+          }
+        >
+          <div style={{ lineHeight: 1.7, fontSize: 13.5 }}>
+            <p>
+              <b>新版本 {update.latest.version}</b>（当前 {update.current}）
+              {update.latest.publishedAt ? ' · 发布于 ' + fmtDateTime(update.latest.publishedAt) : ''}
+            </p>
+            {update.latest.notes ? <p style={{ whiteSpace: 'pre-wrap' }}>{update.latest.notes}</p> : null}
+            <p className="muted">下载页：{update.latest.url || '（这个版本没写链接）'}</p>
+            <p className="muted">这里只做提醒和给链接，不会自动下载或安装。</p>
+          </div>
+        </Modal>
       ) : null}
     </>
   );
