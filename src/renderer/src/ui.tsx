@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { TIMING } from './timing';
 import { createPortal } from 'react-dom';
 
 /* ------------------------------------------------------------------ */
@@ -48,7 +49,7 @@ export function toast(text: string, options: ToastOptions = {}): void {
   };
   items = [...items, item];
   emit();
-  const ttl = options.ttl ?? (options.actionLabel ? 6000 : 2600);
+  const ttl = options.ttl ?? (options.actionLabel ? TIMING.toastAction : TIMING.toastPlain);
   timers.set(
     item.id,
     window.setTimeout(() => drop(item.id), ttl)
@@ -103,7 +104,7 @@ function useLeavingClose(onClose: () => void): { leaving: boolean; requestClose:
     leavingRef.current = true;
     setLeaving(true);
     window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => onCloseRef.current(), 150);
+    timerRef.current = window.setTimeout(() => onCloseRef.current(), TIMING.modalLeave);
   }, []);
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
   return { leaving, requestClose };

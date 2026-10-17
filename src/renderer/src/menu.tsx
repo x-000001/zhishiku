@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { TIMING } from './timing';
 import { nextActiveIndex } from './menuNav';
 
 /* ------------------------------------------------------------------ */
@@ -177,7 +178,7 @@ function MenuPanel({ state }: { state: MenuState }): ReactNode {
     if (closing) return;
     setClosing(true);
     window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => hideContextMenu(), delay ? 130 : 0);
+    timerRef.current = window.setTimeout(() => hideContextMenu(), delay ? TIMING.menuLeave : 0);
   };
 
   useMenuEvents({ state, active, setActive, boxRef, close });

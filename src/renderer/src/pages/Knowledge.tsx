@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { TIMING } from '../timing';
 import { api, pathForFile } from '../api';
 import { ConfirmDialog, Empty, Modal, toast } from '../ui';
 import { showContextMenu, type MenuItem } from '../menu';
@@ -103,7 +104,7 @@ export default function Knowledge(props: {
     setSaveState('dirty');
     scheduleDraftRef.current?.();
     if (wordTimer.current) window.clearTimeout(wordTimer.current);
-    wordTimer.current = window.setTimeout(() => setWordCount(countLocal(htmlRef.current)), 300);
+    wordTimer.current = window.setTimeout(() => setWordCount(countLocal(htmlRef.current)), TIMING.wordCountIdle);
   }, []);
 
   /** 只在换笔记 / 恢复草稿后把 ref 里的 HTML 推进编辑器；平时让它自己管，光标才不会跳。 */
@@ -237,7 +238,7 @@ export default function Knowledge(props: {
       const { id, title: t } = stateRef.current;
       if (id == null) return;
       void api.saveDraft(id, t, htmlRef.current).catch(() => undefined);
-    }, 1000);
+    }, TIMING.draftIdle);
   }, []);
   scheduleDraftRef.current = scheduleDraft;
 
@@ -254,7 +255,7 @@ export default function Knowledge(props: {
       );
       setSaveState('saved');
       setSavedFlash(true);
-      window.setTimeout(() => setSavedFlash(false), 1500);
+      window.setTimeout(() => setSavedFlash(false), TIMING.savedFlash);
       setNote((prev) =>
         prev && res.note ? { ...res.note, tags: prev.tags, attachments: prev.attachments } : prev
       );
@@ -429,7 +430,7 @@ export default function Knowledge(props: {
     setList((prev) => applyOrder(prev, ids));
     // 第五版阶段3：落位的那张弹一下（CSS 弹簧曲线），400ms 后摘掉类
     setSettlingId(draggedId);
-    window.setTimeout(() => setSettlingId((cur) => (cur === draggedId ? null : cur)), 420);
+    window.setTimeout(() => setSettlingId((cur) => (cur === draggedId ? null : cur)), TIMING.dragSettle);
     void api
       .reorderNotes(ids)
       .then(() => loadList())

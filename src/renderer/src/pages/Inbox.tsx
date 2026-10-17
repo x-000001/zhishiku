@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { TIMING } from '../timing';
 import { api } from '../api';
 import { Empty, toast } from '../ui';
 import { PRIORITY_LABEL, PRIORITY_ORDER, relative } from '../format';
@@ -172,7 +173,7 @@ export default function Inbox(props: {
     const timer = setTimeout(() => {
       pendingDelete.current.delete(item.id);
       void api.deleteInbox(item.id).catch((err) => toastError('删除失败：', err));
-    }, 5000);
+    }, TIMING.undoWindow);
     pendingDelete.current.set(item.id, timer);
     toast('已彻底删除', {
       actionLabel: '撤销',

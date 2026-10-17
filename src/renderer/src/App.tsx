@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { TIMING } from './timing';
 import { api, onEvent } from './api';
 import { Modal, ToastHost, toast } from './ui';
 import { ContextMenuHost } from './menu';
@@ -72,7 +73,7 @@ function useLayout(): Layout {
       // 停手 150ms 后自动摘掉，点按钮折叠、抽屉滑出这些非拖动动画不受影响。
       root.classList.add('is-resizing');
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => root.classList.remove('is-resizing'), 150);
+      timer = window.setTimeout(() => root.classList.remove('is-resizing'), TIMING.resizeSettle);
     };
     window.addEventListener('resize', onResize);
     return () => {
@@ -179,7 +180,7 @@ export default function App(): ReactNode {
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     if (!reduce) {
       root.classList.add('theme-transitioning');
-      window.setTimeout(() => root.classList.remove('theme-transitioning'), 340);
+      window.setTimeout(() => root.classList.remove('theme-transitioning'), TIMING.themeFade);
     }
     setTheme(next);
   }, []);

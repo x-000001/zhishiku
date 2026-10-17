@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { TIMING } from '../timing';
 import { api } from '../api';
 import { Empty, Modal, toast } from '../ui';
 import { fmtDate, fmtDateTime, todayLocal } from '../format';import { toastError } from '../errors';
@@ -58,7 +59,7 @@ export default function Review(): ReactNode {
     if (!pickerOpen) return;
     const timer = window.setTimeout(() => {
       void api.listNotes({ q: noteQuery.trim() || undefined, limit: 50 }).then(setNotes);
-    }, 180);
+    }, TIMING.pickerDebounce);
     return () => window.clearTimeout(timer);
   }, [pickerOpen, noteQuery]);
 

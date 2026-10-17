@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { TIMING } from '../timing';
 import { api } from '../api';
 import { Empty, ConfirmDialog, toast } from '../ui';
 import { showContextMenu } from '../menu';
@@ -77,7 +78,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
   }, [view, status, prioFilter]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 200);
+    const timer = window.setTimeout(() => void load(), TIMING.reloadGap);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
