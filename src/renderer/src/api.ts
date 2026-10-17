@@ -36,7 +36,10 @@ import type {
   Tag,
   Task,
   TaskFilter,
-  UpdateCheck
+  UpdateCheck,
+  UpdateDownload,
+  UpdateInstallResult,
+  UpdateProgress
 } from '../../shared/types';
 
 const raw = window.api;
@@ -50,8 +53,16 @@ function call<T>(channel: string, payload?: unknown): Promise<T> {
 }
 
 /** 渲染进程用的事件通道白名单。 */
-export function onEvent(channel: 'nav:go' | 'capture:focus' | 'notice:due', listener: (payload: unknown) => void): () => void {
+export function onEvent(
+  channel: 'nav:go' | 'capture:focus' | 'notice:due' | 'update:progress',
+  listener: (payload: unknown) => void
+): () => void {
   return bridge.on(channel, listener);
+}
+
+/** 下载安装包的进度（主进程推过来，不在渲染层发请求）。 */
+export function onUpdateProgress(listener: (progress: UpdateProgress) => void): () => void {
+  return bridge.on('update:progress', (payload) => listener(payload as UpdateProgress));
 }
 
 /**
@@ -248,6 +259,16 @@ export const api = {
    * 断网 / 超时 / 接口变了都会以中文消息 reject，调用方 catch 后 toast 出来即可。
    */
   checkUpdate: () => call<UpdateCheck>('update:check'),
+  /** 下载刚检查到的那个安装包：主进程流式下载 + 校验，进度走 onUpdateProgress。 */
+  downloadUpdate: () => call<UpdateDownload>('update:download'),
+  /** 取消正在进行的下载（半成品由主进程删掉）。 */
+  cancelUpdate: () => call<boolean>('update:cancel'),
+  /** 拉起安装程序（便携版会改成打开文件夹）；dryRun 时只返回结果不执行。 */
+  installUpdate: (path: string) => call<UpdateInstallResult>('update:install', { path }),
+  /** 在资源管理器里选中安装包。 */
+  revealUpdate: (path: string) => call<boolean>('update:reveal', { path }),
+  /** 安装程序已启动：关掉本应用，让 NSIS 能覆盖文件。 */
+  quitForUpdate: () => call<boolean>('update:quit'),
   /** 复制文本到系统剪贴板（目前只有更新提示里的下载链接用）。 */
   copyText: (text: string) => call<boolean>('system:copy-text', { text })
 };

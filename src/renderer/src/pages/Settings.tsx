@@ -1,10 +1,24 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { api } from '../api';
+import { api, onUpdateProgress } from '../api';
 import { ConfirmDialog, Modal, toast } from '../ui';
 import { fmtDateTime } from '../format';
 import { describeSaveError, saveStamp } from '../save';
-import type { AppInfo, AppSettings, BackupEntry, UpdateCheck } from '../../../shared/types';
+import type {
+  AppInfo,
+  AppSettings,
+  BackupEntry,
+  UpdateCheck,
+  UpdateDownload,
+  UpdateProgress
+} from '../../../shared/types';
 import { toastError } from '../errors';
+
+/** 把字节数说成人话：安装包几十 MB，进度里只显示 MB 就够了。 */
+function fmtSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+  return bytes + ' 字节';
+}
 
 export default function Settings(props: {
   theme: 'light' | 'dark';
@@ -20,6 +34,14 @@ export default function Settings(props: {
   const [checking, setChecking] = useState(false);
   const [update, setUpdate] = useState<UpdateCheck | null>(null);
   const [lastCheck, setLastCheck] = useState<{ at: string; text: string } | null>(null);
+  /** 下载进度由主进程推过来；null 表示没在下载 */
+  const [progress, setProgress] = useState<UpdateProgress | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloaded, setDownloaded] = useState<UpdateDownload | null>(null);
+  const [installing, setInstalling] = useState(false);
+
+  // 卸载时自动退订，不留在渲染进程里
+  useEffect(() => onUpdateProgress(setProgress), []);
 
   const load = useCallback(() => {
     void api.appInfo().then(setInfo).catch((e: Error) => toast('读不到数据目录信息：' + e.message));
@@ -122,6 +144,9 @@ export default function Settings(props: {
       const at = fmtDateTime(new Date(res.checkedAt).toISOString());
       if (res.status === 'newer' && res.latest) {
         setLastCheck({ at, text: '发现新版本 ' + res.latest.version });
+        // 换了版本就把上一次的下载结果清掉，免得上一个包被当成新版本的
+        setDownloaded(null);
+        setProgress(null);
         setUpdate(res);
       } else if (res.status === 'no-release') {
         setLastCheck({ at, text: '还没有发布版本' });
@@ -135,6 +160,55 @@ export default function Settings(props: {
       toastError('检查更新失败：', err);
     } finally {
       setChecking(false);
+    }
+  };
+
+  /** 「下载并安装」第一步：主进程流式下载安装包，进度走 update:progress 事件。 */
+  const startDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    setProgress({ phase: 'downloading', received: 0, total: 0, percent: 0 });
+    try {
+      const res = await api.downloadUpdate();
+      setDownloaded(res);
+      toast('安装包下载好了（' + fmtSize(res.size) + '），点「立即安装」完成更新', { ttl: 7000 });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // 用户自己点取消不算错误，别弹红字
+      if (/取消|aborted|cancell?ed/i.test(message)) toast('已取消下载');
+      else toastError('下载安装包失败：', err);
+    } finally {
+      setDownloading(false);
+      setProgress(null);
+    }
+  };
+
+  /** 取消下载：主进程会 abort 并把半成品删掉。 */
+  const cancelDownload = () => {
+    void api.cancelUpdate().catch(() => undefined);
+  };
+
+  /** 「下载并安装」第二步：拉起安装程序，然后把本应用关掉让 NSIS 覆盖文件。 */
+  const installNow = async () => {
+    if (!downloaded || installing) return;
+    setInstalling(true);
+    try {
+      const res = await api.installUpdate(downloaded.path);
+      if (res.dryRun) {
+        toast('（测试模式）安装包已就绪，没有真的运行安装程序', { ttl: 7000 });
+        setInstalling(false);
+        return;
+      }
+      if (res.portable) {
+        toast('便携版没法自己替换，已经打开文件夹，请手动替换成新版本', { ttl: 9000 });
+        setInstalling(false);
+        return;
+      }
+      toast('安装程序已启动，应用即将关闭，装完会自动打开新版本', { ttl: 9000 });
+      await api.quitForUpdate();
+    } catch (err) {
+      setInstalling(false);
+      toastError('启动安装程序失败：', err);
     }
   };
 
@@ -251,7 +325,7 @@ export default function Settings(props: {
             <b>当前版本 {info?.version ?? '读取中…'}</b>
             <p>
               点「检查更新」连一次网，看看 GitHub 上有没有新版本。只有点的时候才联网，不轮询、不常驻；
-              查不到或断网只多一条提示，本地读写完全不受影响。
+              发现有新版本可以直接点「下载并安装」，不用去网页手动下载；断网只多一条提示，本地读写完全不受影响。
             </p>
           </div>
         </div>
@@ -367,26 +441,56 @@ export default function Settings(props: {
       {update && update.latest ? (
         <Modal
           title="发现新版本"
-          onClose={() => setUpdate(null)}
+          onClose={() => {
+            // 下载中不关窗：关掉就看不到进度、也不知道装到哪了
+            if (downloading) return;
+            setUpdate(null);
+          }}
           width={520}
           footer={
-            <>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  void api
-                    .copyText(update.latest?.url ?? '')
-                    .then(() => toast('下载链接已复制'))
-                    .catch((err) => toastError('复制失败：', err));
-                }}
-              >
-                复制下载链接
+            downloading ? (
+              <button type="button" className="btn" onClick={cancelDownload}>
+                取消下载
               </button>
-              <button type="button" className="btn primary" onClick={() => setUpdate(null)}>
-                知道了
-              </button>
-            </>
+            ) : downloaded ? (
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    void api.revealUpdate(downloaded.path).catch(() => undefined);
+                  }}
+                >
+                  打开文件位置
+                </button>
+                <button type="button" className="btn primary" disabled={installing} onClick={() => void installNow()}>
+                  {installing ? '正在启动…' : '立即安装'}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    void api
+                      .copyText(update.latest?.url ?? '')
+                      .then(() => toast('下载链接已复制'))
+                      .catch((err) => toastError('复制失败：', err));
+                  }}
+                >
+                  复制下载链接
+                </button>
+                {update.latest.installer ? (
+                  <button type="button" className="btn primary" onClick={() => void startDownload()}>
+                    下载并安装
+                  </button>
+                ) : null}
+                <button type="button" className="btn" onClick={() => setUpdate(null)}>
+                  稍后
+                </button>
+              </>
+            )
           }
         >
           <div style={{ lineHeight: 1.7, fontSize: 13.5 }}>
@@ -395,8 +499,32 @@ export default function Settings(props: {
               {update.latest.publishedAt ? ' · 发布于 ' + fmtDateTime(update.latest.publishedAt) : ''}
             </p>
             {update.latest.notes ? <p style={{ whiteSpace: 'pre-wrap' }}>{update.latest.notes}</p> : null}
+            {downloading && progress ? (
+              <div className="update-progress">
+                <div className="progress">
+                  <i style={{ width: (progress.phase === 'verifying' ? 100 : progress.percent) + '%' }} />
+                </div>
+                <div className="update-progress-meta">
+                  <span>{progress.phase === 'verifying' ? '正在校验安装包…' : '正在下载 ' + progress.percent + '%'}</span>
+                  <span>
+                    {progress.total > 0
+                      ? fmtSize(progress.received) + ' / ' + fmtSize(progress.total)
+                      : fmtSize(progress.received)}
+                  </span>
+                </div>
+              </div>
+            ) : downloaded ? (
+              <p className="muted">
+                安装包已下载：{fmtSize(downloaded.size)}（版本 {downloaded.version}），放在系统临时目录，装完可以清掉。
+              </p>
+            ) : update.latest.installer ? (
+              <p className="muted">
+                点「下载并安装」会自动下载并调起安装程序，装完自动打开新版本；便携版会改成打开文件夹让你手动替换。
+              </p>
+            ) : (
+              <p className="muted">这个版本没上传安装包，只能复制下载页链接去手动下载。</p>
+            )}
             <p className="muted">下载页：{update.latest.url || '（这个版本没写链接）'}</p>
-            <p className="muted">这里只做提醒和给链接，不会自动下载或安装。</p>
           </div>
         </Modal>
       ) : null}

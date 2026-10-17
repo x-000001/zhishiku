@@ -3,7 +3,7 @@
  * 翻译成用户看得懂的中文。网络通过注入的 fetcher 走，单测里换成一个假的即可，
  * 不需要真联网、也不需要启动 Electron。
  */
-import type { UpdateCheck, UpdateRelease } from '../shared/types';
+import type { UpdateAsset, UpdateCheck, UpdateRelease } from '../shared/types';
 
 /** 固定查这个仓库的 latest Release。渲染层不能指定 URL，避免被拿来当代理发任意请求。 */
 export const UPDATE_REPO = 'x-000001/zhishiku';
@@ -52,6 +52,39 @@ export function compareVersion(a: string, b: string): number {
   return 0;
 }
 
+/** 一个附件是不是 Windows 安装包：.exe，排除 blockmap / 更新元数据这类附属文件。 */
+export function isInstallerName(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (!lower.endsWith('.exe')) return false;
+  return !lower.endsWith('.blockmap') && !lower.includes('.nsis.');
+}
+
+/** 从 Release 附件里挑出「要下载安装的那个 exe」；优先名字像安装包的，其次挑最大的。 */
+export function pickInstallerAsset(assets: UpdateAsset[]): UpdateAsset | null {
+  const candidates = assets.filter((asset) => isInstallerName(asset.name));
+  if (!candidates.length) return null;
+  const named = candidates.filter((asset) => /setup|安装包|install/i.test(asset.name));
+  const pool = named.length ? named : candidates;
+  return pool.reduce((best, item) => (item.size > best.size ? item : best), pool[0]);
+}
+
+/** 把 GitHub 的 assets 数组收拾成界面要的形状；不认识的字段直接跳过。 */
+function parseAssets(raw: unknown): UpdateAsset[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item): UpdateAsset[] => {
+    if (!item || typeof item !== 'object') return [];
+    const obj = item as Record<string, unknown>;
+    const name = typeof obj.name === 'string' ? obj.name.trim() : '';
+    const url = typeof obj.browser_download_url === 'string' ? obj.browser_download_url.trim() : '';
+    if (!name || !url) return [];
+    const size = typeof obj.size === 'number' && Number.isFinite(obj.size) ? obj.size : 0;
+    // GitHub 在 2024 年之后会给 digest（sha256:…）；老接口没有就让它是空串，校验时只比大小
+    const digest = typeof obj.digest === 'string' ? obj.digest.trim().toLowerCase() : '';
+    const sha256 = digest.startsWith('sha256:') ? digest.slice('sha256:'.length) : '';
+    return [{ name, url, size, sha256 }];
+  });
+}
+
 /** 把 GitHub 的 Release JSON 收拾成界面要的形状；字段不对就抛中文错误。 */
 export function parseRelease(raw: unknown): UpdateRelease {
   if (!raw || typeof raw !== 'object') throw new Error('GitHub 返回的数据看不懂（不是对象）');
@@ -61,12 +94,15 @@ export function parseRelease(raw: unknown): UpdateRelease {
   const version = tag.replace(/^v/i, '');
   if (!/^\d+(\.\d+)*/.test(version)) throw new Error('GitHub 上的版本号格式看不懂：' + tag);
   const body = typeof obj.body === 'string' ? obj.body.trim() : '';
+  const assets = parseAssets(obj.assets);
   return {
     version,
     tag,
     url: typeof obj.html_url === 'string' ? obj.html_url.trim() : '',
     notes: body.length > 600 ? body.slice(0, 600) + '…' : body,
-    publishedAt: typeof obj.published_at === 'string' ? obj.published_at : ''
+    publishedAt: typeof obj.published_at === 'string' ? obj.published_at : '',
+    assets,
+    installer: pickInstallerAsset(assets)
   };
 }
 

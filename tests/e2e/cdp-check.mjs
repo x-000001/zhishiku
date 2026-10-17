@@ -6,6 +6,7 @@
  *   node tests/e2e/cdp-check.mjs
  */
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -23,10 +24,44 @@ fs.mkdirSync(shotDir, { recursive: true });
 
 /* 「检查更新」是唯一会联网的功能：测试里不让它真连 GitHub，
    用本地 stub 服务器顶替（主进程读 JWKB_UPDATE_URL 这个仅测试用的环境变量）。
-   mode 在断言里切换：newer = 返回一个比当前新的版本；hang = 不响应，用来测 5 秒超时。 */
+   stubUpdateMode：newer = 返回一个比当前新的版本；hang = 查询不响应，用来测 5 秒超时。
+   stubAssetMode：normal = 正常发假安装包；hang = 发一点就卡住，用来测「取消下载」。 */
 let stubUpdateMode = 'newer';
 let stubDelayMs = 0; // 让「正在连接…」这个加载态能被稳定观察到（本地回包太快会瞬过）
+let stubAssetMode = 'normal';
+/* 假安装包：内容固定，测试里断言「落盘大小 + SHA256 对得上」就用它算 */
+const stubInstaller = Buffer.alloc(384 * 1024, 0x5a);
+const stubInstallerSha = createHash('sha256').update(stubInstaller).digest('hex');
+let stubPort = 0;
 const stubServer = http.createServer((req, res) => {
+  const url = req.url || '';
+  if (url.startsWith('/download/')) {
+    res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'content-length': String(stubInstaller.length)
+    });
+    if (stubAssetMode === 'hang') {
+      res.write(stubInstaller.subarray(0, 48 * 1024)); // 发一点就停住，不 end
+      return;
+    }
+    // 慢慢发（每 20ms 32KB）：384KB 大概 0.5 秒，让「正在下载 27%」这种进度态能被稳定观察到
+    let offset = 0;
+    const timer = setInterval(() => {
+      if (res.destroyed) {
+        clearInterval(timer);
+        return;
+      }
+      if (offset >= stubInstaller.length) {
+        clearInterval(timer);
+        res.end();
+        return;
+      }
+      const next = Math.min(offset + 32 * 1024, stubInstaller.length);
+      res.write(stubInstaller.subarray(offset, next));
+      offset = next;
+    }, 20);
+    return;
+  }
   if (stubUpdateMode === 'hang') return; // 故意不回包，让客户端超时
   const reply = () => {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -35,7 +70,15 @@ const stubServer = http.createServer((req, res) => {
         tag_name: 'v9.9.9',
         html_url: 'https://github.com/x-000001/zhishiku/releases/tag/v9.9.9',
         body: '这是一条测试用的更新说明。',
-        published_at: '2026-10-18T10:00:00Z'
+        published_at: '2026-10-18T10:00:00Z',
+        assets: [
+          {
+            name: 'JwKB-Setup-9.9.9.exe',
+            browser_download_url: `http://127.0.0.1:${stubPort}/download/JwKB-Setup-9.9.9.exe`,
+            size: stubInstaller.length,
+            digest: 'sha256:' + stubInstallerSha
+          }
+        ]
       })
     );
   };
@@ -43,7 +86,10 @@ const stubServer = http.createServer((req, res) => {
   else reply();
 });
 await new Promise((resolve) => stubServer.listen(0, '127.0.0.1', resolve));
-const stubUpdateUrl = `http://127.0.0.1:${stubServer.address().port}/releases/latest`;
+stubPort = stubServer.address().port;
+const stubUpdateUrl = `http://127.0.0.1:${stubPort}/releases/latest`;
+/* 下载目录指到测试数据目录里，方便断言文件真的落盘；DRYRUN 让「立即安装」不真跑安装程序 */
+const stubDownloadDir = path.join(dataDir, 'update-download');
 
 const child = spawn(
   exe,
@@ -54,7 +100,17 @@ const child = spawn(
     '--disable-gpu',
     `--user-data-dir=${path.join(root, 'tests', 'e2e', 'ud')}`
   ],
-  { cwd: root, env: { ...process.env, JWKB_DATA_DIR: dataDir, JWKB_UPDATE_URL: stubUpdateUrl }, stdio: 'inherit' }
+  {
+    cwd: root,
+    env: {
+      ...process.env,
+      JWKB_DATA_DIR: dataDir,
+      JWKB_UPDATE_URL: stubUpdateUrl,
+      JWKB_UPDATE_DIR: stubDownloadDir,
+      JWKB_UPDATE_DRYRUN: '1'
+    },
+    stdio: 'inherit'
+  }
 );
 
 let exitInfo = null;
@@ -3573,7 +3629,8 @@ try {
       /新版本/.test(String(updRun.title)) &&
       /9\.9\.9/.test(String(updRun.body)) &&
       updRun.foot.includes('复制下载链接') &&
-      updRun.foot.includes('知道了'),
+      updRun.foot.includes('下载并安装') &&
+      updRun.foot.includes('稍后'),
     detail:
       '按钮=' + (updRun.loading ? updRun.loading.text : '?') +
       ' 标题=' + updRun.title +
@@ -3592,7 +3649,7 @@ try {
     copy.click();
     await sleep(600);
     const texts = [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ');
-    const done = [...modal.querySelectorAll('.modal-foot .btn')].find((b) => (b.textContent || '').trim() === '知道了');
+    const done = modal.querySelector('.modal-head button');
     if (done) done.click();
     await sleep(450);
     return texts || 'no-toast';
@@ -3639,6 +3696,137 @@ try {
   });
   await cdp.shot('settings-update-timeout');
   stubUpdateMode = 'newer';
+
+  // ② 一键更新（第 1 步）：下载中能取消，取消后回到可重试状态
+  stubAssetMode = 'hang'; // 假安装包发一点就卡住，确保「取消」一定发生在下载中
+  const updCancel = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const btn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '检查更新');
+    if (!btn) return JSON.stringify({ error: 'no-check-button' });
+    btn.click();
+    let modal = null;
+    for (let i = 0; i < 60; i += 1) {
+      await sleep(100);
+      modal = document.querySelector('.modal-backdrop .modal');
+      if (modal) break;
+    }
+    if (!modal) return JSON.stringify({ error: 'no-modal' });
+    const download = [...modal.querySelectorAll('.modal-foot .btn')].find((b) => (b.textContent || '').trim() === '下载并安装');
+    if (!download) return JSON.stringify({ error: 'no-download-button' });
+    download.click();
+    let progressText = '';
+    for (let i = 0; i < 50; i += 1) {
+      await sleep(100);
+      const meta = document.querySelector('.update-progress-meta');
+      progressText = meta ? meta.innerText.replace(/\\s+/g, ' ').trim() : '';
+      if (progressText.includes('正在下载')) break;
+    }
+    const cancel = [...modal.querySelectorAll('.modal-foot .btn')].find((b) => (b.textContent || '').trim() === '取消下载');
+    const hasCancel = !!cancel;
+    if (cancel) cancel.click();
+    await sleep(900);
+    const toastTexts = [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ');
+    const retry = [...document.querySelectorAll('.modal-foot .btn')].some((b) => (b.textContent || '').trim() === '下载并安装');
+    return JSON.stringify({ progressText, hasCancel, toastTexts: toastTexts.slice(0, 140), retry });
+  })()`)
+    )
+  );
+  results.push({
+    name: '一键更新：下载中显示进度，点「取消下载」能中断并回到可重试状态',
+    ok:
+      updCancel.error === undefined &&
+      updCancel.hasCancel === true &&
+      /正在下载/.test(String(updCancel.progressText)) &&
+      /取消/.test(String(updCancel.toastTexts)) &&
+      updCancel.retry === true,
+    detail:
+      '进度=' + String(updCancel.progressText).slice(0, 30) + ' 有取消=' + updCancel.hasCancel + ' 提示=' + String(updCancel.toastTexts).slice(0, 50) + ' 可重试=' + updCancel.retry
+  });
+
+  // ③ 一键更新（第 2 步）：真下载一遍，落盘的文件大小和 SHA256 都要对得上
+  stubAssetMode = 'normal';
+  const updDownload = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const modal = document.querySelector('.modal-backdrop .modal');
+    if (!modal) return JSON.stringify({ error: 'no-modal' });
+    const download = [...modal.querySelectorAll('.modal-foot .btn')].find((b) => (b.textContent || '').trim() === '下载并安装');
+    if (!download) return JSON.stringify({ error: 'no-download-button' });
+    download.click();
+    let sawProgress = false;
+    let done = false;
+    for (let i = 0; i < 160; i += 1) {
+      await sleep(100);
+      const meta = document.querySelector('.update-progress-meta');
+      if (meta && meta.innerText.includes('正在下载')) sawProgress = true;
+      const install = [...document.querySelectorAll('.modal-foot .btn')].find((b) => (b.textContent || '').trim() === '立即安装');
+      if (install) { done = true; break; }
+    }
+    const toastTexts = [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ');
+    const bodyText = (modal.querySelector('.modal-body') || modal).innerText.replace(/\\s+/g, ' ');
+    return JSON.stringify({ sawProgress, done, toastTexts: toastTexts.slice(0, 140), bodyText: bodyText.slice(0, 160) });
+  })()`)
+    )
+  );
+  const downloadedFiles = fs.existsSync(stubDownloadDir)
+    ? fs.readdirSync(stubDownloadDir).filter((name) => name.endsWith('.exe'))
+    : [];
+  const downloadedFile = downloadedFiles.length ? path.join(stubDownloadDir, downloadedFiles[0]) : '';
+  const downloadedSize = downloadedFile ? fs.statSync(downloadedFile).size : -1;
+  const downloadedSha = downloadedFile
+    ? createHash('sha256').update(fs.readFileSync(downloadedFile)).digest('hex')
+    : '';
+  results.push({
+    name: '一键更新：安装包真的下载到本地，大小和 SHA256 与 Release 附件一致',
+    ok:
+      updDownload.error === undefined &&
+      updDownload.done === true &&
+      updDownload.sawProgress === true &&
+      downloadedSize === stubInstaller.length &&
+      downloadedSha === stubInstallerSha &&
+      /下载好了/.test(String(updDownload.toastTexts)),
+    detail:
+      '完成=' + updDownload.done + ' 文件=' + (downloadedFiles[0] || '无') + ' 大小=' + downloadedSize + '/' + stubInstaller.length + ' sha一致=' + (downloadedSha === stubInstallerSha)
+  });
+  await cdp.shot('settings-update-downloaded');
+
+  // ④ 一键更新（第 3 步）：「立即安装」在测试模式（DRYRUN）下只返回结果、不真运行安装程序，应用不能退出
+  const updInstall = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const install = [...document.querySelectorAll('.modal-foot .btn')].find((b) => (b.textContent || '').trim() === '立即安装');
+    if (!install) return JSON.stringify({ error: 'no-install-button' });
+    install.click();
+    let texts = '';
+    for (let i = 0; i < 40; i += 1) {
+      await sleep(100);
+      texts = [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ');
+      if (texts.includes('测试模式')) break;
+    }
+    const close = document.querySelector('.modal-backdrop .modal-head button');
+    if (close) close.click();
+    await sleep(400);
+    return JSON.stringify({
+      texts: texts.slice(0, 140),
+      alive: !!document.querySelector('.card h2'),
+      modalGone: !document.querySelector('.modal-backdrop')
+    });
+  })()`)
+    )
+  );
+  results.push({
+    name: '一键更新：「立即安装」走到启动安装这一步（测试模式不真安装），应用不退出、弹窗能关掉',
+    ok:
+      updInstall.error === undefined &&
+      /测试模式/.test(String(updInstall.texts)) &&
+      updInstall.alive === true &&
+      updInstall.modalGone === true,
+    detail: '提示=' + String(updInstall.texts).slice(0, 60) + ' 应用存活=' + updInstall.alive + ' 弹窗关闭=' + updInstall.modalGone
+  });
 
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);

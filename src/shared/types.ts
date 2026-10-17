@@ -385,6 +385,46 @@ export interface UpdateRelease {
   notes: string;
   /** 发布时间（ISO 字符串），没给就是空串 */
   publishedAt: string;
+  /** Release 上的全部附件（安装包、blockmap 等） */
+  assets: UpdateAsset[];
+  /** 挑出来的安装包；这个 Release 没传安装包时为 null（只能给下载页链接） */
+  installer: UpdateAsset | null;
+}
+
+/** GitHub Release 里的一个附件文件。 */
+export interface UpdateAsset {
+  name: string;
+  /** 浏览器下载地址（github.com/…/releases/download/…） */
+  url: string;
+  size: number;
+  /** GitHub 给的 digest，形如 sha256:abc…；老接口没有时是空串 */
+  sha256: string;
+}
+
+/** 下载进度：主进程边下边推给设置页，渲染层只负责画。 */
+export interface UpdateProgress {
+  phase: 'downloading' | 'verifying';
+  received: number;
+  total: number;
+  percent: number;
+}
+
+/** 下载完成后的结果：安装包落在哪、多大、对应哪个版本。 */
+export interface UpdateDownload {
+  path: string;
+  size: number;
+  version: string;
+}
+
+/** 「下载并安装」最后一步的结果。 */
+export interface UpdateInstallResult {
+  /** 是否真的拉起了安装程序 */
+  started: boolean;
+  /** 测试模式：只走到这里，不启动安装程序 */
+  dryRun: boolean;
+  /** 便携版：自己覆盖不了正在运行的 exe，改成打开文件夹让用户手动替换 */
+  portable: boolean;
+  path: string;
 }
 
 export interface UpdateCheck {

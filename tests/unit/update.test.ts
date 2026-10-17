@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   checkUpdate,
   compareVersion,
+  isInstallerName,
   parseRelease,
+  pickInstallerAsset,
   UPDATE_TIMEOUT_MS,
   UPDATE_URL,
   type UpdateFetcher
 } from '../../src/main/update';
+import type { UpdateAsset } from '../../src/shared/types';
 
 /** 造一个假的网络层，顺便把调用参数记下来，验证 URL / 头 / 超时信号都传对了。 */
 function fakeFetcher(
@@ -29,6 +32,26 @@ const release = {
   body: '修了三个问题，加了设置页的检查更新。',
   published_at: '2026-10-18T10:00:00Z'
 };
+
+/** 一个像真实 Release 的附件列表：安装包 + blockmap + 绿色版压缩包 */
+const assets = [
+  {
+    name: 'JwKB-Setup-0.5.0.exe',
+    browser_download_url: 'https://github.com/x-000001/zhishiku/releases/download/v0.5.0/JwKB-Setup-0.5.0.exe',
+    size: 112505769,
+    digest: 'sha256:ABCDEF'
+  },
+  {
+    name: 'JwKB-Setup-0.5.0.exe.blockmap',
+    browser_download_url: 'https://github.com/x-000001/zhishiku/releases/download/v0.5.0/JwKB-Setup-0.5.0.exe.blockmap',
+    size: 120000
+  },
+  {
+    name: 'JwKB-Portable-0.5.0.zip',
+    browser_download_url: 'https://github.com/x-000001/zhishiku/releases/download/v0.5.0/JwKB-Portable-0.5.0.zip',
+    size: 247033856
+  }
+];
 
 describe('版本号比较', () => {
   it('按数字段比，不是按字符串比', () => {
@@ -65,6 +88,41 @@ describe('解析 GitHub Release', () => {
     expect(() => parseRelease(null)).toThrow('不是对象');
     expect(() => parseRelease({})).toThrow('没有版本号');
     expect(() => parseRelease({ tag_name: '最新版' })).toThrow('版本号格式看不懂');
+  });
+});
+
+describe('挑安装包（附件里混着 blockmap、绿色版压缩包）', () => {
+  it('只认 .exe，且排除 blockmap / 更新元数据', () => {
+    expect(isInstallerName('Jw知识库-安装包-0.5.0.exe')).toBe(true);
+    expect(isInstallerName('JwKB-Setup-0.5.0.exe')).toBe(true);
+    expect(isInstallerName('JwKB-Setup-0.5.0.exe.blockmap')).toBe(false);
+    expect(isInstallerName('latest.yml')).toBe(false);
+    expect(isInstallerName('portable.zip')).toBe(false);
+  });
+
+  it('优先名字像安装包的那个，其次挑最大的', () => {
+    const picked = pickInstallerAsset(parseRelease({ ...release, assets }).assets);
+    expect(picked?.name).toBe('JwKB-Setup-0.5.0.exe');
+    expect(picked?.size).toBe(112505769);
+    // digest 的 sha256: 前缀会去掉，比较时直接比十六进制
+    expect(picked?.sha256).toBe('abcdef');
+
+    const notNamed: UpdateAsset[] = [
+      { name: 'a.exe', url: 'https://x', size: 10, sha256: '' },
+      { name: 'b.exe', url: 'https://x', size: 20, sha256: '' }
+    ];
+    expect(pickInstallerAsset(notNamed)?.name).toBe('b.exe');
+  });
+
+  it('没有安装包时返回 null（界面就只给下载页链接）', () => {
+    expect(pickInstallerAsset([])).toBeNull();
+    expect(parseRelease({ ...release, assets: [{ name: 'a.zip', browser_download_url: 'https://x', size: 1 }] }).installer).toBeNull();
+  });
+
+  it('只有没发 Release 时才 404；检查结果里带着挑好的安装包', async () => {
+    const result = await checkUpdate('0.4.0', { fetcher: fakeFetcher(200, { ...release, assets }).fetcher });
+    expect(result.latest?.installer?.name).toBe('JwKB-Setup-0.5.0.exe');
+    expect(result.latest?.assets).toHaveLength(3);
   });
 });
 
