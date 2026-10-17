@@ -706,10 +706,6 @@ export function moveCategory(id: Id, dir: 'up' | 'down'): void {
 /* 笔记                                                                */
 /* ------------------------------------------------------------------ */
 
-interface NoteRow extends Note {
-  category_name?: string | null;
-}
-
 function noteListSelect(): string {
   return `select n.id, n.category_id, n.title, n.excerpt, n.word_count, n.is_pinned, n.sort_order,
                  n.updated_at, c.name as category_name

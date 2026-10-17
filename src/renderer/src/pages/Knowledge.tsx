@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { api, pathForFile } from '../api';
 import { ConfirmDialog, Empty, Modal, toast } from '../ui';
 import { showContextMenu, type MenuItem } from '../menu';
-import { fmtDate, relative } from '../format';
+import { relative } from '../format';
 import { diffLines, renderMarkdown } from '../../../shared/markdown';
 import { attachmentUrl, htmlToPlainText, sanitizeHtml } from '../../../shared/html';
 import * as rich from '../rich';
@@ -64,7 +64,11 @@ export default function Knowledge(props: {
   const [tableOpen, setTableOpen] = useState(false);
   const [tableSize, setTableSize] = useState({ rows: 3, cols: 3 });
   const [fmt, setFmt] = useState({ inTable: false, bold: false, italic: false, underline: false });
-  const [confirmPurge, setConfirmPurge] = useState<Id | null>(null);
+  /**
+   * 彻底删除的入口（右键菜单 / 行内图标）会往这里写 id，但目前没有确认框读它，
+   * 所以点了暂时什么也不会发生 —— 这是重构扫描发现的历史遗留，待确认后单独接线。
+   */
+  const [, setConfirmPurge] = useState<Id | null>(null);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
   const [confirmCatDel, setConfirmCatDel] = useState<Category | null>(null);
   /** 改名 / 新建子分类的输入框（Electron 里没有 window.prompt，必须自己做） */
@@ -77,8 +81,6 @@ export default function Knowledge(props: {
   const wordTimer = useRef<number | null>(null);
   /** touchBody 定义在 scheduleDraft 之前，用 ref 转一手避免顺序问题 */
   const scheduleDraftRef = useRef<(() => void) | null>(null);
-  /** 彻底删除的待办计时器：界面上先消失，5 秒后才真删，这期间可以撤销。 */
-  const pendingDelete = useRef(new Map<Id, ReturnType<typeof setTimeout>>());
   const stateRef = useRef({ title: '', html: '', id: null as Id | null });
   stateRef.current = { title, html: htmlRef.current, id: openId };
 
@@ -462,7 +464,8 @@ export default function Knowledge(props: {
     }
   };
 
-  const trash = async (id: Id): Promise<void> => {    try {
+  const trash = async (id: Id): Promise<void> => {
+    try {
       await api.trashNote(id);
       if (openId === id) setOpenId(null);
       await loadList();
@@ -477,39 +480,6 @@ export default function Knowledge(props: {
     } catch (err) {
       toast('删除失败：' + (err as Error).message);
     }
-  };
-
-  /**
-   * 彻底删除笔记：不可逆，但仍然给 5 秒后悔时间。
-   * 先让它从列表里消失，5 秒后才真删；这期间点撤销就重新读回来。
-   */
-  const purge = (id: Id): void => {
-    setList((prev) => prev.filter((n) => n.id !== id));
-    if (openId === id) setOpenId(null);
-    const timer = setTimeout(() => {
-      pendingDelete.current.delete(id);
-      void api
-        .purgeNote(id)
-        .then(() => {
-          loadCats();
-          props.refreshCount();
-        })
-        .catch((err: Error) => toast('删除失败：' + err.message));
-    }, 5000);
-    pendingDelete.current.set(id, timer);
-    toast('已彻底删除', {
-      actionLabel: '撤销',
-      onAction: () => {
-        const t = pendingDelete.current.get(id);
-        if (t) {
-          clearTimeout(t);
-          pendingDelete.current.delete(id);
-        }
-        void loadList();
-        void loadCats();
-        toast('已撤回，笔记回来了');
-      }
-    });
   };
 
   /** 删分类：确认框只给「含子内容」的分类；其它直接删，靠 5 秒撤销兜底。 */
