@@ -3236,6 +3236,118 @@ try {
   await cdp.shot('dark-tabs-next');
   await cdp.eval("document.documentElement.setAttribute('data-theme', 'light'); true");
 
+  // 第五版（收尾）：表单呼吸感 —— 控件高度 / 内边距 / 行距统一，颜色仍由主题变量决定
+  const formRhythm = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const probe = async (route) => {
+      location.hash = route;
+      await sleep(600);
+      const card = document.querySelector('.dash-grid .card');
+      const fields = [...document.querySelectorAll('.dash-grid .card > .field')];
+      const rows = fields.map((f) => f.getBoundingClientRect());
+      const gaps = [];
+      for (let i = 1; i < rows.length; i += 1) gaps.push(Math.round(rows[i].top - rows[i - 1].bottom));
+      const cs = (el) => getComputedStyle(el);
+      const nums = (s) => s.slice(s.indexOf('(') + 1, s.lastIndexOf(')')).split(',').map((v) => parseFloat(v)).filter((v) => !Number.isNaN(v));
+      const lum = (c) => {
+        const f = c.slice(0, 3).map((v) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
+        return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2];
+      };
+      const contrast = (fg, bg) => {
+        const a = lum(nums(fg));
+        const b = lum(nums(bg));
+        return Math.round(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)) * 100) / 100;
+      };
+      const ctl = fields.map((f) => f.querySelector('input, textarea, select')).filter(Boolean);
+      const single = ctl.filter((el) => el.tagName !== 'TEXTAREA');
+      const area = ctl.find((el) => el.tagName === 'TEXTAREA');
+      const lab = fields[0] ? fields[0].querySelector('label') : null;
+      const btnRow = document.querySelector('.dash-grid .card > .row > .btn');
+      const btn = document.querySelector('.dash-grid .card > .btn');
+      return {
+        route: route,
+        count: fields.length,
+        labelW: lab ? Math.round(parseFloat(cs(lab).width)) : 0,
+        labelTop: lab ? cs(lab).paddingTop : '',
+        ctlH: single.map((el) => Math.round(el.getBoundingClientRect().height)),
+        ctlMinH: single.map((el) => cs(el).minHeight),
+        padTop: single[0] ? cs(single[0]).paddingTop : '',
+        padLeft: single[0] ? cs(single[0]).paddingLeft : '',
+        areaH: area ? Math.round(area.getBoundingClientRect().height) : 0,
+        areaLine: area ? cs(area).lineHeight : '',
+        gaps: gaps,
+        btnH: btnRow ? Math.round(btnRow.getBoundingClientRect().height) : btn ? Math.round(btn.getBoundingClientRect().height) : 0,
+        ctlColor: single[0] ? cs(single[0]).color : '',
+        ctlBg: single[0] ? cs(single[0]).backgroundColor : '',
+        ratio: single[0] ? contrast(cs(single[0]).color, cs(single[0]).backgroundColor) : 0,
+        areaRatio: area ? contrast(cs(area).color, cs(area).backgroundColor) : 0
+      };
+    };
+    document.documentElement.setAttribute('data-theme', 'light');
+    await sleep(220);
+    const light = { review: await probe('/review'), next: await probe('/next') };
+    document.documentElement.setAttribute('data-theme', 'dark');
+    await sleep(220);
+    const dark = { review: await probe('/review'), next: await probe('/next') };
+    document.documentElement.setAttribute('data-theme', 'light');
+    return JSON.stringify({ light, dark });
+  })()`)
+    )
+  );
+  const rhythmPages = [formRhythm.light.review, formRhythm.light.next, formRhythm.dark.review, formRhythm.dark.next];
+  const rhythmOk = rhythmPages.every(
+    (p) =>
+      p.count >= 2 &&
+      p.labelW === 96 &&
+      p.labelTop === '10px' &&
+      p.ctlH.every((h) => h === 40) &&
+      p.ctlMinH.every((mh) => mh === '40px') &&
+      p.padTop === '9px' &&
+      p.padLeft === '14px' &&
+      p.areaH >= 68 &&
+      parseFloat(p.areaLine) >= 22 &&
+      p.gaps.every((g) => g === 15) &&
+      p.btnH === 40
+  );
+  results.push({
+    name: '第五版修复：表单行有呼吸感（控件 40px 高、内边距 9/14、行间隔 15px、文本框行高 1.7）',
+    ok: rhythmOk,
+    detail: rhythmPages
+      .map(
+        (p) =>
+          p.route + ' 行=' + p.count + ' 标签=' + p.labelW + 'px 控件高=' + p.ctlH.join('/') + ' 内边距=' + p.padTop + '/' + p.padLeft + ' 行距=' + p.gaps.join('/') + ' 按钮高=' + p.btnH
+      )
+      .join('；')
+  });
+  const colorUnchanged =
+    rhythmPages.every((p) => p.ratio >= 4.5 && p.areaRatio >= 4.5) &&
+    formRhythm.dark.review.ctlBg !== formRhythm.light.review.ctlBg &&
+    formRhythm.dark.review.ctlColor !== formRhythm.light.review.ctlColor;
+  results.push({
+    name: '第五版修复：表单控件的颜色仍跟着主题走（没被写死成白底，对比度 ≥ 4.5:1）',
+    ok: colorUnchanged,
+    detail:
+      '深色 文字/底=' +
+      formRhythm.dark.review.ctlColor +
+      ' / ' +
+      formRhythm.dark.review.ctlBg +
+      '（对比度 ' +
+      formRhythm.dark.review.ratio +
+      '，文本框 ' +
+      formRhythm.dark.review.areaRatio +
+      '），浅色 文字/底=' +
+      formRhythm.light.review.ctlColor +
+      ' / ' +
+      formRhythm.light.review.ctlBg +
+      '（对比度 ' +
+      formRhythm.light.review.ratio +
+      '，文本框 ' +
+      formRhythm.light.review.areaRatio +
+      '）'
+  });
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {

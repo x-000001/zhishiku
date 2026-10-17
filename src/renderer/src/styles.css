@@ -4394,3 +4394,67 @@ html[data-theme='dark'] {
     scroll-behavior: auto !important;
   }
 }
+
+/* ==== 第五版（收尾）：表单呼吸感（2026-10-17 晚）====
+   只调间距、内边距与高度，不动颜色、不动任何逻辑。
+   目标：复习与复盘页的「加一张卡片」、下一阶段目标页的「记一个以后想做的事」
+   —— 这两个表单卡片都落在 .dash-grid 里，字段是卡片的直接子节点，
+   所以用 `.dash-grid .card > .field` 精确圈住，不碰任务页/计划页那些密集筛选行。 */
+
+/* 1) 每行表单：标签与控件拉开距离，行与行之间留出呼吸空间 */
+.dash-grid .card > .field {
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 15px;
+}
+
+/* 2) 标签改成顶部对齐（多行文本框时不再「忽上忽下」），并给足宽度不折行 */
+.dash-grid .card > .field > label {
+  width: 96px;
+  flex: 0 0 96px;
+  padding-top: 10px;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 3) 控件：内部空间加大，统一到 40px 高 */
+.dash-grid .card > .field > input,
+.dash-grid .card > .field > select {
+  min-height: 40px;
+  padding: 9px 14px;
+}
+
+.dash-grid .card > .field > select {
+  padding-right: 34px;
+}
+
+.dash-grid .card > .field > textarea {
+  min-height: 70px;
+  padding: 10px 14px;
+  line-height: 1.7;
+  resize: vertical;
+}
+
+/* 4) 标题与第一行之间、以及表单底部那排（下拉 + 按钮）也放宽一点 */
+.dash-grid .card > .card-head {
+  margin-bottom: 16px;
+}
+
+.dash-grid .card > .row {
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.dash-grid .card > .row > input,
+.dash-grid .card > .row > select,
+.dash-grid .card > .row > .btn,
+.dash-grid .card > .btn {
+  min-height: 40px;
+}
+
+.dash-grid .card > .row > .btn,
+.dash-grid .card > .btn {
+  padding: 9px 18px;
+}
