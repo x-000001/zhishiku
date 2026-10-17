@@ -6,7 +6,7 @@
 - 装好以后能自己升级：设置页点「检查更新」→ 有新版本就点「下载并安装」，自动下载、校验、静默安装并重开新版（详见下面「怎么更新到新版本」）
 - 技术：Electron + React + TypeScript + CodeMirror 6 + SQLite（WAL）+ FTS5
 - 数据：一个 SQLite 文件 + 一个附件文件夹 + 一个备份文件夹，都在 D 盘
-- 需求原文：[PRD.md](PRD.md)　开发过程：[开发计划.md](开发计划.md)　验收清单：[验收清单.md](验收清单.md)
+- 需求原文：[PRD.md](PRD.md)　开发过程：[开发计划.md](开发计划.md)　验收清单：[验收清单.md](验收清单.md)　版本变更：[CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -330,4 +330,28 @@ C:\JwKB\使用说明.txt
 
 **发布记录**：0.5.0 已发到 [GitHub Release v0.5.0](https://github.com/x-000001/zhishiku/releases/tag/v0.5.0)，附带 `JwKB-Setup-0.5.0.exe`（112,510,046 字节）。装 0.4.0 的机器点「检查更新」会看到「发现新版本 0.5.0」，可以直接下载并安装；装 0.5.0 的会提示已是最新。
 
-逐条验收证据见 [验收清单.md](验收清单.md)，开发过程见 [开发计划.md](开发计划.md)。
+逐条验收证据见 [验收清单.md](验收清单.md)，开发过程见 [开发计划.md](开发计划.md)，每个版本的变更见 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
+## 七、界面预览（截图）
+
+真机截图，都是 e2e 每次跑测试时顺手拍的（点击可看大图）。
+
+| 首页总览 | 知识库 |
+|---|---|
+| ![首页](docs/screenshots/01-home.png) | ![知识库](docs/screenshots/02-knowledge.png) |
+
+| 任务待办 | 复习与复盘 |
+|---|---|
+| ![任务](docs/screenshots/03-tasks.png) | ![复习](docs/screenshots/04-review.png) |
+
+| 下一阶段目标（目标池） | 设置页 |
+|---|---|
+| ![下一阶段目标](docs/screenshots/05-next-goals.png) | ![设置](docs/screenshots/08-settings.png) |
+
+| 发现新版本（检查更新） | 安装包已下载，可「立即安装」 |
+|---|---|
+| ![检查更新](docs/screenshots/06-update-dialog.png) | ![下载完成](docs/screenshots/07-update-downloaded.png) |
+
+截图对应的验收项、每条断言怎么跑的，见 [验收清单.md](验收清单.md)。
