@@ -78,10 +78,12 @@ function MenuPanel({ state }: { state: MenuState }): ReactNode {
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return;
-    const box = el.getBoundingClientRect();
+    // 用 offsetWidth/Height 量：入场动画带 scale，getBoundingClientRect 会偏小
     const gap = 8;
-    const left = Math.min(state.x, Math.max(gap, window.innerWidth - box.width - gap));
-    const top = Math.min(state.y, Math.max(gap, window.innerHeight - box.height - gap));
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const left = Math.min(state.x, Math.max(gap, window.innerWidth - w - gap));
+    const top = Math.min(state.y, Math.max(gap, window.innerHeight - h - gap));
     setPos({ left: Math.max(gap, left), top: Math.max(gap, top), visible: true });
   }, [state]);
 

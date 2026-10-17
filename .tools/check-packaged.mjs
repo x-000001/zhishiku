@@ -263,6 +263,76 @@ await cdp.shot('packaged-ctx-menu');
 await cdp.eval("document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 2, clientY: 2 })); true");
 await sleep(240);
 
+// ---- 第五版（阶段11）：滚动与无障碍（打包版也要有细滚动条、跳转链接、键盘可达） ----
+const scrollPack = JSON.parse(
+  String(
+    await cdp.eval(`(() => {
+      const bar = document.createElement('div');
+      bar.style.cssText = 'position:fixed;left:-9999px;top:0;width:120px;height:80px;overflow-y:scroll;';
+      bar.innerHTML = '<div style="height:400px"></div>';
+      document.body.appendChild(bar);
+      const w = bar.offsetWidth - bar.clientWidth;
+      bar.remove();
+      const el = document.querySelector('.content');
+      const cs = el ? getComputedStyle(el) : null;
+      const root = getComputedStyle(document.documentElement);
+      const thumb = root.getPropertyValue('--scroll-thumb').trim();
+      return JSON.stringify({
+        w: w,
+        over: cs ? cs.overscrollBehaviorY : '',
+        gutter: cs ? cs.scrollbarGutter : '',
+        smooth: cs ? cs.scrollBehavior : '',
+        thumb: thumb
+      });
+    })()`)
+  )
+);
+check(
+  '打包版滚动条是 10px 细条、正文兜住滚轮且留好滚动条槽',
+  scrollPack.w === 10 && scrollPack.over === 'contain' && scrollPack.gutter === 'stable' && scrollPack.smooth === 'smooth' && /rgba/.test(scrollPack.thumb),
+  `实测宽=${scrollPack.w}px 兜住=${scrollPack.over} 槽=${scrollPack.gutter} 平滑=${scrollPack.smooth} 配色=${scrollPack.thumb}`
+);
+
+// Tab 第一下应该落到「跳到主内容」，回车把焦点送进正文
+await cdp.eval('if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); window.focus(); true');
+const pressKey = async (key, code, vk) => {
+  await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: key, code: code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: key, code: code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+};
+await pressKey('Tab', 'Tab', 9);
+await sleep(340);
+const skipPack = JSON.parse(
+  String(
+    await cdp.eval(`(() => {
+      const a = document.activeElement;
+      const link = document.querySelector('.skip-link');
+      const cs = link ? getComputedStyle(link) : null;
+      return JSON.stringify({
+        cls: a ? String(a.className || '') : '',
+        onLink: !!(a && a.classList && a.classList.contains('skip-link')),
+        top: link ? Math.round(link.getBoundingClientRect().top) : -999,
+        outline: cs ? String(cs.outlineStyle) + ' ' + String(cs.outlineWidth) : ''
+      });
+    })()`)
+  )
+);
+await cdp.shot('packaged-skip-link');
+await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+await sleep(380);
+const mainAfter = JSON.parse(
+  String(
+    await cdp.eval(
+      `JSON.stringify({ id: document.activeElement ? document.activeElement.id : '', tag: document.activeElement ? document.activeElement.tagName : '' })`
+    )
+  )
+);
+check(
+  '打包版 Tab 第一下到「跳到主内容」，回车把焦点送进正文',
+  skipPack.onLink === true && skipPack.top >= 0 && /solid/.test(skipPack.outline) && mainAfter.id === 'main' && mainAfter.tag === 'MAIN',
+  `第一下=${skipPack.cls} 顶部=${skipPack.top} 描边=${skipPack.outline} 回车后=${mainAfter.tag}#${mainAfter.id}`
+);
+
 // ---- 第五版（阶段8）：主题记忆 —— 真的重启一次进程，验证首帧就是存下来的主题 ----
 await cdp.eval(`window.api.invoke('settings:set', { key: 'theme', value: 'dark' })`);
 await sleep(600);

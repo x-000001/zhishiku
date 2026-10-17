@@ -4193,3 +4193,148 @@ html.sidebar-animating .sidebar {
     animation: none !important;
   }
 }
+/* ================= 第五版（阶段11）：滚动与无障碍 =================
+   滚动：滚动条更细、圆角、跟着主题走；给滚动容器留出固定的滚动条槽
+   （不然内容一多滚动条冒出来，正文会左右跳一格）；子容器滚到底把事件
+   兜住，不往背景页滚（overscroll-behavior: contain）。
+   无障碍：键盘聚焦统一 2px 焦点环（鼠标点出来的不画）；「跳到主内容」
+   链接平时藏在屏幕外；系统开「减少动态效果」时全站动画瞬间完成。 */
+
+:root {
+  --scroll-thumb: rgba(15, 23, 42, 0.18);
+  --scroll-thumb-hover: rgba(15, 23, 42, 0.34);
+  --focus-ring: var(--brand);
+}
+
+html[data-theme='dark'] {
+  --scroll-thumb: rgba(255, 255, 255, 0.16);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.3);
+}
+
+/* ---- 滚动条：10px 轨道、6px 拇指、圆角，深浅自动换 ---- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background: var(--scroll-thumb-hover);
+  background-clip: content-box;
+}
+
+/* ---- 滚动容器：滚动条槽固定 + 不把背景滚走 ---- */
+.content,
+.kb-tree,
+.kb-list-body,
+.editor-body,
+.modal-body,
+.quick textarea {
+  overscroll-behavior: contain;
+}
+
+.content,
+.kb-tree,
+.kb-list-body,
+.editor-body,
+.modal-body {
+  scrollbar-gutter: stable;
+}
+
+.content,
+.kb-list-body {
+  scroll-behavior: smooth;
+  scroll-padding-top: 8px;
+}
+
+.kb-list-body > .list-row,
+.task-row,
+.tree-item {
+  scroll-margin-block: 6px;
+}
+
+/* ---- 焦点环：键盘上下文统一 2px 品牌色 + 2px 留白 ---- */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.list-row:focus-visible,
+.tree-item:focus-visible,
+.task-row:focus-visible,
+.nav-item:focus-visible,
+.ctx-item:focus-visible {
+  outline-offset: -2px;
+}
+
+.content:focus-visible,
+.kb-list-body:focus-visible,
+.kb-tree:focus-visible,
+.editor-body:focus-visible {
+  outline-offset: -3px;
+}
+
+/* ---- 跳到主内容：平时在屏幕外，第一下 Tab 才滑下来 ---- */
+.skip-link {
+  position: fixed;
+  left: 12px;
+  top: 8px;
+  z-index: 200;
+  padding: 7px 14px;
+  border-radius: 10px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.28);
+  transform: translateY(-60px);
+  transition: transform 0.18s var(--smooth-ease);
+}
+
+.skip-link:focus-visible {
+  transform: none;
+  outline-offset: 2px;
+}
+
+/* ---- 只给屏幕阅读器的文字 ---- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- 减少动态效果：全站兜底（之前各阶段是逐条关，这里一次收口） ---- */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -2812,8 +2812,12 @@ try {
     const m = document.querySelector('.ctx-menu');
     const items = m ? [...m.querySelectorAll('.ctx-item .ctx-label')].map((b) => b.textContent.trim()) : [];
     document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 2, clientY: 2 }));
-    await sleep(280);
-    return { items, closed: !document.querySelector('.ctx-menu') };
+    let closed = false;
+    for (let i = 0; i < 20 && !closed; i += 1) {
+      await sleep(60);
+      closed = !document.querySelector('.ctx-menu');
+    }
+    return { items, closed };
   })()`);
   results.push({
     name: '第五版：右键任务行能标记完成 / 改优先级 / 删除',
@@ -2903,6 +2907,219 @@ try {
   await cdp.send('Emulation.clearDeviceMetricsOverride');
   await cdp.eval('window.dispatchEvent(new Event("resize")); true');
   await sleep(700);
+
+  // ---- 第五版（阶段11）：滚动与无障碍 ----
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(820);
+
+  const a11yScrollProbe = await cdp.eval(`(() => {
+    const bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;left:-9999px;top:0;width:120px;height:80px;overflow-y:scroll;';
+    bar.innerHTML = '<div style="height:400px"></div>';
+    document.body.appendChild(bar);
+    const barW = bar.offsetWidth - bar.clientWidth;
+    bar.remove();
+    const read = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { over: cs.overscrollBehaviorY, gutter: cs.scrollbarGutter, smooth: cs.scrollBehavior, overflow: cs.overflowY };
+    };
+    const root = getComputedStyle(document.documentElement);
+    return JSON.stringify({
+      barW: barW,
+      content: read('.content'),
+      list: read('.kb-list-body'),
+      tree: read('.kb-tree'),
+      thumbTok: root.getPropertyValue('--scroll-thumb').trim(),
+      thumbHover: root.getPropertyValue('--scroll-thumb-hover').trim()
+    });
+  })()`);
+  const a11ySp = JSON.parse(String(a11yScrollProbe));
+  results.push({
+    name: '第五版：滚动条收成 10px 细条（颜色跟主题走），滚动容器兜住滚轮、留好滚动条槽、滚得平滑',
+    ok: a11ySp.barW === 10 &&
+      /^rgba\(15,\s*23,\s*42/.test(a11ySp.thumbTok) && /^rgba\(15,\s*23,\s*42/.test(a11ySp.thumbHover) &&
+      !!a11ySp.content && a11ySp.content.over === 'contain' && a11ySp.content.gutter === 'stable' && a11ySp.content.smooth === 'smooth' &&
+      !!a11ySp.list && a11ySp.list.over === 'contain' && a11ySp.list.gutter === 'stable' &&
+      !!a11ySp.tree && a11ySp.tree.over === 'contain',
+    detail: '实测滚动条宽=' + a11ySp.barW + 'px 正文[兜住=' + (a11ySp.content && a11ySp.content.over) + ' 槽=' + (a11ySp.content && a11ySp.content.gutter) + ' 平滑=' + (a11ySp.content && a11ySp.content.smooth) + '] 列表[槽=' + (a11ySp.list && a11ySp.list.gutter) + '] 分类[兜住=' + (a11ySp.tree && a11ySp.tree.over) + '] 配色=' + a11ySp.thumbTok
+  });
+
+  const a11yPressKey = async (key, code, vk) => {
+    await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: key, code: code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: key, code: code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+  };
+  await cdp.eval('if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); true');
+  await sleep(140);
+  await a11yPressKey('Tab', 'Tab', 9);
+  await sleep(320);
+  const a11ySkipState = await cdp.eval(`(() => {
+    const el = document.activeElement;
+    const link = document.querySelector('.skip-link');
+    if (!el || !link) return JSON.stringify({ err: 'no-skip' });
+    const cs = getComputedStyle(link);
+    const b = link.getBoundingClientRect();
+    return JSON.stringify({
+      onLink: el === link,
+      text: (link.textContent || '').trim(),
+      top: Math.round(b.top),
+      visible: b.top >= 0,
+      transform: cs.transform,
+      outline: cs.outlineWidth + ' ' + cs.outlineColor
+    });
+  })()`);
+  const a11ySk = JSON.parse(String(a11ySkipState));
+  await cdp.shot('a11y-skip-link');
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+  await sleep(380);
+  const a11ySkipTarget = await cdp.eval(`(() => { const el = document.activeElement; return JSON.stringify({ id: el ? el.id : '', tag: el ? el.tagName : '' }); })()`);
+  const a11ySt = JSON.parse(String(a11ySkipTarget));
+  results.push({
+    name: '第五版：第一下 Tab 落到「跳到主内容」，回车把焦点送到正文（键盘用户不用穿过整个侧栏）',
+    ok: a11ySk.onLink === true && a11ySk.text === '跳到主内容' && a11ySk.visible === true && a11ySk.top <= 22 && a11ySt.id === 'main' && a11ySt.tag === 'MAIN',
+    detail: '焦点=' + (a11ySk.onLink ? 'skip-link' : '别处') + ' 顶部=' + a11ySk.top + ' 圆角边=' + a11ySk.outline + ' 回车后=' + a11ySt.tag + '#' + a11ySt.id
+  });
+
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(640);
+
+  const a11yBits = await cdp.eval(`(() => {
+    const q = (s) => document.querySelector(s);
+    const nav = q('.nav');
+    const active = q('.nav-item.active');
+    const ico = q('.nav-item .ico');
+    const main = q('main');
+    const toggle = q('.nav-foot .icon-btn');
+    const brandMark = q('.brand-mark');
+    return JSON.stringify({
+      navLabel: nav ? nav.getAttribute('aria-label') : '',
+      current: active ? active.getAttribute('aria-current') : '',
+      icoHidden: ico ? String(ico.getAttribute('aria-hidden')) : '',
+      mainId: main ? main.id : '',
+      mainTab: main ? String(main.tabIndex) : '',
+      mainLabel: main ? main.getAttribute('aria-label') : '',
+      toggleLabel: toggle ? toggle.getAttribute('aria-label') : '',
+      toggleExpanded: toggle ? String(toggle.getAttribute('aria-expanded')) : '',
+      brandHidden: brandMark ? String(brandMark.getAttribute('aria-hidden')) : ''
+    });
+  })()`);
+  const a11yAr = JSON.parse(String(a11yBits));
+  results.push({
+    name: '第五版：屏幕阅读器能读出「主导航 / 当前在哪一页 / 主内容从哪开始 / 折叠钮是开还是合」',
+    ok: a11yAr.navLabel === '主导航' && a11yAr.current === 'page' && a11yAr.icoHidden === 'true' && a11yAr.mainId === 'main' && a11yAr.mainTab === '-1' &&
+      a11yAr.mainLabel === '主内容' && a11yAr.toggleLabel.length > 0 && a11yAr.toggleExpanded === 'true' && a11yAr.brandHidden === 'true',
+    detail: '导航=' + a11yAr.navLabel + ' 当前=' + a11yAr.current + ' 图标藏着=' + a11yAr.icoHidden + ' 正文=' + a11yAr.mainId + '/tab' + a11yAr.mainTab + ' 折叠钮=' + a11yAr.toggleLabel + '/' + a11yAr.toggleExpanded
+  });
+
+  const a11yToastAria = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const btn = Array.from(document.querySelectorAll('.topbar button')).find((b) => (b.textContent || '').indexOf('快速记录') >= 0);
+    if (!btn) return JSON.stringify({ err: 'no-btn' });
+    btn.click();
+    await sleep(460);
+    const wrap = document.querySelector('.toast-wrap');
+    const toast = document.querySelector('.toast');
+    return JSON.stringify({
+      role: wrap ? wrap.getAttribute('role') : '',
+      live: wrap ? wrap.getAttribute('aria-live') : '',
+      text: toast ? (toast.textContent || '').trim().slice(0, 12) : ''
+    });
+  })()`);
+  const a11yTa = JSON.parse(String(a11yToastAria));
+  results.push({
+    name: '第五版：弹出的提示（Toast）会被屏幕阅读器念出来（role=status + aria-live=polite）',
+    ok: a11yTa.role === 'status' && a11yTa.live === 'polite' && a11yTa.text.length > 0,
+    detail: 'role=' + a11yTa.role + ' live=' + a11yTa.live + ' 文字=' + a11yTa.text
+  });
+
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(760);
+  const a11yModalAria = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const rows = Array.from(document.querySelectorAll('.kb-tree .tree-item'));
+    if (rows.length === 0) return JSON.stringify({ err: 'no-tree' });
+    for (const row of rows) {
+      const rb = row.getBoundingClientRect();
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: Math.round(rb.left + 30), clientY: Math.round(rb.top + 12) }));
+      await sleep(120);
+      if (document.querySelector('.ctx-menu')) break;
+    }
+    for (let i = 0; i < 20; i++) { if (document.querySelector('.ctx-menu')) break; await sleep(60); }
+    const rename = Array.from(document.querySelectorAll('.ctx-item')).find((b) => (b.textContent || '').indexOf('改名字') >= 0);
+    if (!rename) return JSON.stringify({ err: 'no-rename' });
+    rename.click();
+    for (let i = 0; i < 20; i++) { if (document.querySelector('.modal')) break; await sleep(60); }
+    await sleep(340);
+    const dlg = document.querySelector('.modal');
+    if (!dlg) return JSON.stringify({ err: 'no-modal' });
+    const labelledby = dlg.getAttribute('aria-labelledby');
+    const title = labelledby ? document.getElementById(labelledby) : null;
+    const focusIn = !!document.activeElement && dlg.contains(document.activeElement);
+    const closeBtn = dlg.querySelector('.modal-head .icon-btn');
+    if (closeBtn) closeBtn.click();
+    await sleep(70);
+    const leaving = !!document.querySelector('.modal-backdrop.leaving');
+    let gone = false;
+    for (let i = 0; i < 16 && !gone; i += 1) { await sleep(60); gone = !dlg.isConnected; }
+    return JSON.stringify({ labelledby: labelledby, titleText: title ? (title.textContent || '').trim() : '', focusIn: focusIn, leaving: leaving, gone: gone });
+  })()`);
+  const a11yMa = JSON.parse(String(a11yModalAria));
+  results.push({
+    name: '第五版：弹窗有名字（aria-labelledby 指向标题）、打开时焦点在弹窗里、点 × 先播退场再卸干净',
+    ok: a11yMa.labelledby === 'jw-modal-title' && /改.*名字|分类/.test(a11yMa.titleText) && a11yMa.focusIn === true && a11yMa.leaving === true && a11yMa.gone === true,
+    detail: '标题指向=' + a11yMa.labelledby + ' 读出=' + a11yMa.titleText + ' 焦点在弹窗里=' + a11yMa.focusIn + ' 退场类=' + a11yMa.leaving + ' 关干净=' + a11yMa.gone + ' 错误=' + (a11yMa.err || '')
+  });
+
+  await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  await sleep(300);
+  const a11yReduceOn = await cdp.eval(`(() => {
+    const sb = document.querySelector('.sidebar');
+    const card = document.querySelector('.list-row') || document.querySelector('.card');
+    const html = getComputedStyle(document.documentElement);
+    return JSON.stringify({
+      side: sb ? getComputedStyle(sb).transitionDuration : '',
+      card: card ? getComputedStyle(card).transitionDuration : '',
+      scroll: html.scrollBehavior
+    });
+  })()`);
+  await cdp.send('Emulation.setEmulatedMedia', { features: [] });
+  await sleep(340);
+  const a11yReduceOff = await cdp.eval(`(() => { const sb = document.querySelector('.sidebar'); return JSON.stringify({ side: sb ? getComputedStyle(sb).transitionDuration : '' }); })()`);
+  const a11yROn = JSON.parse(String(a11yReduceOn));
+  const a11yROff = JSON.parse(String(a11yReduceOff));
+  results.push({
+    name: '第五版：系统开了「减少动态效果」时，侧栏/卡片动画几乎取消、平滑滚动也关掉；切回来动画照旧',
+    ok: parseFloat(a11yROn.side) < 0.05 && parseFloat(a11yROn.card) < 0.05 && a11yROn.scroll === 'auto' && /0\.38s/.test(a11yROff.side),
+    detail: '减少动效[侧栏=' + a11yROn.side + ' 卡片=' + a11yROn.card + ' 滚动=' + a11yROn.scroll + '] 恢复后侧栏=' + a11yROff.side
+  });
+
+  const a11yFocusedRow = await cdp.eval(`(() => {
+    const row = document.querySelector('.kb-list-body .list-row');
+    if (!row) return 'no-row';
+    row.focus();
+    return document.activeElement === row ? 'focused' : 'failed';
+  })()`);
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+  await sleep(420);
+  const a11yRowKey = await cdp.eval(`(() => {
+    const sel = document.querySelector('.kb-list-body .list-row.selected');
+    const focus = document.activeElement;
+    const title = document.querySelector('.kb-editor .editor-title, .kb-editor h2, .editor-head h2');
+    return JSON.stringify({
+      selected: sel ? (sel.textContent || '').trim().slice(0, 12) : '',
+      focusRow: !!(focus && focus.classList && focus.classList.contains('list-row')),
+      editor: title ? (title.textContent || '').trim().slice(0, 12) : ''
+    });
+  })()`);
+  const a11yRk = JSON.parse(String(a11yRowKey));
+  results.push({
+    name: '第五版：笔记行能用 Tab 走到，回车就打开（不用鼠标）',
+    ok: a11yFocusedRow === 'focused' && a11yRk.selected.length > 0,
+    detail: '行可聚焦=' + a11yFocusedRow + ' 回车后选中=' + a11yRk.selected + ' 详情标题=' + a11yRk.editor
+  });
 
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);

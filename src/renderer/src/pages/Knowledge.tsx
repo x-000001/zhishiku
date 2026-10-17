@@ -583,7 +583,7 @@ export default function Knowledge(props: {
   return (
     <div className="kb">
       {/* 左栏：分类树 */}
-      <div className="kb-tree">
+      <div className="kb-tree" role="tree" aria-label="分类">
         <div className="row" style={{ marginBottom: 8 }}>
           <span className="muted" style={{ flex: 1, fontSize: 12 }}>
             分类
@@ -750,7 +750,11 @@ export default function Knowledge(props: {
         </div>
 
         {/* 第五版（动画专项）：超过 50 条时不做逐条位移过渡，新行整体淡入（见 styles.css .many） */}
-        <div className={'kb-list-body' + (list.length > 50 ? ' many' : '')}>
+        <div
+          className={'kb-list-body' + (list.length > 50 ? ' many' : '')}
+          role="listbox"
+          aria-label="笔记列表"
+        >
           {list.length === 0 ? (
             <Empty>
               {sel === 'trash'
@@ -763,6 +767,16 @@ export default function Knowledge(props: {
             list.map((item) => (
               <div
                 key={item.id}
+                // 第五版（阶段11）：列表 = listbox，每行 = option；键盘能走到、Enter/空格 打开
+                role="option"
+                aria-selected={openId === item.id}
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setOpenId(item.id);
+                  }
+                }}
                 className={[
                   'list-row',
                   openId === item.id ? 'selected' : '',
@@ -1482,8 +1496,18 @@ function TreeRow(props: {
 }): ReactNode {
   return (
     <div
+      // 第五版（阶段11）：分类行也能用键盘走到并用 Enter/空格 选中
+      role="treeitem"
+      tabIndex={0}
+      aria-selected={props.selected}
       className={props.drop ? 'tree-item selected' : props.selected ? 'tree-item selected' : 'tree-item'}
       onClick={props.onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          props.onSelect();
+        }
+      }}
       onContextMenu={props.onContextMenu}
       onDragOver={(e) => {
         if (props.onDropNote) e.preventDefault();

@@ -344,6 +344,18 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
               <div key={task.id}>
                 <div
                   className={`task-row${task.status === 'done' ? ' done' : ''}${selected === task.id ? ' selected' : ''}${picked.has(task.id) ? ' picked' : ''}`}
+                  // 第五版（阶段11）：整行也能用键盘走到（Enter / 空格 展开详情）
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={selected === task.id}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      if (pickMode) togglePick(task.id);
+                      else setSelected(selected === task.id ? null : task.id);
+                    }
+                  }}
                   onClick={() => (pickMode ? togglePick(task.id) : setSelected(selected === task.id ? null : task.id))}
                   onContextMenu={(e) => {
                     e.preventDefault();

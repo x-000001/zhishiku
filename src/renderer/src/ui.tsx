@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 /* ------------------------------------------------------------------ */
 /* 轻提示（含 5 秒撤销）                                               */
@@ -53,7 +54,8 @@ export function ToastHost(): ReactNode {
   }, []);
   if (list.length === 0) return null;
   return (
-    <div className="toast-wrap">
+    // 第五版（阶段11）：role=status + aria-live，屏幕阅读器会把提示条念出来
+    <div className="toast-wrap" role="status" aria-live="polite" aria-atomic="false">
       {list.map((item) => (
         <div className="toast" key={item.id}>
           <span>{item.text}</span>
@@ -131,7 +133,9 @@ export function Modal(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return (
+  // 挂到 body 上：页面里的玻璃面板带 backdrop-filter，会让 position:fixed 以它为参照物，
+  // 弹窗就会被裁在那个面板里（窄窗口底部面板量出来只有 688 宽）。
+  return createPortal(
     <div
       className={'modal-backdrop' + (leaving ? ' leaving' : '')}
       onMouseDown={(e) => e.target === e.currentTarget && requestClose()}
@@ -142,18 +146,26 @@ export function Modal(props: {
         style={props.width ? { width: props.width } : undefined}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="jw-modal-title"
       >
         <div className="modal-head">
-          <span>{props.title}</span>
+          <span id="jw-modal-title">{props.title}</span>
           <span className="spacer" style={{ flex: 1 }} />
-          <button type="button" className="icon-btn" onClick={requestClose} title="关闭">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={requestClose}
+            title="关闭"
+            aria-label="关闭弹窗"
+          >
             ✕
           </button>
         </div>
         <div className="modal-body">{props.children}</div>
         {props.footer ? <div className="modal-foot">{props.footer}</div> : null}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

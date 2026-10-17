@@ -40,7 +40,7 @@ PASS  排序是紧急在前、重要居中、一般在后  —  位置=1,2,3
 PASS  按「紧急」筛选只剩紧急  —  紧急=1 命中=1
 PASS  后端会把老式数字优先级归一成三档文字  —  urgent
 PASS  首页数据能读  —  today=2026-10-17 待办=0
-PASS  首页统计了收集箱与最近笔记  —  待整理=1 最近笔记=3
+PASS  首页统计了收集箱与最近笔记  —  待整理=0 最近笔记=3
 PASS  首页包含复习提醒结构  —  复习卡=0
 PASS  首页包含目标进度结构  —  目标=0
 PASS  preload 暴露了取真实路径的 pathForFile  —  function
@@ -100,10 +100,10 @@ PASS  删父分类后子分类上提一级，没有跟着一起没  —  tmpSub.
 PASS  分类能上移，顺序真的换了  —  ["工作","学习","生活","项目","资料收藏","排序自检分类","待删子分类"] → ["工作","学习","生活","项目","资料收藏","待删子分类","排序自检分类"]
 PASS  设置能读  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","versionKeep":20,"theme":"light","notifyEnabled":true,"closeToTray":true}
 PASS  设置能改并持久化  —  versionKeep=5
-PASS  手动备份成功  —  手动_2026-10-17_140630
+PASS  手动备份成功  —  手动_2026-10-17_143041
 PASS  备份列表可读  —  备份数=2
 PASS  插图真的复制进了数据目录的附件夹（原件删了也不影响）  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments\2026-10\e2e-pixel.png
-PASS  备份目录里有快照且含 kb.db  —  2026-10-17_140629, 手动_2026-10-17_140630
+PASS  备份目录里有快照且含 kb.db  —  2026-10-17_143041, 手动_2026-10-17_143041
 PASS  数据库文件落在数据目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.db
 PASS  附件目录已建好  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments
 PASS  页面 / 有实际内容  —  今日待办
@@ -135,12 +135,12 @@ PASS  页面 /inbox 有实际内容  —  随手记一条
 
 快捷键 Ctrl+Alt+Space 可以在任何地方呼出小窗口快速记录，存好自动进这里。
 
-待处理 · 1 条
-逐条清理
+待处理 · 0 条
 💡 0
-📖 1
+📖 0
 🧹 0
-待处
+待处理
+已处理
 PASS  页面 /knowledge 有实际内容  —  分类
 ＋子分类
 ＋
@@ -307,12 +307,12 @@ PASS  第五版：正文对比度够长读（≥ 12:1）  —  底色=rgb(255, 2
 PASS  第五版：按钮默认态有底色 / 描边 / 圆角  —  底色=rgb(255, 255, 255) 描边=1px rgb(223, 228, 238) 圆角=8px
 PASS  第五版：悬停态换底色 + 抬 1px  —  底色 rgb(255, 255, 255) → rgb(242, 244, 249)，位移 -1px
 PASS  第五版：按下态缩到 0.97（「按进去」的手感）  —  按下时 scaleX=0.97 scaleY=0.97
-PASS  第五版：输入框聚焦态有品牌色描边 + 光环  —  描边=rgb(10, 114, 232) 光环=rgba(0, 122, 255, 0.192) 0px 0px 0px 2.87807px
-PASS  第五版：键盘 Tab 聚焦时画 :focus-visible 光环  —  {"tag":"BUTTON.btn","fv":true,"shadow":"rgba(5, 96, 197, 0.12) 0px 0.542783px 1.08557px 1.37165px"}
+PASS  第五版：输入框聚焦态有品牌色描边 + 光环  —  描边=rgb(32, 126, 233) 光环=rgba(0, 122, 255, 0.157) 0px 0px 0px 2.32661px
+PASS  第五版：键盘 Tab 聚焦时画 :focus-visible 光环  —  {"tag":"BUTTON.btn","fv":true,"shadow":"rgba(1, 117, 245, 0.18) 0px 0.137669px 0.275337px 2.58699px"}
 PASS  第五版：禁用态 45% 透明 + not-allowed + 无投影  —  {"opacity":"0.45","cursor":"not-allowed","shadow":"none"}
 PASS  第五版：加载态是 12px 转圈（无限循环，按钮不变宽）  —  {"w":"12px","h":"12px","anim":"jw-spin","iter":"infinite","radius":"50%","cursor":"progress"}
 PASS  第五版：收起侧栏后只在左边留 60px 图标条（面板靠 transform 挪出去），文字收成 0 宽度、三个点竖排  —  可见宽 60px（面板仍 232px / 右边缘 60px） 文字宽 0px 透明度 0 三点坐标 (24,18) (24,35) (24,52)（竖排） 容器 12×12px 图标宽 28px 右侧溢出 -16px 文字仍在DOM=true
-PASS  第五版：展开是插值动画（侧栏只动 transform：右边缘 60→232，文字只动 opacity/transform），三点回到一排  —  侧栏[transform, box-shadow, background-color @ 0.38s, 0.38s, 0.2s] 文字[opacity, transform @ 0.16s, 0.22s] 三点容器[opacity @ 0.12s] 每个点[transform, filter @ 0.24s, 0.15s] 右边缘轨迹 60→60→164→229 回到 232px / 文字 27px / 三点坐标 (18,24) (37,24) (56,24)（一排）
+PASS  第五版：展开是插值动画（侧栏只动 transform：右边缘 60→232，文字只动 opacity/transform），三点回到一排  —  侧栏[transform, box-shadow, background-color @ 0.38s, 0.38s, 0.2s] 文字[opacity, transform @ 0.16s, 0.22s] 三点容器[opacity @ 0.12s] 每个点[transform, filter @ 0.24s, 0.15s] 右边缘轨迹 60→60→164→227 回到 232px / 文字 27px / 三点坐标 (18,24) (37,24) (56,24)（一排）
 PASS  第五版：收起/展开那一下侧栏临时换成实色（动画中不重算毛玻璃），停手后自己恢复  —  动画前 class=false 毛玻璃=blur(20px) saturate(1.8)；动画中 class=true 毛玻璃=none 底色=rgba(255, 255, 255, 0.914)；停手后 class=false 毛玻璃=blur(20px) saturate(1.8)
 PASS  第五版：不再弹系统提示（title 已去掉），只有折叠态才有毛玻璃气泡  —  title="" data-tip="首页"；展开态 opacity=0；折叠态 content="首页" opacity=1 延迟=0.32s 圆角=7px 背景模糊=blur(14px) saturate(1.6) 侧栏溢出=visible 导航列溢出=visible
 PASS  工具栏能插入表格、光标进单元格后多出增删行列按钮  —  插入表格✕|table=true|rowBtn=2|colBtn=2
@@ -333,8 +333,8 @@ PASS  第五版：搜索命中行悬停浮起（上移 1px + 投影）  —  命
 PASS  第五版：Toast 从右侧滑入，用带回弹的曲线  —  动画=jw-toast-in 滑入位移=332.4 曲线=cubic-bezier(0.34, 1.56, 0.64, 1)
 PASS  第五版：Toast 挂在右下角（贴右 20px）  —  right=20px backdrop=blur(16px) saturate(1.6)
 PASS  任务详情抽屉里有「保存」按钮  —  保存
-PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 14:07:35
-PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 14:07:37
+PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 14:31:47
+PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 14:31:49
 PASS  浅色主题能切回  —  light
 PASS  自绘标题栏有红黄绿三个点，且没有文字节点  —  点数=3 文本="" 名字=关闭窗口|最小化窗口|最大化或还原窗口 宽屏顶栏那份=none
 PASS  窗口确实是无边框的（系统标题栏高度≈0）  —  outer-inner 高差=6px
@@ -355,8 +355,15 @@ PASS  第五版：右键笔记行弹出毛玻璃菜单（贴鼠标、挨着窗�
 PASS  第五版：右键菜单能用键盘上下选、Esc 关掉（先播完退场再卸）  —  高亮=打开 退场类=true 关干净=true
 PASS  第五版：弹窗入场只动 transform/opacity（带毛玻璃、焦点自动落在输入框），关闭时先播完退场再卸  —  分类菜单=新建子分类/改名字/上移/下移/删除分类 动画=jw-modal-in 滤镜=blur(20px) saturate(1.8) 焦点进了输入框=true 点×后播退场=true 卸干净=true 残留弹窗=
 PASS  第五版：右键任务行能标记完成 / 改优先级 / 删除  —  项目=标记完成/优先级：紧急/优先级：重要/优先级：一般/删除 关掉=true
-PASS  第五版：窗口 <768 时弹窗从底部升起、占满整宽（底部面板）  —  动画=jw-sheet-in 宽=698/720 圆角=18px 顶=668 底=849/860 退场类=true 关干净=true 残留弹窗=
+PASS  第五版：窗口 <768 时弹窗从底部升起、占满整宽（底部面板）  —  动画=jw-sheet-in 宽=720/720 圆角=18px 顶=679 底=860/860 退场类=true 关干净=true 残留弹窗=
+PASS  第五版：滚动条收成 10px 细条（颜色跟主题走），滚动容器兜住滚轮、留好滚动条槽、滚得平滑  —  实测滚动条宽=10px 正文[兜住=contain 槽=stable 平滑=smooth] 列表[槽=stable] 分类[兜住=contain] 配色=rgba(15, 23, 42, 0.18)
+PASS  第五版：第一下 Tab 落到「跳到主内容」，回车把焦点送到正文（键盘用户不用穿过整个侧栏）  —  焦点=skip-link 顶部=8 圆角边=2px rgb(10, 114, 232) 回车后=MAIN#main
+PASS  第五版：屏幕阅读器能读出「主导航 / 当前在哪一页 / 主内容从哪开始 / 折叠钮是开还是合」  —  导航=主导航 当前=page 图标藏着=true 正文=main/tab-1 折叠钮=收起侧栏/true
+PASS  第五版：弹出的提示（Toast）会被屏幕阅读器念出来（role=status + aria-live=polite）  —  role=status live=polite 文字=在收集箱顶部输入框写下想
+PASS  第五版：弹窗有名字（aria-labelledby 指向标题）、打开时焦点在弹窗里、点 × 先播退场再卸干净  —  标题指向=jw-modal-title 读出=改分类名字 焦点在弹窗里=true 退场类=true 关干净=true 错误=
+PASS  第五版：系统开了「减少动态效果」时，侧栏/卡片动画几乎取消、平滑滚动也关掉；切回来动画照旧  —  减少动效[侧栏=1e-06s 卡片=1e-06s 滚动=auto] 恢复后侧栏=0.38s, 0.38s, 0.2s
+PASS  第五版：笔记行能用 Tab 走到，回车就打开（不用鼠标）  —  行可聚焦=focused 回车后选中=📌知识管理测试笔记1  详情标题=
 ------------------------------------------------
-合计 200 项，通过 200，失败 0
+合计 207 项，通过 207，失败 0
 截图目录：C:\Users\29785\Desktop\Jw的app\tests\e2e\shots
 应用进程：exit=null signal=SIGTERM

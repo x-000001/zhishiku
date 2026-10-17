@@ -229,28 +229,39 @@ export default function App(): ReactNode {
 
   return (
     <div className={'app' + (drawerOpen ? ' drawer-open' : '')}>
+      {/* 第五版（阶段11）：键盘用户第一下 Tab 就能跳过侧栏，直接把焦点送到正文 */}
+      <button type="button" className="skip-link" onClick={() => document.getElementById('main')?.focus()}>
+        跳到主内容
+      </button>
       <aside
+        id="sidebar"
+        aria-label="侧栏"
         className={'sidebar' + (collapsed ? ' collapsed' : '') + (drawerOpen ? ' drawer-open' : '')}
       >
         <div className="brand">
           {/* 第五版（方案B）：窗口是无边框的，这三个点就是系统标题栏 */}
           <WinLights />
-          <span className="brand-mark">Jw</span>
+          <span className="brand-mark" aria-hidden="true">
+            Jw
+          </span>
           <span className="brand-text">知识库</span>
         </div>
-        <nav className="nav">
+        <nav className="nav" aria-label="主导航">
           {NAV.map((item) => (
             <button
               key={item.route}
               type="button"
               className={route === item.route ? 'nav-item active' : 'nav-item'}
               data-tip={item.label}
+              aria-current={route === item.route ? 'page' : undefined}
               onClick={() => {
                 navigate(item.route);
                 refreshCount();
               }}
             >
-              <span className="ico">{item.icon}</span>
+              <span className="ico" aria-hidden="true">
+                {item.icon}
+              </span>
               <span className="nav-label">{item.label}</span>
               {item.countKey === 'inbox' && inboxCount > 0 ? <span className="count">{inboxCount}</span> : null}
             </button>
@@ -262,6 +273,8 @@ export default function App(): ReactNode {
             type="button"
             className="icon-btn"
             title={collapsed ? '展开侧栏' : '收起侧栏'}
+            aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+            aria-expanded={!collapsed}
             onClick={toggleSidebar}
           >
             {collapsed ? '»' : '«'}
@@ -273,7 +286,7 @@ export default function App(): ReactNode {
       {/* 第五版（阶段9）：抽屉档的蒙层，点它就把侧栏收回去 */}
       {drawerOpen ? <div className="sidebar-veil" onClick={() => setDrawerOpen(false)} /> : null}
 
-      <main className="main">
+      <main id="main" tabIndex={-1} aria-label="主内容" className="main">
         <header className="topbar">
           {/* 窄窗口（抽屉/单栏档）才出现，宽屏时 display:none */}
           <WinLights className="topbar-lights" />
@@ -281,6 +294,8 @@ export default function App(): ReactNode {
             type="button"
             className="icon-btn topbar-burger"
             aria-label={drawerOpen ? '收起侧栏' : '展开侧栏'}
+            aria-expanded={drawerOpen}
+            aria-controls="sidebar"
             title={drawerOpen ? '收起侧栏' : '展开侧栏'}
             onClick={() => setDrawerOpen((v) => !v)}
           >
@@ -289,8 +304,13 @@ export default function App(): ReactNode {
           <h1>{title}</h1>
           <div className="spacer" />
           <div className="searchbox" onClick={() => setSearchOpen(true)}>
-            <span>🔍</span>
-            <input placeholder="搜索笔记（Ctrl+K）" readOnly onFocus={() => setSearchOpen(true)} />
+            <span aria-hidden="true">🔍</span>
+            <input
+              aria-label="搜索笔记"
+              placeholder="搜索笔记（Ctrl+K）"
+              readOnly
+              onFocus={() => setSearchOpen(true)}
+            />
             <kbd>Ctrl K</kbd>
           </div>
           <button
