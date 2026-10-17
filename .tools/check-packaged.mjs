@@ -36,11 +36,11 @@ const child = spawn(exe, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function findPage() {
+async function findPage(port = PORT) {
   let last = '';
   for (let i = 0; i < 60; i++) {
     try {
-      const res = await fetch(`http://127.0.0.1:${PORT}/json/list`);
+      const res = await fetch(`http://127.0.0.1:${port}/json/list`);
       const list = await res.json();
       last = JSON.stringify(list).slice(0, 400);
       const page = list.find((t) => t.type === 'page' && t.url.includes('index.html'));
@@ -160,6 +160,45 @@ for (const route of ['/inbox', '/knowledge', '/tasks', '/plans', '/goals', '/nex
   await cdp.shot('packaged' + route.replace(/\//g, '-'));
 }
 
+// ---- 第五版（阶段8）：主题记忆 —— 真的重启一次进程，验证首帧就是存下来的主题 ----
+await cdp.eval(`window.api.invoke('settings:set', { key: 'theme', value: 'dark' })`);
+await sleep(600);
+const savedTheme = await cdp.eval(`(async () => (await window.api.invoke('settings:get')).theme)()`);
+check('打包版能把主题存进库', savedTheme === 'dark', `theme=${savedTheme}`);
+
+child.kill();
+await sleep(1800);
+const logPath2 = path.join(root, '.tools', 'pack-app-stderr2.log');
+const logStream2 = fs.openSync(logPath2, 'w');
+const PORT2 = 9336;
+const child2 = spawn(exe, [`--remote-debugging-port=${PORT2}`, `--user-data-dir=${ud}`, '--no-sandbox'], {
+  env: { ...process.env, JWKB_DATA_DIR: dataDir },
+  stdio: ['ignore', logStream2, logStream2],
+  windowsHide: false
+});
+const page2 = await findPage(PORT2);
+if (!page2) {
+  console.error('重启后没等到窗口');
+  child2.kill();
+  process.exit(1);
+}
+const cdp2 = await Cdp.connect(page2.webSocketDebuggerUrl);
+await cdp2.send('Runtime.enable');
+await sleep(1200);
+const bootInfo = JSON.parse(
+  String(
+    await cdp2.eval(
+      `JSON.stringify({ boot: document.documentElement.dataset.themeBoot || '', theme: document.documentElement.getAttribute('data-theme'), query: new URLSearchParams(location.search).get('theme') || '' })`
+    )
+  )
+);
+check(
+  '打包版重启后首帧就是深色（主题记得住、不先亮一下）',
+  bootInfo.boot === 'dark' && bootInfo.theme === 'dark' && bootInfo.query === 'dark',
+  `首帧记号=${bootInfo.boot} 当前主题=${bootInfo.theme} URL=${bootInfo.query}`
+);
+await cdp2.shot('packaged-restart-dark');
+
 const failed = results.filter((r) => !r.ok);
 console.log('------------------------------------------------');
 console.log(`合计 ${results.length} 项，通过 ${results.length - failed.length}，失败 ${failed.length}`);
@@ -169,6 +208,6 @@ fs.writeFileSync(
     `\n合计 ${results.length}，失败 ${failed.length}\n`
 );
 
-child.kill();
+child2.kill();
 await sleep(500);
 process.exit(failed.length === 0 ? 0 : 1);

@@ -76,7 +76,24 @@ export default function App(): ReactNode {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    try {
+      window.localStorage.setItem('jw-theme', theme);
+    } catch {
+      /* 忽略：主进程拼的 ?theme= 才是主路径，localStorage 只是兜底 */
+    }
   }, [theme]);
+
+  // 第五版（阶段8）：用户手动切主题时，给 <html> 挂一下 .theme-transitioning，
+  // 让全局走 0.3s 的颜色过渡，之后摘掉——平时不拖慢任何交互。
+  const changeTheme = useCallback((next: 'light' | 'dark') => {
+    const root = document.documentElement;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    if (!reduce) {
+      root.classList.add('theme-transitioning');
+      window.setTimeout(() => root.classList.remove('theme-transitioning'), 340);
+    }
+    setTheme(next);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -198,7 +215,7 @@ export default function App(): ReactNode {
           {route === '/goals' && <Goals refreshCount={refreshCount} />}
           {route === '/next' && <NextGoals refreshCount={refreshCount} navigate={navigate} />}
           {route === '/review' && <Review />}
-          {route === '/settings' && <Settings theme={theme} onTheme={setTheme} />}
+          {route === '/settings' && <Settings theme={theme} onTheme={changeTheme} />}
           {route !== '/' &&
             route !== '/inbox' &&
             route !== '/knowledge' &&

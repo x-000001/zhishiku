@@ -63,6 +63,10 @@
     radial-gradient(920px 560px at 96% 2%, rgba(186, 152, 255, 0.34), transparent 60%),
     radial-gradient(1000px 700px at 58% 108%, rgba(118, 214, 255, 0.32), transparent 62%),
     linear-gradient(160deg, #eef3fa, #e6ecf7 55%, #e9eef8);
+  /* 深色壁纸另外存一份：切深浅色时用它做交叉淡入（阶段8） */
+  --bg-gradient-dark: radial-gradient(1200px 700px at 12% -10%, rgba(79, 172, 254, 0.18), transparent 60%),
+    radial-gradient(1000px 700px at 88% 6%, rgba(140, 120, 255, 0.16), transparent 60%),
+    linear-gradient(135deg, #1e1e2f, #1a1a2e 55%, #16213e);
   --glass-bg: rgba(255, 255, 255, 0.62);
   --glass-border: rgba(255, 255, 255, 0.72);
   --glass-shadow: 0 8px 32px rgba(31, 38, 135, 0.1), 0 1px 2px rgba(31, 38, 135, 0.06);
@@ -110,9 +114,7 @@
   --ring: 0 0 0 3px rgba(10, 132, 255, 0.28);
 
   /* 第五版：毛玻璃令牌（深色） */
-  --bg-gradient: radial-gradient(1200px 700px at 12% -10%, rgba(79, 172, 254, 0.18), transparent 60%),
-    radial-gradient(1000px 700px at 88% 6%, rgba(140, 120, 255, 0.16), transparent 60%),
-    linear-gradient(135deg, #1e1e2f, #1a1a2e 55%, #16213e);
+  --bg-gradient: var(--bg-gradient-dark);
   --glass-bg: rgba(255, 255, 255, 0.06);
   --glass-border: rgba(255, 255, 255, 0.12);
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
@@ -3666,3 +3668,46 @@ label.field {
   }
 }
 
+
+/* ============================================================
+   第五版（阶段8）：深浅色过渡与记忆
+   —— 只在「切换的那一下」挂 .theme-transitioning（0.3s 后摘掉），
+      这样平时不会拖慢任何交互；壁纸单独用一层固定伪元素交叉淡入，
+      避免 CSS 渐变直接跳变。
+   ============================================================ */
+:root.theme-transitioning,
+:root.theme-transitioning *,
+:root.theme-transitioning *::before,
+:root.theme-transitioning *::after {
+  transition: background-color 300ms var(--smooth-ease), color 300ms var(--smooth-ease),
+    border-color 300ms var(--smooth-ease), box-shadow 300ms var(--smooth-ease),
+    fill 300ms var(--smooth-ease), stroke 300ms var(--smooth-ease) !important;
+}
+
+/* 深色壁纸常驻最底层：浅色时透明，切到深色时淡入 */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--bg-gradient-dark);
+  opacity: 0;
+  transition: opacity 300ms var(--smooth-ease);
+}
+
+html[data-theme='dark'] body::after {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root.theme-transitioning,
+  :root.theme-transitioning *,
+  :root.theme-transitioning *::before,
+  :root.theme-transitioning *::after {
+    transition: none !important;
+  }
+  body::after {
+    transition: none;
+  }
+}

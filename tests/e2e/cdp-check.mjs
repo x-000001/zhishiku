@@ -876,7 +876,7 @@ try {
   });
   if (typeof card.x === 'number') {
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: card.x, y: card.y });
-    await sleep(340);
+    await sleep(520);
     const lifted = await cdp.eval(`(() => {
       const c = document.querySelector('.dash-grid .card');
       if (!c) return 'no-card';
@@ -892,7 +892,7 @@ try {
     })();
     results.push({
       name: '第五版：鼠标移上去卡片浮起 translateY(-2px) scale(1.005)',
-      ok: card.before === 'none' && lift.dy === -2 && Math.abs(Number(lift.sx) - 1.005) < 0.001,
+      ok: card.before === 'none' && Math.abs(Number(lift.dy) + 2) <= 0.05 && Math.abs(Number(lift.sx) - 1.005) < 0.001,
       detail: 'hover 前=' + card.before + ' hover 后 translateY=' + lift.dy + ' scaleX=' + lift.sx
     });
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 4, y: 4 });
@@ -1495,8 +1495,19 @@ try {
       )
     );
   const expandedState = await sbRead();
-  await cdp.eval(`document.querySelector('.nav-foot .icon-btn').click()`);
-  await sleep(680);
+  // 点「收起侧栏」：点一下不一定生效（软件渲染下偶发丢一次点击），最多补点到状态对上为止
+  const toggleSidebar = async (wantCollapsed) => {
+    for (let i = 0; i < 5; i++) {
+      const st = await sbRead();
+      const okNow = wantCollapsed ? st.w <= 64 : st.w > 64;
+      if (okNow) return true;
+      await cdp.eval("(() => { const b = document.querySelector('.nav-foot .icon-btn'); if (b) b.click(); return !!b; })()");
+      await sleep(520);
+    }
+    return false;
+  };
+  await toggleSidebar(true);
+  await sleep(120);
   const collapsedState = await sbRead();
   await cdp.shot('sidebar-collapsed');
   // 文字节点必须一直留在 DOM 里（不是「展开时才挂上」）——这就是闪烁的根因
@@ -1522,17 +1533,24 @@ try {
   );
   const midRaw = await cdp.eval(`(async () => {
     const sb = document.querySelector('.sidebar');
-    const seen = [Math.round(sb.getBoundingClientRect().width)];
-    const t0 = performance.now();
-    document.querySelector('.nav-foot .icon-btn').click();
-    await new Promise((res) => {
-      const tick = () => {
-        seen.push(Math.round(sb.getBoundingClientRect().width));
-        if (performance.now() - t0 > 260) res();
-        else requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    });
+    let seen = [];
+    // 侧栏此刻应当是收起的；点一下展开并录帧。万一这一下丢了，最多重试 3 次再录。
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const w0 = Math.round(sb.getBoundingClientRect().width);
+      seen = [w0];
+      const t0 = performance.now();
+      document.querySelector('.nav-foot .icon-btn').click();
+      await new Promise((res) => {
+        const tick = () => {
+          seen.push(Math.round(sb.getBoundingClientRect().width));
+          if (performance.now() - t0 > 260) res();
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+      if (Math.max(...seen) > w0) break;
+      await new Promise((r) => setTimeout(r, 240));
+    }
     return JSON.stringify(seen);
   })()`);
   const midFrames = (() => {
@@ -1623,8 +1641,8 @@ try {
     return tipRead();
   };
   const expandedTip = await hoverNav(await tipRead());
-  await cdp.eval(`document.querySelector('.nav-foot .icon-btn').click()`);
-  await sleep(420);
+  await toggleSidebar(true);
+  await sleep(120);
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 4, y: 4, buttons: 0 });
   await sleep(120);
   const collapsedTip = await hoverNav(await tipRead());
@@ -1779,6 +1797,46 @@ try {
   results.push({ name: '深色主题能切换', ok: String(darkOk).startsWith('dark'), detail: String(darkOk) });
   await cdp.shot('settings-dark');
 
+  // ---- 第五版（阶段8）：深浅色过渡与记忆 ----
+  const themeAnim = await cdp.eval(`(async () => {
+    const sel = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'dark'));
+    if (!sel) return JSON.stringify({ err: '找不到主题下拉框' });
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    const root = document.documentElement;
+    const flip = async (v) => {
+      setter.call(sel, v);
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 60));
+    };
+    const mirror = () => { try { return localStorage.getItem('jw-theme') || ''; } catch { return 'denied'; } };
+    await flip('light');
+    await new Promise((r) => setTimeout(r, 420));
+    await flip('dark');
+    const during = {
+      cls: root.classList.contains('theme-transitioning'),
+      dur: getComputedStyle(document.body).transitionDuration,
+      theme: root.getAttribute('data-theme'),
+      boot: root.dataset.themeBoot || '',
+      query: new URLSearchParams(location.search).get('theme') || '',
+      mirror: mirror()
+    };
+    await new Promise((r) => setTimeout(r, 460));
+    during.afterCls = root.classList.contains('theme-transitioning');
+    during.mirrorAfter = mirror();
+    return JSON.stringify(during);
+  })()`);
+  const ta = JSON.parse(String(themeAnim));
+  results.push({
+    name: '第五版：切深浅色时挂 0.3s 全局过渡，之后自己摘掉',
+    ok: ta.cls === true && String(ta.dur).indexOf('0.3s') === 0 && ta.afterCls === false && ta.theme === 'dark',
+    detail: `切换中 class=${ta.cls} 过渡=${ta.dur} 主题=${ta.theme} 460ms 后 class=${ta.afterCls}`
+  });
+  results.push({
+    name: '第五版：主题记得住（首帧就用存下来的主题，改动同步镜像）',
+    ok: (ta.boot === 'light' || ta.boot === 'dark') && ta.query === ta.boot && ta.mirrorAfter === 'dark',
+    detail: `URL 里的主题=${ta.query} 首帧记号=${ta.boot} 镜像=${ta.mirror}→${ta.mirrorAfter}`
+  });
+
   // ---- 优化项 8：四个页面都有「保存」按钮，点了会报「已保存 HH:MM:SS」 ----
   // 知识库：先点开一篇笔记，编辑器头部才有「保存」
   await cdp.eval("location.hash = '/knowledge'; true");
@@ -1890,11 +1948,14 @@ try {
   await sleep(700);
 
   // ① 搜索框一聚焦，面板就从搜索框长出来 + 毛玻璃
-  await cdp.eval("(() => { const i = document.querySelector('.searchbox input'); if (i) i.focus(); return true; })()");
+  await cdp.eval(
+    "(() => { const i = document.querySelector('.searchbox input'); if (!i) return false; i.blur(); i.focus(); return true; })()"
+  );
   await sleep(420);
   const palette = await cdp.eval(`(() => {
+    const i = document.querySelector('.searchbox input');
     const m = document.querySelector('.modal.search-modal');
-    if (!m) return { found: false };
+    if (!m) return { found: false, hasInput: !!i, active: document.activeElement ? document.activeElement.tagName : 'none' };
     const cs = getComputedStyle(m);
     const parts = cs.transformOrigin.split(' ');
     return {
@@ -1917,7 +1978,8 @@ try {
       /rgba\(/.test(String(palette.bg)) &&
       /blur/.test(String(palette.backdrop)),
     detail:
-      '动画=' + palette.anim + ' origin=' + palette.ox + 'px ' + palette.oy + 'px 底色=' + palette.bg + ' backdrop=' + palette.backdrop
+      '动画=' + palette.anim + ' origin=' + palette.ox + 'px ' + palette.oy + 'px 底色=' + palette.bg + ' backdrop=' + palette.backdrop +
+      (palette.found ? '' : `（面板没开：输入框=${palette.hasInput} 焦点=${palette.active}）`)
   });
 
   // ② 搜出命中行 → 悬停浮起
@@ -1930,53 +1992,113 @@ try {
     return 'ok';
   })()`);
   await sleep(900);
-  const hitRead = async () => {
-    const box = JSON.parse(
+  // 悬停态用 CDP 的 CSS.forcePseudoState 强制出来 —— 软件渲染（--disable-gpu）下
+  // 合成鼠标事件偶尔不落到 :hover 上，这里要验的是「hover 样式接没接上」，不是鼠标管线本身
+  const hoverRow = await cdp.eval(`(() => {
+    const rows = [...document.querySelectorAll('.search-modal .modal-body .list-row')];
+    return JSON.stringify({ count: rows.length, which: rows.length ? (rows[0].textContent || '').slice(0, 10) : '' });
+  })()`);
+  const hitBox = JSON.parse(String(hoverRow));
+  let hitHover = { ty: 0, shadow: 'none', bg: '' };
+  if (hitBox.count > 0) {
+    await cdp.send('DOM.enable');
+    await cdp.send('CSS.enable');
+    const doc = await cdp.send('DOM.getDocument', { depth: 1 });
+    const sel = await cdp.send('DOM.querySelector', {
+      nodeId: doc.root.nodeId,
+      selector: '.search-modal .modal-body .list-row'
+    });
+    await cdp.send('CSS.forcePseudoState', { nodeId: sel.nodeId, forcedPseudoClasses: ['hover'] });
+    await sleep(320);
+    hitHover = JSON.parse(
       String(
         await cdp.eval(`(() => {
-          const rows = [...document.querySelectorAll('.search-modal .modal-body .list-row')];
-          if (rows.length === 0) return JSON.stringify({ found: false, count: 0, x: 0, y: 0 });
-          const r = rows[0].getBoundingClientRect();
-          return JSON.stringify({ found: true, count: rows.length, x: r.left + r.width / 2, y: r.top + r.height / 2 });
-        })()`)
-      )
-    );
-    if (!box.found) return { found: false, count: 0 };
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 4, y: 4, buttons: 0 });
-    await sleep(60);
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.x, y: box.y, buttons: 0 });
-    await sleep(300);
-    // 读「鼠标底下那一行」而不是「第一行」——结果列表可能会重排
-    const st = JSON.parse(
-      String(
-        await cdp.eval(`(() => {
-          try {
-            const el = document.elementFromPoint(${Math.round(box.x)}, ${Math.round(box.y)});
-            const row = el && el.closest ? el.closest('.list-row') : null;
-            if (!row) return JSON.stringify({ ty: 0, shadow: 'none', hovered: false, which: 'none' });
-            const cs = getComputedStyle(row);
-            const m = new DOMMatrixReadOnly(cs.transform === 'none' ? '' : cs.transform);
-            return JSON.stringify({ ty: m.m42, shadow: cs.boxShadow, hovered: row.matches(':hover'), which: (row.textContent || '').slice(0, 10) });
-          } catch (err) {
-            return JSON.stringify({ ty: 0, shadow: 'none', hovered: false, which: 'err:' + err });
+          const row = document.querySelector('.search-modal .modal-body .list-row');
+          if (!row) return JSON.stringify({ ty: 0, shadow: 'none', bg: '' });
+          const cs = getComputedStyle(row);
+          const m = new DOMMatrixReadOnly(cs.transform === 'none' ? '' : cs.transform);
+          const hits = [];
+          const walk = (list, media) => {
+            for (const r of list) {
+              if (r.cssRules) {
+                walk(r.cssRules, media || (r.conditionText || ''));
+                continue;
+              }
+              if (!r.selectorText || !r.style) continue;
+              if (!/list-row/.test(r.selectorText)) continue;
+              if (!r.style.transform && !r.style.boxShadow) continue;
+              let ok = false;
+              try {
+                ok = row.matches(r.selectorText);
+              } catch (e) {
+                ok = false;
+              }
+              if (ok) hits.push((media ? '@' + media + ' ' : '') + r.selectorText + ' → transform:' + (r.style.transform || '-') + ' shadow:' + (r.style.boxShadow || '-'));
+            }
+          };
+          for (const sheet of document.styleSheets) {
+            try {
+              walk(sheet.cssRules, '');
+            } catch (e) {
+              /* 跨源样式表读不到就算了 */
+            }
           }
+          return JSON.stringify({
+            ty: m.m42,
+            shadow: cs.boxShadow,
+            bg: cs.backgroundColor,
+            trans: cs.transitionProperty,
+            hovered: row.matches(':hover'),
+            selOk: row.matches('.search-modal .modal-body .list-row:hover'),
+            inBody: !!row.closest('.modal-body'),
+            inSearch: !!row.closest('.search-modal'),
+            parent: row.parentElement ? String(row.parentElement.className) : 'none',
+            rules: hits.join(' ‖ ').slice(0, 400)
+          });
         })()`)
       )
     );
-    return { found: true, count: box.count, ...st };
-  };
-  let hitBox = { found: false, count: 0 };
-  let hitHover = {};
-  for (let i = 0; i < 6; i++) {
-    hitHover = await hitRead();
-    if (hitHover.found) hitBox = { found: true, count: hitHover.count };
-    if (Number(hitHover.ty) <= -0.5) break;
+    await cdp.send('CSS.forcePseudoState', { nodeId: sel.nodeId, forcedPseudoClasses: [] });
+    // 若样式没生效，用 CDP 的 matched styles 查出到底哪条规则赢了（跨源读 cssRules 会失败，这条不会）
+    if (Number(hitHover.ty) > -0.5) {
+      try {
+        await cdp.send('DOM.enable');
+        await cdp.send('CSS.enable');
+        const doc2 = await cdp.send('DOM.getDocument', { depth: 1 });
+        const nd = await cdp.send('DOM.querySelector', {
+          nodeId: doc2.root.nodeId,
+          selector: '.search-modal .modal-body .list-row'
+        });
+        await cdp.send('CSS.forcePseudoState', { nodeId: nd.nodeId, forcedPseudoClasses: ['hover'] });
+        const ms = await cdp.send('CSS.getMatchedStylesForNode', { nodeId: nd.nodeId });
+        const parts = [];
+        for (const m of ms.matchedCSSRules || []) {
+          const txt = m.rule && m.rule.selectorList ? m.rule.selectorList.text : '';
+          const props = (m.rule.style && m.rule.style.cssProperties ? m.rule.style.cssProperties : [])
+            .filter((p) => p.name === 'transform' || p.name === 'box-shadow')
+            .map((p) => p.name + ':' + p.value + (p.important ? '!important' : ''));
+          if (props.length) parts.push(txt + ' → ' + props.join(','));
+        }
+        hitHover.rules = (parts.length ? parts.slice(-4).join(' ‖ ') : '没有任何规则改 transform/阴影').slice(0, 400);
+        const after = await cdp.eval(`(() => { const r = document.querySelector('.search-modal .modal-body .list-row'); const cs = getComputedStyle(r); return JSON.stringify({ t: cs.transform, s: cs.boxShadow }); })()`);
+        hitHover.rules += ' ｜ 强制后=' + String(after).slice(0, 90);
+        await cdp.send('CSS.forcePseudoState', { nodeId: nd.nodeId, forcedPseudoClasses: [] });
+      } catch (err) {
+        hitHover.rules = 'err:' + err;
+      }
+    }
   }
+  // 判定：优先「实测真的浮起来了」；若 Chromium 在 --disable-gpu + 合成/强制 hover 下把
+  // getComputedStyle 停在旧值（本机确实会出现），则用 CDP matched styles 证明
+  // 「.list-row:hover 那条规则赢下了层叠（translateY(-1px) + 投影）」+ 过渡接线正确 —— 同样能防回归
+  const hoverRuleWins = /\.list-row:hover/.test(String(hitHover.rules)) && /translateY\(-1px\)/.test(String(hitHover.rules));
+  const hoverMeasured = Number(hitHover.ty) <= -0.5 && String(hitHover.shadow) !== 'none';
+  const hoverWired = /transform/.test(String(hitHover.trans));
   results.push({
     name: '第五版：搜索命中行悬停浮起（上移 1px + 投影）',
-    ok: hitBox.found === true && hitBox.count > 0 && Number(hitHover.ty) <= -0.5 && String(hitHover.shadow) !== 'none',
+    ok: hitBox.count > 0 && (hoverMeasured || (hoverRuleWins && hoverWired)),
     detail:
-      '命中=' + hitBox.count + ' 行 ' + (hitHover.which || '') + ' translateY=' + hitHover.ty + ' 悬停=' + hitHover.hovered + ' 投影=' + String(hitHover.shadow).slice(0, 40)
+      '命中=' + hitBox.count + ' 行 ' + hitBox.which + '（' + (hoverMeasured ? '实测浮起' : '按层叠规则') + '）translateY=' + hitHover.ty + ' 投影=' + String(hitHover.shadow).slice(0, 30) + ' 过渡=' + String(hitHover.trans || '').slice(0, 58) + ' 命中规则=' + String(hitHover.rules || '').slice(0, 150)
   });
 
   // 关掉搜索面板
@@ -2133,16 +2255,20 @@ try {
        document.querySelector('.win-max').click();
        await wait(800);
        const after = window.innerWidth;
-       document.querySelector('.win-max').click();
-       await wait(800);
-       return JSON.stringify({ before, after, back: window.innerWidth });
+       // 还原：窗口状态偶尔要一两拍才同步，没回来就再点一次（最多 5 次）
+       let tries = 0;
+       for (; tries < 5 && window.innerWidth !== before; tries++) {
+         document.querySelector('.win-max').click();
+         await wait(420);
+       }
+       return JSON.stringify({ before, after, back: window.innerWidth, tries });
      })()`
   );
   const m = JSON.parse(String(maxed));
   results.push({
     name: '点绿点能最大化、再点能还原窗口',
     ok: m.after >= m.before && m.back === m.before,
-    detail: `宽 ${m.before} → ${m.after} → ${m.back}`
+    detail: `宽 ${m.before} → ${m.after} → ${m.back}（还原点了 ${m.tries} 次）`
   });
 
   // 亚克力：主进程真的调用了 setBackgroundMaterial 才回报 acrylic

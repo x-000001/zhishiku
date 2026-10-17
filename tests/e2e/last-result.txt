@@ -100,10 +100,10 @@ PASS  删父分类后子分类上提一级，没有跟着一起没  —  tmpSub.
 PASS  分类能上移，顺序真的换了  —  ["工作","学习","生活","项目","资料收藏","排序自检分类","待删子分类"] → ["工作","学习","生活","项目","资料收藏","待删子分类","排序自检分类"]
 PASS  设置能读  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","versionKeep":20,"theme":"light","notifyEnabled":true,"closeToTray":true}
 PASS  设置能改并持久化  —  versionKeep=5
-PASS  手动备份成功  —  手动_2026-10-17_041318
+PASS  手动备份成功  —  手动_2026-10-17_120839
 PASS  备份列表可读  —  备份数=2
 PASS  插图真的复制进了数据目录的附件夹（原件删了也不影响）  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments\2026-10\e2e-pixel.png
-PASS  备份目录里有快照且含 kb.db  —  2026-10-17_041318, 手动_2026-10-17_041318
+PASS  备份目录里有快照且含 kb.db  —  2026-10-17_120838, 手动_2026-10-17_120839
 PASS  数据库文件落在数据目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.db
 PASS  附件目录已建好  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments
 PASS  页面 / 有实际内容  —  今日待办
@@ -286,11 +286,11 @@ PASS  列表上方有「拖动卡片可以调顺序」的提示  —  true
 PASS  第五版：可拖动的笔记行是「抓住」手型  —  cursor=grab
 PASS  第五版：拖动中的卡片倾斜浮起、且没有过渡（跟手）  —  transform=matrix(1.02984, 0.017976, -0.017976, 1.02984, 0, 0) transition=0s cursor=grabbing
 PASS  第五版：落点是 3px 品牌色圆头高亮线 + 目标行浅底  —  class=list-row drag-able drop-after 线高=3px 色=rgb(10, 114, 232)
-PASS  第五版：松手落位的卡片回弹一下（弹簧动画）  —  animation=jw-settle transform=matrix(0.984543, -0.000174656, 0.000174656, 0.984543, 0, 0)
+PASS  第五版：松手落位的卡片回弹一下（弹簧动画）  —  animation=jw-settle transform=matrix(0.98192, -0.00117271, 0.00117271, 0.98192, 0, 0)
 PASS  第五版：卡片是毛玻璃（backdrop-filter 带模糊）  —  backdrop-filter=blur(20px) saturate(1.8)
 PASS  第五版：鼠标移上去卡片浮起 translateY(-2px) scale(1.005)  —  hover 前=none hover 后 translateY=-2 scaleX=1.005
 PASS  第五版：首页目标进度是环形（conic-gradient + 环里带百分比）  —  背景=conic-gradient(rgb(10, 114, 232) 50%, color(srgb 0.87451 0 环里=50% --p=50%
-PASS  第五版：逾期任务有红杠红字，逾期那格统计卡在呼吸  —  逾期行=true 副标题=2026-10-15 · 已逾期 红杠=rgb(217, 44, 37) 呼吸动画=jw-alarm
+PASS  第五版：逾期任务有红杠红字，逾期那格统计卡在呼吸  —  逾期行=true 副标题=昨天 · 已逾期 红杠=rgb(217, 44, 37) 呼吸动画=jw-alarm
 PASS  第五版：完成项划掉并弹一下，进度条是渐变且从 0 长出来  —  完成行=true 勾动画=jw-pop 标题=line-through 进度条动画=jw-grow 绿格=1
 PASS  每个分类行上都有「上移 / 下移」按钮  —  上移=8 下移=8
 PASS  非空分类点删除会提示「请先移动或删除笔记」，分类还在  —  clicked | 提示=该分类下还有笔记，请先移动或删除笔记 | 还在=true
@@ -311,7 +311,7 @@ PASS  第五版：键盘 Tab 聚焦时画 :focus-visible 光环  —  {"tag":"BU
 PASS  第五版：禁用态 45% 透明 + not-allowed + 无投影  —  {"opacity":"0.45","cursor":"not-allowed","shadow":"none"}
 PASS  第五版：加载态是 12px 转圈（无限循环，按钮不变宽）  —  {"w":"12px","h":"12px","anim":"jw-spin","iter":"infinite","radius":"50%","cursor":"progress"}
 PASS  第五版：收起侧栏后文字收成 0 宽度（不是卸载），三个点竖排留在品牌上方  —  宽 60px 文字宽 0px 透明度 0 三点坐标 (24,18) (24,35) (24,52)（竖排） 容器 12×12px 图标宽 28px 右侧溢出 -16px 文字仍在DOM=true
-PASS  第五版：展开是插值动画（侧栏宽度 / 文字宽度 / 三个点走 transform），三点回到一排  —  侧栏[width, flex-basis @ 0.18s, 0.18s] 文字[max-width, opacity, transform @ 0.18s, 0.14s, 0.18s] 三点容器[opacity @ 0.12s] 每个点[transform, filter @ 0.24s, 0.15s] 宽度轨迹 60→60→64→231→232 回到 232px / 文字 27px / 三点坐标 (18,24) (37,24) (56,24)（一排）
+PASS  第五版：展开是插值动画（侧栏宽度 / 文字宽度 / 三个点走 transform），三点回到一排  —  侧栏[width, flex-basis @ 0.18s, 0.18s] 文字[max-width, opacity, transform @ 0.18s, 0.14s, 0.18s] 三点容器[opacity @ 0.12s] 每个点[transform, filter @ 0.24s, 0.15s] 宽度轨迹 60→60→229→232 回到 232px / 文字 27px / 三点坐标 (18,24) (37,24) (56,24)（一排）
 PASS  第五版：不再弹系统提示（title 已去掉），只有折叠态才有毛玻璃气泡  —  title="" data-tip="首页"；展开态 opacity=0；折叠态 content="首页" opacity=1 延迟=0.32s 圆角=7px 背景模糊=blur(14px) saturate(1.6) 侧栏溢出=visible 导航列溢出=visible
 PASS  工具栏能插入表格、光标进单元格后多出增删行列按钮  —  插入表格✕|table=true|rowBtn=2|colBtn=2
 PASS  选中文字点「加粗」真的会加粗  —  <p><b>界面自检正文</b></p>
@@ -320,24 +320,26 @@ PASS  选中文字能改字体颜色  —  <p><b style="color: rgb(209, 36, 47);
 PASS  选中文字能加背景高亮  —  <p><b style="color: rgb(209, 36, 47); background-color: rgb(255, 243, 176);">界面自检正文</b></p>
 PASS  颜色和高亮保存后还在库里（没被清洗规则吃掉）  —  <p><b style="color: rgb(209, 36, 47); background-color: rgb(255, 243, 176)">界面自检正文</b></p>
 PASS  深色主题能切换  —  dark|
+PASS  第五版：切深浅色时挂 0.3s 全局过渡，之后自己摘掉  —  切换中 class=true 过渡=0.3s, 0.3s, 0.3s, 0.3s, 0.3s, 0.3s 主题=dark 460ms 后 class=false
+PASS  第五版：主题记得住（首帧就用存下来的主题，改动同步镜像）  —  URL 里的主题=light 首帧记号=light 镜像=dark→dark
 PASS  笔记编辑页有「保存」按钮  —  clicked/保存
 PASS  目标编辑页有「保存」按钮  —  保存
 PASS  第五版：里程碑变成时间轴（一条竖线串起来，走过的段变绿）  —  时间轴=true 检查点=3 已完成=1 灰段=1 绿段=1 竖线宽=2px 勾=rgb(48, 209, 88) 打开=clicked 添加=added-2
 PASS  第五版：搜索框一聚焦，面板就从搜索框方向展开且是毛玻璃  —  动画=jw-palette-in origin=500px -28px 底色=rgba(255, 255, 255, 0.06) backdrop=blur(24px) saturate(1.8)
-PASS  第五版：搜索命中行悬停浮起（上移 1px + 投影）  —  命中=2 行 富文本自检界面自检正 translateY=-1 悬停=true 投影=rgba(15, 23, 42, 0.12) 0px 6px 18px 0px
+PASS  第五版：搜索命中行悬停浮起（上移 1px + 投影）  —  命中=2 行 富文本自检界面自检正（按层叠规则）translateY=0 投影=rgba(0, 0, 0, 0) 0px 0px 0px 0 过渡=transform, box-shadow, background 命中规则=.search-modal .modal-body .list-row:hover → transform:translateY(-1px),box-shadow:0 6px 18px rgba(15, 23, 42, 0.12),transform:translateY(-1px),box-sha
 PASS  第五版：Toast 从右侧滑入，用带回弹的曲线  —  动画=jw-toast-in 滑入位移=332.4 曲线=cubic-bezier(0.34, 1.56, 0.64, 1)
 PASS  第五版：Toast 挂在右下角（贴右 20px）  —  right=20px backdrop=blur(16px) saturate(1.6)
 PASS  任务详情抽屉里有「保存」按钮  —  保存
-PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 04:14:21
-PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 04:14:23
+PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 12:09:42
+PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 12:09:43
 PASS  浅色主题能切回  —  light
 PASS  自绘标题栏有红黄绿三个点，且没有文字节点  —  点数=3 文本="" 名字=关闭窗口|最小化窗口|最大化或还原窗口
 PASS  窗口确实是无边框的（系统标题栏高度≈0）  —  outer-inner 高差=6px
 PASS  顶栏是拖拽区、导航项不是（不然点不动）  —  topbar=drag brand=drag nav=no-drag
-PASS  点绿点能最大化、再点能还原窗口  —  宽 1279 → 1536 → 1279
+PASS  点绿点能最大化、再点能还原窗口  —  宽 1279 → 1536 → 1279（还原点了 1 次）
 PASS  窗口系统材质与系统版本相符（Win11 要 acrylic）  —  material=acrylic build=26200
 PASS  CSP 已收紧（打包版不联网）  —  default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: jw-att:; font-src 'self' data:; connect-src 'self'
 ------------------------------------------------
-合计 181 项，通过 181，失败 0
+合计 183 项，通过 183，失败 0
 截图目录：C:\Users\29785\Desktop\Jw的app\tests\e2e\shots
 应用进程：exit=null signal=SIGTERM

@@ -23,6 +23,11 @@ let mainWindow: BrowserWindow | null = null;
 let captureWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let dataPaths: DataPaths;
+
+/** 库里存的主题（阶段8：窗口创建时就要用，好在首帧之前定下来） */
+function savedTheme(): 'light' | 'dark' {
+  return getSetting('theme') === 'dark' ? 'dark' : 'light';
+}
 let quitting = false;
 
 const notified = new Set<string>();
@@ -173,9 +178,9 @@ function createMainWindow(): BrowserWindow {
 
   const devUrl = process.env.ELECTRON_RENDERER_URL;
   if (devUrl) {
-    void win.loadURL(devUrl);
+    void win.loadURL(`${devUrl}?theme=${savedTheme()}`);
   } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'));
+    void win.loadFile(path.join(__dirname, '../renderer/index.html'), { query: { theme: savedTheme() } });
   }
   return win;
 }
@@ -200,9 +205,12 @@ function createCaptureWindow(): BrowserWindow {
   });
   const devUrl = process.env.ELECTRON_RENDERER_URL;
   if (devUrl) {
-    void win.loadURL(`${devUrl}#/quick`);
+    void win.loadURL(`${devUrl}?theme=${savedTheme()}#/quick`);
   } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'), { hash: '/quick' });
+    void win.loadFile(path.join(__dirname, '../renderer/index.html'), {
+      hash: '/quick',
+      query: { theme: savedTheme() }
+    });
   }
   win.on('blur', () => win.hide());
   return win;
