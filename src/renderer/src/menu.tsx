@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { nextActiveIndex } from './menuNav';
 
 /* ------------------------------------------------------------------ */
 /* 右键菜单（第五版 阶段10）                                           */
@@ -6,6 +7,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 /* 用法：在一个元素上挂 onContextMenu，然后调 showContextMenu(e, [...]) */
 /* 菜单本身是单例：同一个时刻只会有一份，换地方右键就换内容。            */
 /* 只做外观与交互，所有动作都复用已有函数 —— 不新增业务逻辑。            */
+/* 拆成几块：位置计算 / 事件绑定 / 单行渲染 各自独立，MenuPanel 只负责拼。*/
 /* ------------------------------------------------------------------ */
 
 export interface MenuItem {
@@ -60,33 +62,32 @@ export function ContextMenuHost(): ReactNode {
   return <MenuPanel key={state.seq} state={state} />;
 }
 
-function MenuPanel({ state }: { state: MenuState }): ReactNode {
-  const boxRef = useRef<HTMLDivElement | null>(null);
-  const timerRef = useRef(0);
+/** 贴边时把菜单往里收 / 往上翻。用 offsetWidth/Height 量：入场动画带 scale，getBoundingClientRect 会偏小。 */
+function useMenuPlacement(state: MenuState, boxRef: RefObject<HTMLDivElement | null>) {
   const [pos, setPos] = useState({ left: state.x, top: state.y, visible: false });
-  const [closing, setClosing] = useState(false);
-  const [active, setActive] = useState(-1);
-
-  const close = (delay = true): void => {
-    if (closing) return;
-    setClosing(true);
-    window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => hideContextMenu(), delay ? 130 : 0);
-  };
-
-  // 贴边时自动往里收 / 往上翻
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return;
-    // 用 offsetWidth/Height 量：入场动画带 scale，getBoundingClientRect 会偏小
     const gap = 8;
     const w = el.offsetWidth;
     const h = el.offsetHeight;
     const left = Math.min(state.x, Math.max(gap, window.innerWidth - w - gap));
     const top = Math.min(state.y, Math.max(gap, window.innerHeight - h - gap));
     setPos({ left: Math.max(gap, left), top: Math.max(gap, top), visible: true });
-  }, [state]);
+  }, [state, boxRef]);
+  return pos;
+}
 
+interface MenuEventsOptions {
+  state: MenuState;
+  active: number;
+  setActive: (i: number) => void;
+  boxRef: RefObject<HTMLDivElement | null>;
+  close: (delay?: boolean) => void;
+}
+
+/** 键盘（Esc / ↑↓ / Enter）、点外面、失焦、缩放、滚动 —— 都关掉菜单。 */
+function useMenuEvents({ state, active, setActive, boxRef, close }: MenuEventsOptions): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -94,14 +95,10 @@ function MenuPanel({ state }: { state: MenuState }): ReactNode {
         close();
         return;
       }
-      const usable = state.items.map((it, i) => ({ it, i })).filter((x) => !x.it.disabled);
-      if (usable.length === 0) return;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
-        const at = usable.findIndex((x) => x.i === active);
-        const step = e.key === 'ArrowDown' ? 1 : -1;
-        const next = at === -1 ? (step === 1 ? 0 : usable.length - 1) : (at + step + usable.length) % usable.length;
-        setActive(usable[next].i);
+        const next = nextActiveIndex(state.items, active, e.key === 'ArrowDown' ? 1 : -1);
+        if (next >= 0) setActive(next);
         return;
       }
       if (e.key === 'Enter' && active >= 0) {
@@ -133,9 +130,64 @@ function MenuPanel({ state }: { state: MenuState }): ReactNode {
     };
     // active 变化要重新绑（键盘高亮是内部状态）；退场定时器只在卸载时清，
     // 不能放在这里 —— 否则 close() 一 setClosing 就会把 130ms 的定时器清掉，菜单永远停在 .leaving。
-  }, [active]);
+  }, [active, state, setActive, boxRef, close]);
+}
 
+function MenuRow({
+  item,
+  index,
+  active,
+  onHover,
+  onSelect
+}: {
+  item: MenuItem;
+  index: number;
+  active: number;
+  onHover: (i: number) => void;
+  onSelect: (item: MenuItem) => void;
+}): ReactNode {
+  return (
+    <div>
+      {item.separator ? <div className="ctx-sep" /> : null}
+      <button
+        type="button"
+        role="menuitem"
+        className={['ctx-item', item.danger ? 'danger' : '', active === index ? 'active' : '', item.disabled ? 'disabled' : '']
+          .filter(Boolean)
+          .join(' ')}
+        aria-disabled={item.disabled ? true : undefined}
+        onMouseEnter={() => onHover(index)}
+        onClick={() => onSelect(item)}
+      >
+        <span className="ctx-label">{item.label}</span>
+        {item.hint ? <span className="hint">{item.hint}</span> : null}
+      </button>
+    </div>
+  );
+}
+
+function MenuPanel({ state }: { state: MenuState }): ReactNode {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const timerRef = useRef(0);
+  const [closing, setClosing] = useState(false);
+  const [active, setActive] = useState(-1);
+  const pos = useMenuPlacement(state, boxRef);
+
+  const close = (delay = true): void => {
+    if (closing) return;
+    setClosing(true);
+    window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => hideContextMenu(), delay ? 130 : 0);
+  };
+
+  useMenuEvents({ state, active, setActive, boxRef, close });
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
+
+  const pick = (item: MenuItem): void => {
+    if (item.disabled) return;
+    close(false);
+    item.onSelect();
+  };
 
   return (
     <div
@@ -146,26 +198,7 @@ function MenuPanel({ state }: { state: MenuState }): ReactNode {
       onContextMenu={(e) => e.preventDefault()}
     >
       {state.items.map((item, i) => (
-        <div key={item.label + i}>
-          {item.separator ? <div className="ctx-sep" /> : null}
-          <button
-            type="button"
-            role="menuitem"
-            className={['ctx-item', item.danger ? 'danger' : '', active === i ? 'active' : '', item.disabled ? 'disabled' : '']
-              .filter(Boolean)
-              .join(' ')}
-            aria-disabled={item.disabled ? true : undefined}
-            onMouseEnter={() => setActive(i)}
-            onClick={() => {
-              if (item.disabled) return;
-              close(false);
-              item.onSelect();
-            }}
-          >
-            <span className="ctx-label">{item.label}</span>
-            {item.hint ? <span className="hint">{item.hint}</span> : null}
-          </button>
-        </div>
+        <MenuRow key={item.label + i} item={item} index={i} active={active} onHover={setActive} onSelect={pick} />
       ))}
     </div>
   );
