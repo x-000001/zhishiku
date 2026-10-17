@@ -4320,6 +4320,231 @@ try {
       (focusFinished.error ? ' 错误=' + focusFinished.error : '')
   });
 
+  /* ---------------- 第六版修正：番茄钟悬浮按钮可拖动 ---------------- */
+
+  // 1) 按住拖 150/-120：跟手、松手不弹面板、位置写进 localStorage，单击才弹面板
+  const fabDrag = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const closeBtn = document.querySelector('.focus-panel .icon-btn');
+        if (closeBtn) closeBtn.click();
+        await sleep(160);
+        const fab = document.querySelector('.focus-fab');
+        if (!fab) return JSON.stringify({ error: '没有番茄钟按钮' });
+        const dock = fab.parentElement;
+        const fire = (el, type, x, y) =>
+          el.dispatchEvent(
+            new PointerEvent(type, { pointerId: 7, bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, pointerType: 'mouse' })
+          );
+        // 上一次跑可能把按钮留在了角落：先拖到窗口正中，保证后面两个方向都挪得动
+        const dragTo = async (x, y) => {
+          const r = fab.getBoundingClientRect();
+          fire(fab, 'pointerdown', r.left + r.width / 2, r.top + r.height / 2);
+          await sleep(30);
+          fire(window, 'pointermove', x, y);
+          await sleep(40);
+          fire(window, 'pointerup', x, y);
+          await sleep(340);
+        };
+        await dragTo(window.innerWidth / 2, window.innerHeight / 2);
+        const before = fab.getBoundingClientRect();
+        const cx = before.left + before.width / 2;
+        const cy = before.top + before.height / 2;
+        fire(fab, 'pointerdown', cx, cy);
+        await sleep(40);
+        fire(window, 'pointermove', cx - 60, cy - 40);
+        await sleep(40);
+        fire(window, 'pointermove', cx - 150, cy - 120);
+        await sleep(40);
+        fire(window, 'pointerup', cx - 150, cy - 120);
+        await sleep(380);
+        const after = fab.getBoundingClientRect();
+        const panelAfterDrag = !!document.querySelector('.focus-panel');
+        const draggingClass = dock.className.indexOf('dragging') >= 0;
+        const saved = localStorage.getItem('jw-focus-fab-pos');
+        let parsed = null;
+        try {
+          parsed = JSON.parse(saved || 'null');
+        } catch {
+          parsed = null;
+        }
+        // 浏览器松手后还会补一个 click：这一下必须被吃掉，不能弹面板
+        fab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx - 150, clientY: cy - 120 }));
+        await sleep(140);
+        const panelAfterGhostClick = !!document.querySelector('.focus-panel');
+        fab.click();
+        await sleep(300);
+        const panelAfterClick = !!document.querySelector('.focus-panel');
+        if (panelAfterClick) document.querySelector('.focus-panel .icon-btn').click();
+        return JSON.stringify({
+          dx: Math.round(after.left - before.left),
+          dy: Math.round(after.top - before.top),
+          draggingClass,
+          panelAfterDrag,
+          panelAfterGhostClick,
+          panelAfterClick,
+          saved,
+          hasPos: !!(parsed && typeof parsed.tx === 'number' && typeof parsed.ty === 'number')
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '修正：番茄钟按钮能按住拖动，松手不弹面板、单击才弹；位置写进 localStorage',
+    ok:
+      fabDrag.error === undefined &&
+      Math.abs(fabDrag.dx + 150) <= 3 &&
+      Math.abs(fabDrag.dy + 120) <= 3 &&
+      fabDrag.draggingClass === false &&
+      fabDrag.panelAfterDrag === false &&
+      fabDrag.panelAfterGhostClick === false &&
+      fabDrag.panelAfterClick === true &&
+      fabDrag.hasPos === true,
+    detail:
+      '位移=' +
+      fabDrag.dx +
+      ',' +
+      fabDrag.dy +
+      ' 拖动后面板=' +
+      fabDrag.panelAfterDrag +
+      ' 单击后=' +
+      fabDrag.panelAfterClick +
+      ' 存的位置=' +
+      fabDrag.saved +
+      (fabDrag.error ? ' 错误=' + fabDrag.error : '')
+  });
+
+  await cdp.shot('focus-drag');
+
+  // 2) 往两个方向各拖 9000 像素：必须被夹回窗口内，不能飞出去
+  const fabBounds = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const fab = document.querySelector('.focus-fab');
+        if (!fab) return JSON.stringify({ error: '没有番茄钟按钮' });
+        const fire = (el, type, x, y) =>
+          el.dispatchEvent(
+            new PointerEvent(type, { pointerId: 9, bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, pointerType: 'mouse' })
+          );
+        const dragTo = async (x, y) => {
+          const rect = fab.getBoundingClientRect();
+          const cx = rect.left + rect.width / 2;
+          const cy = rect.top + rect.height / 2;
+          fire(fab, 'pointerdown', cx, cy);
+          await sleep(30);
+          fire(window, 'pointermove', x, y);
+          await sleep(40);
+          fire(window, 'pointerup', x, y);
+          await sleep(320);
+        };
+        await dragTo(9000, 9000);
+        const br = fab.getBoundingClientRect();
+        await dragTo(-9000, -9000);
+        const tl = fab.getBoundingClientRect();
+        return JSON.stringify({
+          vw: window.innerWidth,
+          vh: window.innerHeight,
+          br: { l: Math.round(br.left), t: Math.round(br.top), r: Math.round(br.right), b: Math.round(br.bottom) },
+          tl: { l: Math.round(tl.left), t: Math.round(tl.top), r: Math.round(tl.right), b: Math.round(tl.bottom) }
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '修正：番茄钟拖到窗口边缘会被夹住，不会飞出屏幕',
+    ok:
+      fabBounds.error === undefined &&
+      fabBounds.br.l >= 0 &&
+      fabBounds.br.t >= 0 &&
+      fabBounds.br.r <= fabBounds.vw &&
+      fabBounds.br.b <= fabBounds.vh &&
+      fabBounds.tl.l >= 0 &&
+      fabBounds.tl.t >= 0 &&
+      fabBounds.tl.r <= fabBounds.vw &&
+      fabBounds.tl.b <= fabBounds.vh,
+    detail:
+      '窗口=' +
+      fabBounds.vw +
+      'x' +
+      fabBounds.vh +
+      ' 拖右下后=' +
+      JSON.stringify(fabBounds.br) +
+      ' 拖左上后=' +
+      JSON.stringify(fabBounds.tl) +
+      (fabBounds.error ? ' 错误=' + fabBounds.error : '')
+  });
+
+  // 3) 刷新页面：位置从 localStorage 读回来，按钮还在上次停的地方
+  await cdp.eval('location.reload(); true');
+  await sleep(2200);
+  const fabPersist = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        let fab = document.querySelector('.focus-fab');
+        const deadline = Date.now() + 8000;
+        while (!fab && Date.now() < deadline) {
+          await sleep(120);
+          fab = document.querySelector('.focus-fab');
+        }
+        if (!fab) return JSON.stringify({ error: '刷新后按钮没回来' });
+        await sleep(400);
+        const dock = fab.parentElement;
+        const saved = localStorage.getItem('jw-focus-fab-pos');
+        const m = getComputedStyle(dock).transform;
+        const nums = String(m).match(/-?[0-9.]+/g) || [];
+        return JSON.stringify({ saved, transform: m, tx: Number(nums[4]), ty: Number(nums[5]) });
+      })()`)
+    )
+  );
+  const savedFabPos = (() => {
+    try {
+      return JSON.parse(fabPersist.saved || 'null');
+    } catch {
+      return null;
+    }
+  })();
+  results.push({
+    name: '修正：番茄钟位置刷新后记得住（重启也停在原处）',
+    ok:
+      fabPersist.error === undefined &&
+      !!savedFabPos &&
+      Math.abs(Number(savedFabPos.tx) - Number(fabPersist.tx)) <= 2 &&
+      Math.abs(Number(savedFabPos.ty) - Number(fabPersist.ty)) <= 2,
+    detail:
+      '存的=' +
+      fabPersist.saved +
+      ' 刷新后 transform=' +
+      fabPersist.transform +
+      (fabPersist.error ? ' 错误=' + fabPersist.error : '')
+  });
+
+  // 4) Toast 的层级必须压过番茄钟（否则提示又被按钮盖住）
+  const fabLayer = JSON.parse(
+    String(
+      await cdp.eval(`(() => {
+        const fab = document.querySelector('.focus-fab');
+        if (!fab) return JSON.stringify({ error: '没有番茄钟按钮' });
+        const dock = fab.parentElement;
+        const probe = document.createElement('div');
+        probe.className = 'toast-wrap';
+        probe.style.position = 'fixed';
+        document.body.appendChild(probe);
+        const toastZ = Number(getComputedStyle(probe).zIndex) || 0;
+        probe.remove();
+        const dockZ = Number(getComputedStyle(dock).zIndex) || 0;
+        return JSON.stringify({ dockZ, toastZ });
+      })()`)
+    )
+  );
+  results.push({
+    name: '修正：Toast 浮在番茄钟按钮上面，提示不会被遮住',
+    ok: fabLayer.error === undefined && fabLayer.toastZ > fabLayer.dockZ && fabLayer.dockZ > 0,
+    detail: '按钮层=' + fabLayer.dockZ + ' Toast层=' + fabLayer.toastZ + (fabLayer.error ? ' 错误=' + fabLayer.error : '')
+  });
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {

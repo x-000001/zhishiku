@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { api, onFocusState } from './api';
 import { toast } from './ui';
 import { toastError } from './errors';
@@ -33,6 +33,57 @@ function saveMinutes(minutes: number): void {
   }
 }
 
+/* ---------------- 悬浮按钮可拖动 ---------------- */
+
+const POS_KEY = 'jw-focus-fab-pos';
+/** 位移超过这个距离才算拖拽，否则当成点击（触控板抖动也不至于误判） */
+const DRAG_THRESHOLD = 4;
+/** 贴边时至少留这么多像素在窗口里 */
+const EDGE = 8;
+
+type FabPos = { tx: number; ty: number };
+const DEFAULT_POS: FabPos = { tx: 0, ty: 0 };
+
+function readSavedPos(): FabPos {
+  try {
+    const raw = localStorage.getItem(POS_KEY);
+    if (!raw) return DEFAULT_POS;
+    const parsed = JSON.parse(raw) as Partial<FabPos> | null;
+    if (typeof parsed?.tx === 'number' && typeof parsed?.ty === 'number') {
+      return { tx: parsed.tx, ty: parsed.ty };
+    }
+  } catch {
+    /* 坏数据 / localStorage 不可用：回到默认右下角 */
+  }
+  return DEFAULT_POS;
+}
+
+function savePos(pos: FabPos): void {
+  try {
+    localStorage.setItem(POS_KEY, JSON.stringify(pos));
+  } catch {
+    /* 存不下就算了，下次回到默认位置 */
+  }
+}
+
+/**
+ * 把位移夹在窗口内。
+ * 按钮在 CSS 里是 `right:18px; bottom:18px`，没有定位时它的左上角在
+ * `(winW - 18 - w, winH - 18 - h)`；tx / ty 是这个点相对默认位置的偏移。
+ */
+function clampPos(tx: number, ty: number, dock: HTMLElement | null): FabPos {
+  const w = dock?.offsetWidth || 120;
+  const h = dock?.offsetHeight || 38;
+  const baseLeft = window.innerWidth - 18 - w;
+  const baseTop = window.innerHeight - 18 - h;
+  const minX = EDGE - baseLeft;
+  const maxX = window.innerWidth - EDGE - w - baseLeft;
+  const minY = EDGE - baseTop;
+  const maxY = window.innerHeight - EDGE - h - baseTop;
+  const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  return { tx: clamp(tx, minX, maxX), ty: clamp(ty, minY, maxY) };
+}
+
 export default function FocusDock(): ReactNode {
   const [state, setState] = useState<FocusState | null>(null);
   const [summary, setSummary] = useState<FocusSummary | null>(null);
@@ -40,6 +91,93 @@ export default function FocusDock(): ReactNode {
   const [minutes, setMinutes] = useState(readSavedMinutes);
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
+
+  /* 悬浮按钮的位置：唯一真相是 pos（会被拖拽改），拖动过程中直接写 DOM 的 transform，不逐帧 setState。 */
+  const dockRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    id: number;
+    startX: number;
+    startY: number;
+    baseTx: number;
+    baseTy: number;
+    moved: boolean;
+    last: FabPos;
+  } | null>(null);
+  const suppressClick = useRef(false);
+  const [pos, setPos] = useState<FabPos>(readSavedPos);
+  const [dragging, setDragging] = useState(false);
+
+  // 窗口尺寸变了要把按钮重新夹回可视区（重启后读到的旧位置同理）
+  useEffect(() => {
+    const refit = (): void => {
+      setPos((prev) => {
+        const next = clampPos(prev.tx, prev.ty, dockRef.current);
+        if (next.tx !== prev.tx || next.ty !== prev.ty) savePos(next);
+        return next;
+      });
+    };
+    refit();
+    window.addEventListener('resize', refit);
+    return () => window.removeEventListener('resize', refit);
+  }, []);
+
+  const onFabPointerDown = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    dragRef.current = {
+      id: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      baseTx: pos.tx,
+      baseTy: pos.ty,
+      moved: false,
+      last: pos,
+    };
+    setDragging(true);
+
+    // 监听器挂在 window 上，抬手立刻摘掉：鼠标不按着也不会乱飞，也不会累积泄漏
+    const dock = dockRef.current;
+    const onMove = (moveEvent: PointerEvent): void => {
+      const drag = dragRef.current;
+      if (!drag || moveEvent.pointerId !== drag.id) return;
+      const dx = moveEvent.clientX - drag.startX;
+      const dy = moveEvent.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) drag.moved = true;
+      if (!drag.moved) return;
+      moveEvent.preventDefault();
+      const next = clampPos(drag.baseTx + dx, drag.baseTy + dy, dock);
+      drag.last = next;
+      if (dock) dock.style.transform = `translate3d(${next.tx}px, ${next.ty}px, 0)`;
+    };
+    const onEnd = (endEvent: PointerEvent): void => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+      const drag = dragRef.current;
+      dragRef.current = null;
+      setDragging(false);
+      if (!drag || drag.id !== endEvent.pointerId) return;
+      if (!drag.moved) return;
+      // 拖完那一下会跟着来一个 click，要吃掉，否则松手就弹面板
+      suppressClick.current = true;
+      window.setTimeout(() => {
+        suppressClick.current = false;
+      }, 400);
+      setPos(drag.last);
+      savePos(drag.last);
+    };
+    window.addEventListener('pointermove', onMove, { passive: false });
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+  };
+
+  const dockStyle: CSSProperties = { transform: `translate3d(${pos.tx}px, ${pos.ty}px, 0)` };
+  // 面板默认贴在按钮右上方；靠近窗口左边/顶部时换边，别被切掉
+  const dockLeft = window.innerWidth - 18 - (dockRef.current?.offsetWidth || 120) + pos.tx;
+  const dockTop = window.innerHeight - 18 - (dockRef.current?.offsetHeight || 38) + pos.ty;
+  const panelSide: CSSProperties = {
+    ...(dockLeft < 24 ? { left: 0, right: 'auto' } : { right: 0, left: 'auto' }),
+    ...(dockTop < 320 ? { top: 'calc(100% + 10px)', bottom: 'auto' } : { bottom: 'calc(100% + 10px)', top: 'auto' }),
+  };
 
   // 挂载：先问主进程要一次快照，然后订阅它的推送
   useEffect(() => {
@@ -136,20 +274,28 @@ export default function FocusDock(): ReactNode {
         : '⏱ 番茄钟';
 
   return (
-    <>
+    <div ref={dockRef} className={'focus-dock' + (dragging ? ' dragging' : '')} style={dockStyle}>
       <button
         type="button"
         className={'focus-fab' + (active ? ' active' : '')}
         aria-label="番茄钟"
         aria-expanded={open}
-        title={active ? '番茄钟：点开看剩余时间' : '番茄钟：点开开始专注'}
-        onClick={() => setOpen((v) => !v)}
+        title={active ? '番茄钟：点开看剩余时间；按住可拖动' : '番茄钟：点开开始专注；按住可拖动'}
+        onPointerDown={onFabPointerDown}
+        onClick={() => {
+          // 拖拽松手后浏览器还会补一个 click，这一下不能弹面板
+          if (suppressClick.current) {
+            suppressClick.current = false;
+            return;
+          }
+          setOpen((v) => !v);
+        }}
       >
         {fabText}
       </button>
 
       {open ? (
-        <div className="focus-panel" role="dialog" aria-label="番茄钟面板">
+        <div className="focus-panel" role="dialog" aria-label="番茄钟面板" style={panelSide}>
           <div className="focus-panel-head">
             <b>番茄钟</b>
             <span className="spacer" />
@@ -228,6 +374,6 @@ export default function FocusDock(): ReactNode {
           <p className="muted focus-hint">时间由主进程按结束时刻算，关面板、切页、最小化都不会走偏。</p>
         </div>
       ) : null}
-    </>
+    </div>
   );
 }

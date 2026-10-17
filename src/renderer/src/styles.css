@@ -4581,3 +4581,47 @@ html[data-theme='dark'] {
   font-size: 11.5px;
   line-height: 1.5;
 }
+
+/* 第六版修正：番茄钟悬浮按钮可拖动。
+   位置一律用 transform 表达（不碰 left/top，避免逐帧重排）；
+   拖动时关掉过渡，松手回弹用现有的 --spring-ease 弹簧曲线。 */
+.focus-dock {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 40;
+  transition: transform 0.18s var(--spring-ease);
+  will-change: transform;
+}
+
+.focus-dock.dragging {
+  transition: none;
+}
+
+.focus-dock .focus-fab {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  touch-action: none;
+  user-select: none;
+  transition:
+    transform 0.18s var(--spring-ease),
+    background 0.16s var(--smooth-ease),
+    color 0.16s var(--smooth-ease),
+    box-shadow 0.2s var(--smooth-ease);
+}
+
+.focus-dock.dragging .focus-fab {
+  transform: scale(1.05);
+  box-shadow: var(--shadow-lg);
+  cursor: grabbing;
+}
+
+/* 面板挂在按钮里侧，跟着按钮一起走；层级低于 Toast（80），提示永远压在最上面 */
+.focus-dock .focus-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 71;
+}
