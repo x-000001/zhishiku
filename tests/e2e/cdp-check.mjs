@@ -2571,6 +2571,61 @@ try {
     ok: backBand.layout === 'wide' && backBand.sbW >= 224 && backBand.burger === 'none' && backBand.overflowX <= 1,
     detail: `宽=${backBand.w} 档=${backBand.layout} 侧栏=${backBand.sbW}px 汉堡=${backBand.burger} 横向溢出=${backBand.overflowX}`
   });
+  // 第五版收尾：断点边界 —— 三个阈值（1200 / 1024 / 768）各测两侧。
+  // readLayout() 的 `<` 写成 `<=`、或者媒体查询少写 1px，肉眼几乎看不出来，
+  // 但会让某一档永远进不去（比如 1200 那个宽度看起来还是图标条）。这类错只能靠边界断言兜。
+  const edgeBands = [];
+  for (const pair of [[1200, 1199], [1024, 1023], [768, 767]]) {
+    await setViewport(pair[0], 860);
+    const hi = await bandRead();
+    await setViewport(pair[1], 860);
+    const lo = await bandRead();
+    edgeBands.push({ hi, lo });
+  }
+  const [edgeWide, edgeRail] = [edgeBands[0].hi, edgeBands[0].lo];
+  results.push({
+    name: '第五版收尾：断点边界 1200 / 1199 —— 正好 1200 算三栏宽屏，1199 才收成图标条',
+    ok:
+      edgeWide.layout === 'wide' &&
+      edgeWide.sbVisW >= 224 &&
+      edgeWide.burger === 'none' &&
+      edgeRail.layout === 'rail' &&
+      edgeRail.sbVisW > 0 &&
+      edgeRail.sbVisW <= 66 &&
+      edgeRail.burger === 'none',
+    detail: `1200→档=${edgeWide.layout} 侧栏可见=${edgeWide.sbVisW}px 汉堡=${edgeWide.burger}；1199→档=${edgeRail.layout} 侧栏可见=${edgeRail.sbVisW}px 汉堡=${edgeRail.burger}`
+  });
+  const [edgeRail2, edgeDrawer] = [edgeBands[1].hi, edgeBands[1].lo];
+  results.push({
+    name: '第五版收尾：断点边界 1024 / 1023 —— 1024 还是图标条，1023 才变抽屉（窗口按钮跟着挪顶栏）',
+    ok:
+      edgeRail2.layout === 'rail' &&
+      edgeRail2.sbVisW <= 66 &&
+      edgeRail2.burger === 'none' &&
+      edgeDrawer.layout === 'drawer' &&
+      edgeDrawer.burger === 'flex' &&
+      edgeDrawer.lightsTop === 'flex' &&
+      edgeDrawer.lightsBrand === 'none',
+    detail: `1024→档=${edgeRail2.layout} 可见=${edgeRail2.sbVisW}px 汉堡=${edgeRail2.burger}；1023→档=${edgeDrawer.layout} 汉堡=${edgeDrawer.burger} 顶栏窗口键=${edgeDrawer.lightsTop} 侧栏窗口键=${edgeDrawer.lightsBrand}`
+  });
+  const [edgeDrawer2, edgeSingle] = [edgeBands[2].hi, edgeBands[2].lo];
+  results.push({
+    name: '第五版收尾：断点边界 768 / 767 —— 768 还横着排，767 才上下堆成单栏',
+    ok:
+      edgeDrawer2.layout === 'drawer' &&
+      edgeDrawer2.kbDir === 'row' &&
+      edgeDrawer2.burger === 'flex' &&
+      edgeSingle.layout === 'single' &&
+      edgeSingle.kbDir === 'column' &&
+      edgeSingle.treeShown === true &&
+      edgeSingle.overflowX <= 1,
+    detail: `768→档=${edgeDrawer2.layout} 知识库方向=${edgeDrawer2.kbDir}；767→档=${edgeSingle.layout} 知识库方向=${edgeSingle.kbDir} 分类列可见=${edgeSingle.treeShown} 横向溢出=${edgeSingle.overflowX}`
+  });
+  // 边界测完把视口收回真实窗口尺寸，后面还有手感修正与阶段10/11 的断言在读当前窗口
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+  await cdp.eval('window.dispatchEvent(new Event("resize")); true');
+  await sleep(700);
+
   // 第五版（阶段9 手感修正）：拖窗口时先锁住插值 —— 窗口每帧都在改尺寸，
   // 同一条时间轴上再跑 180ms 的宽度插值，等于每帧多一次重排，跨档那一下就掉帧。
   const resizeLock = await cdp.eval(`(async () => {
