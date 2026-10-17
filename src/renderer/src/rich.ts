@@ -101,17 +101,22 @@ export function currentCell(): HTMLTableCellElement | null {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return null;
   const node = sel.getRangeAt(0).startContainer;
-  const el: Element | null =
-    node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-  const cell = el?.closest ? el.closest('td,th') : null;
-  return (cell as HTMLTableCellElement | null) ?? null;
+  const el: Element | null = node instanceof Element ? node : node.parentElement;
+  const cell = el?.closest('td,th');
+  return cell instanceof HTMLTableCellElement ? cell : null;
 }
 
 export function inTable(): boolean {
   return currentCell() != null;
 }
 
-function focusCell(el: HTMLElement | undefined | null): void {
+/** 单元格所在的行；拿不到（不在 tr 里）就返回 null。 */
+function rowOf(cell: HTMLTableCellElement | null): HTMLTableRowElement | null {
+  const row = cell?.closest('tr') ?? null;
+  return row instanceof HTMLTableRowElement ? row : null;
+}
+
+function focusCell(el: Element | null | undefined): void {
   if (!el) return;
   const range = document.createRange();
   range.selectNodeContents(el);
@@ -124,13 +129,13 @@ function focusCell(el: HTMLElement | undefined | null): void {
 function blankCell(tag: 'td' | 'th'): HTMLTableCellElement {
   const el = document.createElement(tag);
   el.innerHTML = '<br>';
-  return el as HTMLTableCellElement;
+  return el;
 }
 
 /** 在当前行的上面/下面插一行；光标在表头行时插到表体第一行。 */
 export function addRow(after: boolean): boolean {
   const cell = currentCell();
-  const row = cell?.closest('tr') as HTMLTableRowElement | null;
+  const row = rowOf(cell);
   const table = row?.closest('table') ?? null;
   if (!cell || !row || !row.parentElement || !table) return false;
   const inHead = row.closest('thead') != null;
@@ -145,18 +150,18 @@ export function addRow(after: boolean): boolean {
     const fresh = document.createElement('tr');
     for (let i = 0; i < count; i += 1) fresh.appendChild(blankCell('td'));
     tbody.insertBefore(fresh, tbody.firstChild);
-    focusCell(fresh.children[0] as HTMLElement);
+    focusCell(fresh.firstElementChild);
     return true;
   }
   row.parentElement.insertBefore(tr, after ? row.nextSibling : row);
-  focusCell(tr.children[0] as HTMLElement);
+  focusCell(tr.firstElementChild);
   return true;
 }
 
 /** 删掉光标所在的那一行；如果整张表只剩这一行数据，就把表格删掉。 */
 export function deleteRow(): boolean {
   const cell = currentCell();
-  const row = cell?.closest('tr') as HTMLTableRowElement | null;
+  const row = rowOf(cell);
   if (!cell || !row) return false;
   if (row.closest('thead')) return false; // 表头不给删
   const table = row.closest('table');
@@ -165,9 +170,9 @@ export function deleteRow(): boolean {
     table?.remove();
     return true;
   }
-  const next = (row.nextElementSibling ?? row.previousElementSibling) as HTMLElement | null;
+  const next = row.nextElementSibling ?? row.previousElementSibling;
   row.remove();
-  focusCell(next?.children[0] as HTMLElement | undefined);
+  focusCell(next?.firstElementChild);
   return true;
 }
 
