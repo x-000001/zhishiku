@@ -34,3 +34,4 @@ tests/e2e/ud-kill/
 /Jw知识库（绿色版）/
 /Jw知识库数据备份-*/
 .tools/COMMIT_MSG.txt
+.tools/probe-shots/
