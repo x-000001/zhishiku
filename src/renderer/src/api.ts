@@ -96,6 +96,11 @@ export const api = {
   togglePin: (id: Id) => call<boolean>('note:pin', { id }),
   trashNote: (id: Id) => call<boolean>('note:trash', { id }),
   restoreNote: (id: Id) => call<boolean>('note:restore', { id }),
+  /**
+   * 物理删除单篇笔记。界面上刻意没有入口：删除一律先进回收站，
+   * 物理删除只走「清空回收站」和回收站满 30 天的自动清理（主进程内部调用）。
+   * 这个封装留着，以后要做「彻底删除」勾选项时直接能用。
+   */
   purgeNote: (id: Id) => call<boolean>('note:purge', { id }),
   emptyTrash: () => call<number>('note:empty-trash'),
 

@@ -66,10 +66,10 @@ export default function Knowledge(props: {
   const [tableSize, setTableSize] = useState({ rows: 3, cols: 3 });
   const [fmt, setFmt] = useState({ inTable: false, bold: false, italic: false, underline: false });
   /**
-   * 彻底删除的入口（右键菜单 / 行内图标）会往这里写 id，但目前没有确认框读它，
-   * 所以点了暂时什么也不会发生 —— 这是重构扫描发现的历史遗留，待确认后单独接线。
+   * 「移到回收站」前的二次确认：存要挪走的笔记 id。
+   * 产品规则：不提供逐条物理删除，物理删除只走「清空回收站」（以及回收站满 30 天自动清）。
    */
-  const [, setConfirmPurge] = useState<Id | null>(null);
+  const [confirmTrash, setConfirmTrash] = useState<Id | null>(null);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
   const [confirmCatDel, setConfirmCatDel] = useState<Category | null>(null);
   /** 改名 / 新建子分类的输入框（Electron 里没有 window.prompt，必须自己做） */
@@ -810,8 +810,7 @@ export default function Knowledge(props: {
                                 toast('已还原');
                               });
                             }
-                          },
-                          { label: '彻底删除', danger: true, separator: true, onSelect: () => setConfirmPurge(item.id) }
+                          }
                         ]
                       : [
                           { label: '打开', onSelect: () => setOpenId(item.id) },
@@ -821,7 +820,7 @@ export default function Knowledge(props: {
                               void api.togglePin(item.id).then(() => loadList());
                             }
                           },
-                          { label: '移到回收站', danger: true, separator: true, onSelect: () => void trash(item.id) }
+                          { label: '移到回收站', danger: true, separator: true, onSelect: () => setConfirmTrash(item.id) }
                         ];
                   showContextMenu(e, items);
                 }}
@@ -836,24 +835,19 @@ export default function Knowledge(props: {
                 </div>
                 <div className="actions" onClick={(e) => e.stopPropagation()}>
                   {sel === 'trash' ? (
-                    <>
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        title="还原"
-                        onClick={() => {
-                          void api.restoreNote(item.id).then(() => {
-                            void loadList();
-                            toast('已还原');
-                          });
-                        }}
-                      >
-                        ↩
-                      </button>
-                      <button type="button" className="icon-btn" title="彻底删除" onClick={() => setConfirmPurge(item.id)}>
-                        ✕
-                      </button>
-                    </>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      title="还原"
+                      onClick={() => {
+                        void api.restoreNote(item.id).then(() => {
+                          void loadList();
+                          toast('已还原');
+                        });
+                      }}
+                    >
+                      ↩
+                    </button>
                   ) : (
                     <>
                       <button
@@ -866,7 +860,7 @@ export default function Knowledge(props: {
                       >
                         📌
                       </button>
-                      <button type="button" className="icon-btn" title="删除到回收站" onClick={() => void trash(item.id)}>
+                      <button type="button" className="icon-btn" title="删除到回收站" onClick={() => setConfirmTrash(item.id)}>
                         🗑
                       </button>
                     </>
@@ -1386,6 +1380,21 @@ export default function Knowledge(props: {
             } catch (err) {
               toastError('清空失败：', err);
             }
+          }}
+        />
+      ) : null}
+
+      {confirmTrash != null ? (
+        <ConfirmDialog
+          title="移到回收站？"
+          danger
+          confirmLabel="移到回收站"
+          message="这篇笔记会进入回收站，30 天内都能还原；想彻底删掉就等清空回收站（或 30 天后自动清理）。"
+          onCancel={() => setConfirmTrash(null)}
+          onConfirm={() => {
+            const id = confirmTrash;
+            setConfirmTrash(null);
+            void trash(id);
           }}
         />
       ) : null}

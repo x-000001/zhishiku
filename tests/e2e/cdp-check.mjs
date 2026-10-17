@@ -3348,6 +3348,154 @@ try {
       '）'
   });
 
+  // ---- 第五版修复：知识库删除先二次确认；确认后是软删除（进回收站），取消则原样保留 ----
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(900);
+  const delFlow = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const treeItem = (name) =>
+      [...document.querySelectorAll('.tree-item')].find((el) => (el.textContent || '').includes(name));
+    const rows = () => [...document.querySelectorAll('.kb-list-body .list-row')];
+    const titleOf = (el) => (el ? (el.querySelector('.title')?.textContent || '').trim() : '');
+    const rowByTitle = (t) => rows().find((r) => titleOf(r) === t);
+    const delBtn = (row) => (row ? row.querySelector('.actions .icon-btn[title="删除到回收站"]') : null);
+    const dialog = () => document.querySelector('.modal-backdrop');
+    const dialogTitle = () => {
+      const d = dialog();
+      return d ? (d.querySelector('.modal-head span')?.textContent || '').trim() : '';
+    };
+    const footBtn = (re) => {
+      const d = dialog();
+      if (!d) return null;
+      return [...d.querySelectorAll('.modal-foot .btn')].find((b) => re.test((b.textContent || '').trim())) || null;
+    };
+
+    const title = '删除确认自检笔记';
+    const created = await window.api.invoke('note:create', { title, content: '测二次确认' });
+    if (!created || created.id == null) return { error: '建笔记失败' };
+
+    // 切一下分类再切回来，让列表重新拉一遍
+    const uncat = treeItem('未分类');
+    if (uncat) uncat.click();
+    await sleep(450);
+    const all = treeItem('全部笔记');
+    if (all) all.click();
+    await sleep(650);
+
+    const row = rowByTitle(title);
+    if (!row) return { error: '新建的笔记没出现在列表里' };
+    const beforeCount = rows().length;
+
+    // ① 点行内删除 → 应弹确认框；点取消 → 笔记还在
+    const b1 = delBtn(row);
+    if (!b1) return { error: '没找到行内删除按钮' };
+    b1.click();
+    await sleep(320);
+    const dlgTitle = dialogTitle();
+    const cancel = footBtn(/^取消$/);
+    const hasCancel = !!cancel;
+    if (cancel) cancel.click();
+    await sleep(420);
+    const dialogGone = !dialog();
+    const afterCancelCount = rows().length;
+    const stillAfterCancel = !!rowByTitle(title);
+
+    // ② 再点一次，这回确认 → 列表里消失、回收站里能找到
+    const b2 = delBtn(rowByTitle(title));
+    if (!b2) return { error: '取消后找不到删除按钮了' };
+    b2.click();
+    await sleep(320);
+    const dlgTitle2 = dialogTitle();
+    const ok = footBtn(/^移到回收站$/);
+    const hasOk = !!ok;
+    if (ok) ok.click();
+    await sleep(900);
+    const afterConfirmCount = rows().length;
+    const stillAfterConfirm = !!rowByTitle(title);
+    const trashed = await window.api.invoke('note:list', { trash: true });
+    const inTrashApi = Array.isArray(trashed) && trashed.some((n) => (n.title || '').trim() === title);
+
+    // ③ 切到回收站视图，列表里应该看得到；再切回全部笔记
+    const trashRow = treeItem('回收站');
+    if (trashRow) trashRow.click();
+    await sleep(700);
+    const trashViewHas = !!rowByTitle(title);
+    const backAll = treeItem('全部笔记');
+    if (backAll) backAll.click();
+    await sleep(600);
+
+    return {
+      beforeCount,
+      dlgTitle,
+      hasCancel,
+      dialogGone,
+      afterCancelCount,
+      stillAfterCancel,
+      dlgTitle2,
+      hasOk,
+      afterConfirmCount,
+      stillAfterConfirm,
+      inTrashApi,
+      trashViewHas
+    };
+  })()`);
+  results.push({
+    name: '第五版修复：知识库删除先弹确认框（取消就留着，确认后进回收站，回收站里能找到）',
+    ok:
+      !delFlow.error &&
+      /移到回收站/.test(String(delFlow.dlgTitle)) &&
+      delFlow.hasCancel === true &&
+      delFlow.dialogGone === true &&
+      delFlow.afterCancelCount === delFlow.beforeCount &&
+      delFlow.stillAfterCancel === true &&
+      /移到回收站/.test(String(delFlow.dlgTitle2)) &&
+      delFlow.hasOk === true &&
+      delFlow.afterConfirmCount === delFlow.beforeCount - 1 &&
+      delFlow.stillAfterConfirm === false &&
+      delFlow.inTrashApi === true &&
+      delFlow.trashViewHas === true,
+    detail: delFlow.error
+      ? delFlow.error
+      : '弹窗=' +
+        delFlow.dlgTitle +
+        ' 列表 ' +
+        delFlow.beforeCount +
+        '→取消后 ' +
+        delFlow.afterCancelCount +
+        '→确认后 ' +
+        delFlow.afterConfirmCount +
+        ' 取消后还在=' +
+        delFlow.stillAfterCancel +
+        ' 确认后还在=' +
+        delFlow.stillAfterConfirm +
+        ' 回收站里有=' +
+        delFlow.inTrashApi +
+        '/' +
+        delFlow.trashViewHas
+  });
+  // 留一张确认框的截图
+  await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const row = document.querySelector('.kb-list-body .list-row');
+    if (!row) return false;
+    row.scrollIntoView({ block: 'center' });
+    await sleep(200);
+    const btn = row.querySelector('.actions .icon-btn[title="删除到回收站"]');
+    if (btn) btn.click();
+    await sleep(340);
+    return !!document.querySelector('.modal-backdrop');
+  })()`);
+  await cdp.shot('note-trash-confirm');
+  await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const d = document.querySelector('.modal-backdrop');
+    if (!d) return true;
+    const cancel = [...d.querySelectorAll('.modal-foot .btn')].find((b) => (b.textContent || '').trim() === '取消');
+    if (cancel) cancel.click();
+    await sleep(380);
+    return true;
+  })()`);
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {
