@@ -20,6 +20,8 @@ interface ToastItem {
 
 let seq = 0;
 let items: ToastItem[] = [];
+/** 每条提示自己的计时器。手动关掉时要连计时器一起清，不然它会挂到 2.6/6 秒后才空转一次。 */
+const timers = new Map<number, number>();
 const listeners = new Set<(list: ToastItem[]) => void>();
 
 function emit(): void {
@@ -28,6 +30,11 @@ function emit(): void {
 }
 
 function drop(id: number): void {
+  const timer = timers.get(id);
+  if (timer !== undefined) {
+    window.clearTimeout(timer);
+    timers.delete(id);
+  }
   items = items.filter((i) => i.id !== id);
   emit();
 }
@@ -41,7 +48,11 @@ export function toast(text: string, options: ToastOptions = {}): void {
   };
   items = [...items, item];
   emit();
-  window.setTimeout(() => drop(item.id), options.ttl ?? (options.actionLabel ? 6000 : 2600));
+  const ttl = options.ttl ?? (options.actionLabel ? 6000 : 2600);
+  timers.set(
+    item.id,
+    window.setTimeout(() => drop(item.id), ttl)
+  );
 }
 
 export function ToastHost(): ReactNode {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { Empty, toast } from '../ui';
 import { PRIORITY_LABEL, PRIORITY_ORDER, relative } from '../format';
@@ -188,17 +188,16 @@ export default function Inbox(props: {
     });
   };
 
-  const convertByKey = useMemo(
-    () =>
-      async (item: InboxItem, key: string): Promise<void> => {
-        if (key === '1') return convert(item, 'note');
-        if (key === '2') {
-          setTaskFormFor(item.id);
-          return;
-        }
-        if (key === '3') return convert(item, 'goal');
-        if (key === '4') return convert(item, 'plan');
-      },
+  const convertByKey = useCallback(
+    async (item: InboxItem, key: string): Promise<void> => {
+      if (key === '1') return convert(item, 'note');
+      if (key === '2') {
+        setTaskFormFor(item.id);
+        return;
+      }
+      if (key === '3') return convert(item, 'goal');
+      if (key === '4') return convert(item, 'plan');
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [items]
   );
