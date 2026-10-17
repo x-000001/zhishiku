@@ -4,7 +4,7 @@ import { Empty, ConfirmDialog, toast } from '../ui';
 import { showContextMenu } from '../menu';
 import { PRIORITY_LABEL, PRIORITY_ORDER, REPEAT_LABEL, fmtDate, fmtDateTime, nextPriority, relative, todayLocal } from '../format';
 import { SaveButton, useManualSave } from '../save';
-import type { GoalSummary, Id, Task, TaskFilter, TaskPriority } from '../../../shared/types';
+import type { GoalSummary, Id, Task, TaskFilter, TaskPriority } from '../../../shared/types';import { toastError } from '../errors';
 
 const VIEWS: { key: NonNullable<TaskFilter['view']>; icon: string; label: string; hint: string }[] = [
   { key: 'today', icon: '☀️', label: '今天', hint: '今天到期，连同已经逾期的（完成的留在原地）' },
@@ -64,7 +64,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
           });
           props.refreshCount();
         })
-        .catch((err: Error) => toast('读取任务失败：' + err.message))
+        .catch((err) => toastError('读取任务失败：', err))
         .finally(() => setLoading(false));
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -87,7 +87,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
       await api.updateTask(id, changes);
       await load();
     } catch (err) {
-      toast('改不动：' + (err as Error).message);
+      toastError('改不动：', err);
     }
   };
 
@@ -104,7 +104,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
       else toast(task.status === 'done' ? '又变回没做完' : '已勾掉');
       await load();
     } catch (err) {
-      toast('操作失败：' + (err as Error).message);
+      toastError('操作失败：', err);
     }
   };
 
@@ -121,7 +121,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
       await load();
       addRef.current?.focus();
     } catch (err) {
-      toast('新建失败：' + (err as Error).message);
+      toastError('新建失败：', err);
     }
   };
 
@@ -147,7 +147,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
         }
       });
     } catch (err) {
-      toast('删除失败：' + (err as Error).message);
+      toastError('删除失败：', err);
     }
   };
 
@@ -171,7 +171,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
       await load();
       toast(`已删除 ${n} 条任务`);
     } catch (err) {
-      toast('批量删除失败：' + (err as Error).message);
+      toastError('批量删除失败：', err);
     }
   };
 

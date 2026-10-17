@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { Empty, toast } from '../ui';
-import type { GoalHorizon, GoalPoolItem, Id, PoolStatus } from '../../../shared/types';
+import type { GoalHorizon, GoalPoolItem, Id, PoolStatus } from '../../../shared/types';import { toastError, errText } from '../errors';
 
 const HORIZONS: { key: GoalHorizon | 'all' | 'started'; label: string; hint: string }[] = [
   { key: 'this', label: '近期', hint: '条件快成熟了，这阵子就能开工' },
@@ -37,7 +37,7 @@ export default function NextGoals(props: { navigate: (route: string) => void; re
     return api
       .listPool()
       .then(setItems)
-      .catch((err: Error) => toast('读取目标池失败：' + err.message))
+      .catch((err) => toastError('读取目标池失败：', err))
       .finally(() => setLoading(false));
   }, []);
 
@@ -68,7 +68,7 @@ export default function NextGoals(props: { navigate: (route: string) => void; re
       await load();
       toast('记下了，等条件成熟再启动');
     } catch (err) {
-      toast('存不上：' + (err as Error).message);
+      toastError('存不上：', err);
     }
   };
 
@@ -77,7 +77,7 @@ export default function NextGoals(props: { navigate: (route: string) => void; re
       await api.updatePool(id, changes);
       await load();
     } catch (err) {
-      toast('改不动：' + (err as Error).message);
+      toastError('改不动：', err);
     }
   };
 
@@ -92,7 +92,7 @@ export default function NextGoals(props: { navigate: (route: string) => void; re
       });
       void goalId;
     } catch (err) {
-      toast((err as Error).message);
+      toast(errText(err));
     }
   };
 
@@ -102,7 +102,7 @@ export default function NextGoals(props: { navigate: (route: string) => void; re
       await load();
       toast('已删除');
     } catch (err) {
-      toast('删除失败：' + (err as Error).message);
+      toastError('删除失败：', err);
     }
   };
 

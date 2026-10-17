@@ -8,7 +8,7 @@ import { attachmentUrl, htmlToPlainText, sanitizeHtml } from '../../../shared/ht
 import * as rich from '../rich';
 import { describeSaveError, saveStamp } from '../save';
 import { applyOrder, moveWithinGroup } from '../reorder';
-import type { Attachment, Category, Id, Note, NoteListItem, NoteVersion, Tag } from '../../../shared/types';
+import type { Attachment, Category, Id, Note, NoteListItem, NoteVersion, Tag } from '../../../shared/types';import { toastError, errText } from '../errors';
 
 type NoteDetail = Note & { tags: Tag[]; attachments: Attachment[] };
 type CatSel = Id | 'all' | 'unassigned' | 'trash';
@@ -149,7 +149,7 @@ export default function Knowledge(props: {
     api
       .categoryTree()
       .then(setCats)
-      .catch((err: Error) => toast('读取分类失败：' + err.message));
+      .catch((err) => toastError('读取分类失败：', err));
   }, []);
 
   const loadTags = useCallback(() => {
@@ -177,7 +177,7 @@ export default function Knowledge(props: {
             : rows
         );
       })
-      .catch((err: Error) => toast('读取笔记失败：' + err.message));
+      .catch((err) => toastError('读取笔记失败：', err));
   }, [sel, tagId, q]);
 
   useEffect(() => {
@@ -219,7 +219,7 @@ export default function Knowledge(props: {
           setDraftPrompt(null);
         }
       })
-      .catch((err: Error) => toast('打开笔记失败：' + err.message));
+      .catch((err) => toastError('打开笔记失败：', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -318,7 +318,7 @@ export default function Knowledge(props: {
           await api.addAttachmentPath(id, src);
           ok += 1;
         } catch (err) {
-          toast(`「${file.name}」没加上：` + (err as Error).message);
+          toastError(`「${file.name}」没加上：`, err);
         }
       }
       if (ok > 0) {
@@ -356,7 +356,7 @@ export default function Knowledge(props: {
           rich.insertImage(attachmentUrl(att.rel_path), att.file_name);
           ok += 1;
         } catch (err) {
-          toast(`「${file.name}」没插上：` + (err as Error).message);
+          toastError(`「${file.name}」没插上：`, err);
         }
       }
       if (ok > 0) {
@@ -376,7 +376,7 @@ export default function Knowledge(props: {
       const cardId = await api.reviewFromNote(id);
       toast(cardId ? '已经生成复习卡，去复习页就能看到' : '这篇笔记之前已经生成过卡片了');
     } catch (err) {
-      toast('生成失败：' + (err as Error).message);
+      toastError('生成失败：', err);
     }
   };
 
@@ -402,7 +402,7 @@ export default function Knowledge(props: {
         setOpenId(created.id);
       }
     } catch (err) {
-      toast('新建笔记失败：' + (err as Error).message);
+      toastError('新建笔记失败：', err);
     }
   };
 
@@ -413,7 +413,7 @@ export default function Knowledge(props: {
       await loadCats();
       toast('已移动');
     } catch (err) {
-      toast('移动失败：' + (err as Error).message);
+      toastError('移动失败：', err);
     }
   };
 
@@ -433,7 +433,7 @@ export default function Knowledge(props: {
     void api
       .reorderNotes(ids)
       .then(() => loadList())
-      .catch((err: Error) => toast('排序保存失败：' + err.message));
+      .catch((err) => toastError('排序保存失败：', err));
   };
 
   /**
@@ -460,7 +460,7 @@ export default function Knowledge(props: {
       await api.moveCategory(cat.id, dir);
       await loadCats();
     } catch (err) {
-      toast('排序失败：' + (err as Error).message);
+      toastError('排序失败：', err);
     }
   };
 
@@ -478,7 +478,7 @@ export default function Knowledge(props: {
         }
       });
     } catch (err) {
-      toast('删除失败：' + (err as Error).message);
+      toastError('删除失败：', err);
     }
   };
 
@@ -501,7 +501,7 @@ export default function Knowledge(props: {
         }
       });
     } catch (err) {
-      toast('删除分类失败：' + (err as Error).message);
+      toastError('删除分类失败：', err);
     }
   };
 
@@ -521,7 +521,7 @@ export default function Knowledge(props: {
       loadCats();
       if (job.kind === 'rename') loadList();
     } catch (err) {
-      toast('操作失败：' + (err as Error).message);
+      toastError('操作失败：', err);
     }
   };
 
@@ -534,7 +534,7 @@ export default function Knowledge(props: {
       void loadTags();
       void loadList();
     } catch (err) {
-      toast('设置标签失败：' + (err as Error).message);
+      toastError('设置标签失败：', err);
     }
   };
 
@@ -1261,7 +1261,7 @@ export default function Knowledge(props: {
                     className="btn sm ghost"
                     title={att.rel_path}
                     onClick={() => {
-                      void api.openAttachment(att.id, att.rel_path).catch((err: Error) => toast(err.message));
+                      void api.openAttachment(att.id, att.rel_path).catch((err) => toast(errText(err)));
                     }}
                   >
                     {att.file_name.length > 12 ? att.file_name.slice(0, 12) + '…' : att.file_name}
@@ -1383,7 +1383,7 @@ export default function Knowledge(props: {
               props.refreshCount();
               toast(`回收站已清空，删掉 ${n} 篇`);
             } catch (err) {
-              toast('清空失败：' + (err as Error).message);
+              toastError('清空失败：', err);
             }
           }}
         />
@@ -1637,7 +1637,7 @@ function VersionDrawer(props: {
     try {
       await api.rollbackVersion(ver.id);
     } catch (err) {
-      toast('回滚失败：' + (err as Error).message);
+      toastError('回滚失败：', err);
       return;
     }
     toast('已回滚到这个版本', {
@@ -1648,7 +1648,7 @@ function VersionDrawer(props: {
           toast('已恢复到回滚前的内容');
           props.onRolledBack();
         } catch (err) {
-          toast('恢复失败：' + (err as Error).message);
+          toastError('恢复失败：', err);
         }
       }
     });
@@ -1659,7 +1659,7 @@ function VersionDrawer(props: {
     api
       .listVersions(props.noteId)
       .then(setVersions)
-      .catch((err: Error) => toast('读取版本失败：' + err.message));
+      .catch((err) => toastError('读取版本失败：', err));
   }, [props.noteId]);
 
   if (preview) {

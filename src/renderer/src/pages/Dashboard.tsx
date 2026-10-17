@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } 
 import { api } from '../api';
 import { Empty, toast } from '../ui';
 import { fmtDate, relative } from '../format';
-import type { DashboardData, Task } from '../../../shared/types';
+import type { DashboardData, Task } from '../../../shared/types';import { toastError, errText } from '../errors';
 
 export default function Dashboard(props: {
   navigate: (route: string) => void;
@@ -19,7 +19,7 @@ export default function Dashboard(props: {
         setData(d);
         setError('');
       })
-      .catch((err: Error) => setError(err.message));
+      .catch((err) => setError(errText(err)));
   }, []);
 
   useEffect(() => {
@@ -62,7 +62,7 @@ export default function Dashboard(props: {
       else toast('已完成');
       load();
     } catch (err) {
-      toast('操作失败：' + (err as Error).message);
+      toastError('操作失败：', err);
     }
   };
 
@@ -248,7 +248,7 @@ export default function Dashboard(props: {
                       void api
                         .togglePlanItem(item.id, !item.done)
                         .then(load)
-                        .catch((err: Error) => toast('操作失败：' + err.message));
+                        .catch((err) => toastError('操作失败：', err));
                     }}
                   >
                     ✓

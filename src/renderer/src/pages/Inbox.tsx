@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { api } from '../api';
 import { Empty, toast } from '../ui';
 import { PRIORITY_LABEL, PRIORITY_ORDER, relative } from '../format';
-import type { InboxItem, InboxKind, InboxStatus, TaskPriority } from '../../../shared/types';
+import type { InboxItem, InboxKind, InboxStatus, TaskPriority } from '../../../shared/types';import { toastError } from '../errors';
 
 const KIND_LABEL: Record<InboxKind, string> = { idea: '想法', read: '待读', organize: '待整理' };
 const KIND_ICON: Record<InboxKind, string> = { idea: '💡', read: '📖', organize: '🧹' };
@@ -72,7 +72,7 @@ export default function Inbox(props: {
           setItems(list);
           props.refreshCount();
         })
-        .catch((err: Error) => toast('读取收集箱失败：' + err.message))
+        .catch((err) => toastError('读取收集箱失败：', err))
         .finally(() => setLoading(false));
     },
     [props, status]
@@ -102,7 +102,7 @@ export default function Inbox(props: {
       if (status !== 'open') setStatus('open');
       toast('已存进收集箱');
     } catch (err) {
-      toast('保存失败：' + (err as Error).message);
+      toastError('保存失败：', err);
     }
     inputRef.current?.focus();
   };
@@ -143,7 +143,7 @@ export default function Inbox(props: {
         toast(`已转成${REF_LABEL[target]}，数据已存好（${REF_LABEL[target]}页在第二版补全）`);
       }
     } catch (err) {
-      toast('转换失败：' + (err as Error).message);
+      toastError('转换失败：', err);
     }
   };
 
@@ -159,7 +159,7 @@ export default function Inbox(props: {
         }
       });
     } catch (err) {
-      toast('操作失败：' + (err as Error).message);
+      toastError('操作失败：', err);
     }
   };
 
@@ -171,7 +171,7 @@ export default function Inbox(props: {
     setItems((prev) => prev.filter((i) => i.id !== item.id));
     const timer = setTimeout(() => {
       pendingDelete.current.delete(item.id);
-      void api.deleteInbox(item.id).catch((err: Error) => toast('删除失败：' + err.message));
+      void api.deleteInbox(item.id).catch((err) => toastError('删除失败：', err));
     }, 5000);
     pendingDelete.current.set(item.id, timer);
     toast('已彻底删除', {

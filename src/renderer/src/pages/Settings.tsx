@@ -4,6 +4,7 @@ import { ConfirmDialog, toast } from '../ui';
 import { fmtDateTime } from '../format';
 import { describeSaveError, saveStamp } from '../save';
 import type { AppInfo, AppSettings, BackupEntry } from '../../../shared/types';
+import { toastError } from '../errors';
 
 export default function Settings(props: {
   theme: 'light' | 'dark';
@@ -77,7 +78,7 @@ export default function Settings(props: {
       toast('备份完成');
       setBackups(await api.listBackups());
     } catch (err) {
-      toast('备份失败：' + (err as Error).message);
+      toastError('备份失败：', err);
     } finally {
       setBusy('');
     }
@@ -92,7 +93,7 @@ export default function Settings(props: {
       setRestoring(null);
       load();
     } catch (err) {
-      toast('恢复失败：' + (err as Error).message);
+      toastError('恢复失败：', err);
     } finally {
       setBusy('');
     }
@@ -105,7 +106,7 @@ export default function Settings(props: {
       setIntegrity(result);
       toast(result === 'ok' ? '数据库自检通过' : '自检发现问题：' + result, { ttl: 6000 });
     } catch (err) {
-      toast('自检失败：' + (err as Error).message);
+      toastError('自检失败：', err);
     } finally {
       setBusy('');
     }

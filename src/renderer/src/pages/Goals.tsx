@@ -3,7 +3,7 @@ import { api } from '../api';
 import { ConfirmDialog, Empty, toast } from '../ui';
 import { SaveButton, useManualSave } from '../save';
 import { fmtDate } from '../format';
-import type { GoalDetail, GoalSummary, Id } from '../../../shared/types';
+import type { GoalDetail, GoalSummary, Id } from '../../../shared/types';import { toastError, errText } from '../errors';
 
 /**
  * 当前目标：最多 3 个在跑，进度由关键结果与关联任务自动汇总。
@@ -36,7 +36,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
             return list[0]?.id ?? null;
           });
         })
-        .catch((err: Error) => toast('读取目标失败：' + err.message))
+        .catch((err) => toastError('读取目标失败：', err))
         .finally(() => setLoading(false));
     },
     [showArchived]
@@ -53,7 +53,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
         setDetail(d);
         setGoalNote(d?.goal.description ?? '');
       })
-      .catch((err: Error) => toast('读不到目标详情：' + err.message));
+      .catch((err) => toastError('读不到目标详情：', err));
   }, []);
 
   useEffect(() => {
@@ -76,7 +76,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
       props.refreshCount();
       toast('目标建好了，接着拆关键结果');
     } catch (err) {
-      toast((err as Error).message);
+      toast(errText(err));
     }
   };
 
@@ -87,7 +87,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
       loadDetail(id);
       props.refreshCount();
     } catch (err) {
-      toast('改不动：' + (err as Error).message);
+      toastError('改不动：', err);
     }
   };
 
@@ -116,7 +116,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
       await load();
       loadDetail(detail.goal.id);
     } catch (err) {
-      toast('加不上：' + (err as Error).message);
+      toastError('加不上：', err);
     }
   };
 
@@ -130,7 +130,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
       await load();
       loadDetail(detail.goal.id);
     } catch (err) {
-      toast('加不上：' + (err as Error).message);
+      toastError('加不上：', err);
     }
   };
 
@@ -149,7 +149,7 @@ export default function Goals(props: { refreshCount: () => void }): ReactNode {
       props.refreshCount();
       toast('目标已删除（挂着的任务保留，只是不再关联）');
     } catch (err) {
-      toast('删除失败：' + (err as Error).message);
+      toastError('删除失败：', err);
     }
   };
 

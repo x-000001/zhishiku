@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { Empty, Modal, toast } from '../ui';
-import { fmtDate, fmtDateTime, todayLocal } from '../format';
+import { fmtDate, fmtDateTime, todayLocal } from '../format';import { toastError } from '../errors';
+
 import type {
   NoteListItem,
   RetroStats,
@@ -46,7 +47,7 @@ export default function Review(): ReactNode {
         setDue(d);
         setAllCards(list);
       })
-      .catch((err: Error) => toast('读取复习数据失败：' + err.message));
+      .catch((err) => toastError('读取复习数据失败：', err));
   }, []);
 
   useEffect(() => {
@@ -76,7 +77,7 @@ export default function Review(): ReactNode {
       setRevealed(false);
       await loadReview();
     } catch (err) {
-      toast('打分失败：' + (err as Error).message);
+      toastError('打分失败：', err);
     }
   };
 
@@ -90,7 +91,7 @@ export default function Review(): ReactNode {
       await loadReview();
       toast('卡片加好了');
     } catch (err) {
-      toast('加不上：' + (err as Error).message);
+      toastError('加不上：', err);
     }
   };
 
@@ -104,7 +105,7 @@ export default function Review(): ReactNode {
         onAction: () => setTab('review')
       });
     } catch (err) {
-      toast('生成失败：' + (err as Error).message);
+      toastError('生成失败：', err);
     }
   };
 
@@ -151,7 +152,7 @@ export default function Review(): ReactNode {
       await api.listRetros(retroType).then(setHistory);
       toast('复盘已保存');
     } catch (err) {
-      toast('保存失败：' + (err as Error).message);
+      toastError('保存失败：', err);
     }
   };
 

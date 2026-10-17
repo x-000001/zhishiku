@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { toast } from '../ui';
+import { toastError } from '../errors';
 
 export default function QuickCapture(props: { onSaved?: () => void }): ReactNode {
   const [text, setText] = useState('');
@@ -22,7 +23,7 @@ export default function QuickCapture(props: { onSaved?: () => void }): ReactNode
       props.onSaved?.();
       window.close();
     } catch (err) {
-      toast('保存失败：' + (err as Error).message);
+      toastError('保存失败：', err);
     } finally {
       setBusy(false);
     }

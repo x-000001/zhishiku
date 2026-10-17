@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { api } from '../api';
 import { Empty, toast } from '../ui';
 import { fmtDate, todayLocal } from '../format';
-import type { CalendarEntry, GoalSummary, Id, PlanDetail, PlanSummary } from '../../../shared/types';
+import type { CalendarEntry, GoalSummary, Id, PlanDetail, PlanSummary } from '../../../shared/types';import { toastError } from '../errors';
 
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
 
@@ -48,7 +48,7 @@ export default function Plans(props: { refreshCount: () => void }): ReactNode {
         setPlans(list);
         setSelected((current) => (keep && current && list.some((p) => p.id === current) ? current : (list[0]?.id ?? null)));
       })
-      .catch((err: Error) => toast('读取学习计划失败：' + err.message))
+      .catch((err) => toastError('读取学习计划失败：', err))
       .finally(() => setLoading(false));
   }, []);
 
@@ -101,7 +101,7 @@ export default function Plans(props: { refreshCount: () => void }): ReactNode {
       props.refreshCount();
       toast('计划建好了，接着往里排条目');
     } catch (err) {
-      toast('建不上：' + (err as Error).message);
+      toastError('建不上：', err);
     }
   };
 
@@ -112,7 +112,7 @@ export default function Plans(props: { refreshCount: () => void }): ReactNode {
       loadDetail(id);
       props.refreshCount();
     } catch (err) {
-      toast('改不动：' + (err as Error).message);
+      toastError('改不动：', err);
     }
   };
 
@@ -130,7 +130,7 @@ export default function Plans(props: { refreshCount: () => void }): ReactNode {
       loadDetail(detail.plan.id);
       if (tab === 'calendar') loadCalendar();
     } catch (err) {
-      toast('加不上：' + (err as Error).message);
+      toastError('加不上：', err);
     }
   };
 
@@ -150,7 +150,7 @@ export default function Plans(props: { refreshCount: () => void }): ReactNode {
       props.refreshCount();
       toast('计划已删除');
     } catch (err) {
-      toast('删除失败：' + (err as Error).message);
+      toastError('删除失败：', err);
     }
   };
 

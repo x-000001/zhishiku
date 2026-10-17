@@ -12,7 +12,7 @@ import NextGoals from './pages/NextGoals';
 import Plans from './pages/Plans';
 import Review from './pages/Review';
 import QuickCapture from './pages/QuickCapture';
-import type { SearchHit } from '../../shared/types';
+import type { SearchHit } from '../../shared/types';import { toastError } from './errors';
 
 export interface RouteProps {
   openNote: (id: number) => void;
@@ -379,7 +379,7 @@ function SearchModal({ onClose, openNote }: { onClose: () => void; openNote: (id
       api
         .search(text, 40)
         .then(setHits)
-        .catch((err: Error) => toast('搜索失败：' + err.message))
+        .catch((err) => toastError('搜索失败：', err))
         .finally(() => setBusy(false));
     }, 160);
     return () => window.clearTimeout(timer);
