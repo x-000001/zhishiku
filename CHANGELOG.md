@@ -1,10 +1,12 @@
-# 版本变更记录（CHANGELOG）
+﻿# 版本变更记录（CHANGELOG）
 
 本文件只记「用户能感知到的变化」和「修掉的 bug」；每一次改动背后的验证数字（单测 / e2e / 强杀 / 打包自检）都写在这里。更早的版本（0.1.0–0.3.0 的细节）按模块散在 [README 第六部分](README.md) 和 [开发计划.md](开发计划.md) 里，这里只做汇总。
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 `主.次.修订`。
 
 ## [0.8.1] - 2026-10-18
+
+发布：[GitHub Release v0.8.1](https://github.com/x-000001/zhishiku/releases/tag/v0.8.1)（附件 JwKB-Setup-0.8.1.exe，112,538,444 字节）
 
 ### 修复
 
