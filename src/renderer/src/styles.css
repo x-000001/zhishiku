@@ -3711,3 +3711,157 @@ html[data-theme='dark'] body::after {
     transition: none;
   }
 }
+
+/* ==========================================================================
+   第五版（阶段9）：响应式断点
+   ≥1200 完整三栏 + 232px 侧栏；1024–1199 侧栏收成 60px 图标条；
+   768–1023 侧栏变抽屉（汉堡按钮 + 蒙层）；<768 单栏。
+   档位同时写进 <html data-layout>（App.tsx 的 useLayout），这里用媒体查询做外观，
+   两者说的是同一件事，e2e 会同时核对。
+
+   说明：图标条档的下沿压到了 1199（原始提示词写的是 1439）——因为这台机器默认窗口
+   内宽 1279px，正好落在 1024–1439 里；照搬的话默认尺寸一开就是图标条，日常没法用。
+   想严格照搬：把下面的 1199 改成 1439、App.tsx 里 readLayout 的 1200 改成 1440。
+   ========================================================================== */
+
+/* 汉堡按钮：平时不出现，只有抽屉/单栏档才显示 */
+.topbar-burger {
+  display: none;
+}
+
+/* 顶栏那一份窗口按钮也默认藏着（宽屏用侧栏品牌行里的那份） */
+.topbar-lights {
+  display: none;
+}
+
+/* 1024–1199（图标条档）：分类列、列表各收一点，把空间让给编辑器 */
+@media (max-width: 1199px) {
+  .kb-tree {
+    width: 176px;
+    flex-basis: 176px;
+  }
+  .kb-list {
+    width: 244px;
+    flex-basis: 244px;
+  }
+}
+
+/* ≤1023（抽屉档）：侧栏离场变成抽屉；首页 / 下一阶段 / 复习的两栏并成一栏 */
+@media (max-width: 1023px) {
+  .topbar-burger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 auto;
+    font-size: 15px;
+  }
+
+  /* 侧栏成了抽屉，窗口按钮跟着顶栏走 —— 不然窄窗口关不掉、也最大不了 */
+  .topbar-lights {
+    display: flex;
+    width: auto;
+    margin-right: 2px;
+  }
+  .sidebar .win-lights {
+    display: none;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 232px;
+    flex: 0 0 232px;
+    z-index: 70;
+    transform: translateX(-104%);
+    transition: transform 0.24s var(--smooth-ease);
+    box-shadow: 0 30px 70px -22px rgba(15, 23, 42, 0.5);
+    will-change: transform;
+  }
+  .sidebar.drawer-open {
+    transform: none;
+  }
+
+  .sidebar-veil {
+    position: fixed;
+    inset: 0;
+    z-index: 65;
+    background: rgba(15, 23, 42, 0.32);
+    backdrop-filter: blur(2px);
+    animation: jw-fade-in 160ms var(--smooth-ease) both;
+  }
+
+  .dash-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .kb-tree {
+    width: 156px;
+    flex-basis: 156px;
+  }
+  .kb-list {
+    width: 212px;
+    flex-basis: 212px;
+  }
+
+  .topbar {
+    gap: 8px;
+    padding: 0 12px;
+  }
+  .topbar h1 {
+    font-size: 16px;
+  }
+  .topbar kbd {
+    display: none;
+  }
+  .content {
+    padding: 14px;
+  }
+}
+
+/* <768（单栏档）：知识库的分类列、列表、编辑器上下排；顶栏再紧一点 */
+@media (max-width: 767px) {
+  .kb {
+    flex-direction: column;
+  }
+  .kb-tree {
+    width: auto;
+    flex: 0 0 auto;
+    max-height: 26vh;
+    overflow-y: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .kb-list {
+    width: auto;
+    flex: 1 1 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .kb-editor {
+    flex: 1.2 1 0;
+  }
+  .editor-head {
+    flex-wrap: wrap;
+  }
+  .content {
+    padding: 10px;
+  }
+  .topbar {
+    padding: 0 10px;
+  }
+  .topbar h1 {
+    font-size: 15px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
+  .sidebar-veil {
+    animation: none;
+  }
+}

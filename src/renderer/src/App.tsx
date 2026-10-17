@@ -44,6 +44,62 @@ function useHashRoute(): [string, (route: string) => void] {
   return [route, navigate];
 }
 
+/**
+ * 第五版（阶段9）：窗口宽度分四档 —— 只影响外观（侧栏形态、知识库几栏），不动任何功能。
+ * ≥1200 完整；1024–1199 侧栏收成图标条；768–1023 侧栏变抽屉；<768 单栏。
+ */
+export type Layout = 'wide' | 'rail' | 'drawer' | 'single';
+
+export function readLayout(): Layout {
+  const w = window.innerWidth || document.documentElement.clientWidth || 0;
+  if (w < 768) return 'single';
+  if (w < 1024) return 'drawer';
+  if (w < 1200) return 'rail';
+  return 'wide';
+}
+
+function useLayout(): Layout {
+  const [layout, setLayout] = useState<Layout>(readLayout);
+  useEffect(() => {
+    const onResize = () => setLayout(readLayout());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return layout;
+}
+
+/* 第五版（阶段9）：三个窗口按钮只有一套逻辑，但得渲染两份 ——
+   宽屏挂在侧栏品牌行；窗口收窄到抽屉/单栏档时侧栏整体离场，
+   顶栏这一份才顶上来（CSS 按 html[data-layout] / 媒体查询切换显示），
+   否则窄窗口下就没有关闭、最小化、最大化的入口了。 */
+function WinLights({ className }: { className?: string }): ReactNode {
+  return (
+    <div className={'win-lights' + (className ? ' ' + className : '')}>
+      <button
+        type="button"
+        className="win-light win-close"
+        aria-label="关闭窗口"
+        title="关闭"
+        onClick={() => void api.winClose()}
+      />
+      <button
+        type="button"
+        className="win-light win-min"
+        aria-label="最小化窗口"
+        title="最小化"
+        onClick={() => void api.winMinimize()}
+      />
+      <button
+        type="button"
+        className="win-light win-max"
+        aria-label="最大化或还原窗口"
+        title="最大化 / 还原"
+        onClick={() => void api.winToggleMax()}
+      />
+    </div>
+  );
+}
+
 export default function App(): ReactNode {
   const [route, navigate] = useHashRoute();
   const [collapsed, setCollapsed] = useState(false);
@@ -51,6 +107,8 @@ export default function App(): ReactNode {
   const [openNoteId, setOpenNoteId] = useState<number | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const layout = useLayout();
   const openNote = useCallback(
     (id: number) => {
       setOpenNoteId(id);
@@ -82,6 +140,21 @@ export default function App(): ReactNode {
       /* 忽略：主进程拼的 ?theme= 才是主路径，localStorage 只是兜底 */
     }
   }, [theme]);
+
+  // 第五版（阶段9）：窗口一跨档，就让侧栏跟着换形态 ——
+  // 图标条档自动收起（复用折叠态那套样式与气泡），抽屉/单栏档展开成完整抽屉，
+  // 宽屏恢复完整侧栏。这些只动外观，不改任何功能。
+  useEffect(() => {
+    document.documentElement.dataset.layout = layout;
+    if (layout === 'rail') setCollapsed(true);
+    else setCollapsed(false);
+    if (layout === 'drawer' || layout === 'single') setDrawerOpen(false);
+  }, [layout]);
+
+  // 换页就把抽屉收起来（不然点完导航它还挡着正文）
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [route]);
 
   // 第五版（阶段8）：用户手动切主题时，给 <html> 挂一下 .theme-transitioning，
   // 让全局走 0.3s 的颜色过渡，之后摘掉——平时不拖慢任何交互。
@@ -123,33 +196,13 @@ export default function App(): ReactNode {
   }
 
   return (
-    <div className="app">
-      <aside className={collapsed ? 'sidebar collapsed' : 'sidebar'}>
+    <div className={'app' + (drawerOpen ? ' drawer-open' : '')}>
+      <aside
+        className={'sidebar' + (collapsed ? ' collapsed' : '') + (drawerOpen ? ' drawer-open' : '')}
+      >
         <div className="brand">
           {/* 第五版（方案B）：窗口是无边框的，这三个点就是系统标题栏 */}
-          <div className="win-lights">
-            <button
-              type="button"
-              className="win-light win-close"
-              aria-label="关闭窗口"
-              title="关闭"
-              onClick={() => void api.winClose()}
-            />
-            <button
-              type="button"
-              className="win-light win-min"
-              aria-label="最小化窗口"
-              title="最小化"
-              onClick={() => void api.winMinimize()}
-            />
-            <button
-              type="button"
-              className="win-light win-max"
-              aria-label="最大化或还原窗口"
-              title="最大化 / 还原"
-              onClick={() => void api.winToggleMax()}
-            />
-          </div>
+          <WinLights />
           <span className="brand-mark">Jw</span>
           <span className="brand-text">知识库</span>
         </div>
@@ -185,8 +238,22 @@ export default function App(): ReactNode {
         </div>
       </aside>
 
+      {/* 第五版（阶段9）：抽屉档的蒙层，点它就把侧栏收回去 */}
+      {drawerOpen ? <div className="sidebar-veil" onClick={() => setDrawerOpen(false)} /> : null}
+
       <main className="main">
         <header className="topbar">
+          {/* 窄窗口（抽屉/单栏档）才出现，宽屏时 display:none */}
+          <WinLights className="topbar-lights" />
+          <button
+            type="button"
+            className="icon-btn topbar-burger"
+            aria-label={drawerOpen ? '收起侧栏' : '展开侧栏'}
+            title={drawerOpen ? '收起侧栏' : '展开侧栏'}
+            onClick={() => setDrawerOpen((v) => !v)}
+          >
+            ☰
+          </button>
           <h1>{title}</h1>
           <div className="spacer" />
           <div className="searchbox" onClick={() => setSearchOpen(true)}>

@@ -40,7 +40,7 @@ PASS  排序是紧急在前、重要居中、一般在后  —  位置=1,2,3
 PASS  按「紧急」筛选只剩紧急  —  紧急=1 命中=1
 PASS  后端会把老式数字优先级归一成三档文字  —  urgent
 PASS  首页数据能读  —  today=2026-10-17 待办=0
-PASS  首页统计了收集箱与最近笔记  —  待整理=1 最近笔记=3
+PASS  首页统计了收集箱与最近笔记  —  待整理=0 最近笔记=3
 PASS  首页包含复习提醒结构  —  复习卡=0
 PASS  首页包含目标进度结构  —  目标=0
 PASS  preload 暴露了取真实路径的 pathForFile  —  function
@@ -100,10 +100,10 @@ PASS  删父分类后子分类上提一级，没有跟着一起没  —  tmpSub.
 PASS  分类能上移，顺序真的换了  —  ["工作","学习","生活","项目","资料收藏","排序自检分类","待删子分类"] → ["工作","学习","生活","项目","资料收藏","待删子分类","排序自检分类"]
 PASS  设置能读  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","versionKeep":20,"theme":"light","notifyEnabled":true,"closeToTray":true}
 PASS  设置能改并持久化  —  versionKeep=5
-PASS  手动备份成功  —  手动_2026-10-17_123114
+PASS  手动备份成功  —  手动_2026-10-17_125218
 PASS  备份列表可读  —  备份数=2
 PASS  插图真的复制进了数据目录的附件夹（原件删了也不影响）  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments\2026-10\e2e-pixel.png
-PASS  备份目录里有快照且含 kb.db  —  2026-10-17_123114, 手动_2026-10-17_123114
+PASS  备份目录里有快照且含 kb.db  —  2026-10-17_125218, 手动_2026-10-17_125218
 PASS  数据库文件落在数据目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.db
 PASS  附件目录已建好  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments
 PASS  页面 / 有实际内容  —  今日待办
@@ -135,12 +135,12 @@ PASS  页面 /inbox 有实际内容  —  随手记一条
 
 快捷键 Ctrl+Alt+Space 可以在任何地方呼出小窗口快速记录，存好自动进这里。
 
-待处理 · 1 条
-逐条清理
+待处理 · 0 条
 💡 0
-📖 1
+📖 0
 🧹 0
-待处
+待处理
+已处理
 PASS  页面 /knowledge 有实际内容  —  分类
 ＋子分类
 ＋
@@ -286,7 +286,7 @@ PASS  列表上方有「拖动卡片可以调顺序」的提示  —  true
 PASS  第五版：可拖动的笔记行是「抓住」手型  —  cursor=grab
 PASS  第五版：拖动中的卡片倾斜浮起、且没有过渡（跟手）  —  transform=matrix(1.02984, 0.017976, -0.017976, 1.02984, 0, 0) transition=0s cursor=grabbing
 PASS  第五版：落点是 3px 品牌色圆头高亮线 + 目标行浅底  —  class=list-row drag-able drop-after 线高=3px 色=rgb(10, 114, 232)
-PASS  第五版：松手落位的卡片回弹一下（弹簧动画）  —  animation=jw-settle transform=matrix(0.98192, -0.00117254, 0.00117254, 0.98192, 0, 0)
+PASS  第五版：松手落位的卡片回弹一下（弹簧动画）  —  animation=jw-settle transform=matrix(0.98192, -0.00117288, 0.00117288, 0.98192, 0, 0)
 PASS  第五版：卡片是毛玻璃（backdrop-filter 带模糊）  —  backdrop-filter=blur(20px) saturate(1.8)
 PASS  第五版：鼠标移上去卡片浮起 translateY(-2px) scale(1.005)  —  hover 前=none hover 后 translateY=-2 scaleX=1.005
 PASS  第五版：首页目标进度是环形（conic-gradient + 环里带百分比）  —  背景=conic-gradient(rgb(10, 114, 232) 50%, color(srgb 0.87451 0 环里=50% --p=50%
@@ -306,12 +306,12 @@ PASS  第五版：正文对比度够长读（≥ 12:1）  —  底色=rgb(255, 2
 PASS  第五版：按钮默认态有底色 / 描边 / 圆角  —  底色=rgb(255, 255, 255) 描边=1px rgb(223, 228, 238) 圆角=8px
 PASS  第五版：悬停态换底色 + 抬 1px  —  底色 rgb(255, 255, 255) → rgb(242, 244, 249)，位移 -1px
 PASS  第五版：按下态缩到 0.97（「按进去」的手感）  —  按下时 scaleX=0.97 scaleY=0.97
-PASS  第五版：输入框聚焦态有品牌色描边 + 光环  —  描边=rgb(20, 120, 232) 光环=rgba(0, 122, 255, 0.173) 0px 0px 0px 2.58699px
-PASS  第五版：键盘 Tab 聚焦时画 :focus-visible 光环  —  {"tag":"BUTTON.btn","fv":true,"shadow":"rgba(9, 72, 145, 0.094) 0px 0.763437px 1.52687px 0.70969px"}
+PASS  第五版：输入框聚焦态有品牌色描边 + 光环  —  描边=rgb(14, 116, 232) 光环=rgba(0, 122, 255, 0.184) 0px 0px 0px 2.76232px
+PASS  第五版：键盘 Tab 聚焦时画 :focus-visible 光环  —  {"tag":"BUTTON.btn","fv":true,"shadow":"rgba(5, 96, 197, 0.12) 0px 0.542783px 1.08557px 1.37165px"}
 PASS  第五版：禁用态 45% 透明 + not-allowed + 无投影  —  {"opacity":"0.45","cursor":"not-allowed","shadow":"none"}
 PASS  第五版：加载态是 12px 转圈（无限循环，按钮不变宽）  —  {"w":"12px","h":"12px","anim":"jw-spin","iter":"infinite","radius":"50%","cursor":"progress"}
 PASS  第五版：收起侧栏后文字收成 0 宽度（不是卸载），三个点竖排留在品牌上方  —  宽 60px 文字宽 0px 透明度 0 三点坐标 (24,18) (24,35) (24,52)（竖排） 容器 12×12px 图标宽 28px 右侧溢出 -16px 文字仍在DOM=true
-PASS  第五版：展开是插值动画（侧栏宽度 / 文字宽度 / 三个点走 transform），三点回到一排  —  侧栏[width, flex-basis @ 0.18s, 0.18s] 文字[max-width, opacity, transform @ 0.18s, 0.14s, 0.18s] 三点容器[opacity @ 0.12s] 每个点[transform, filter @ 0.24s, 0.15s] 宽度轨迹 60→60→229→232 回到 232px / 文字 27px / 三点坐标 (18,24) (37,24) (56,24)（一排）
+PASS  第五版：展开是插值动画（侧栏宽度 / 文字宽度 / 三个点走 transform），三点回到一排  —  侧栏[width, flex-basis @ 0.18s, 0.18s] 文字[max-width, opacity, transform @ 0.18s, 0.14s, 0.18s] 三点容器[opacity @ 0.12s] 每个点[transform, filter @ 0.24s, 0.15s] 宽度轨迹 60→60→60→224→229→232 回到 232px / 文字 27px / 三点坐标 (18,24) (37,24) (56,24)（一排）
 PASS  第五版：不再弹系统提示（title 已去掉），只有折叠态才有毛玻璃气泡  —  title="" data-tip="首页"；展开态 opacity=0；折叠态 content="首页" opacity=1 延迟=0.32s 圆角=7px 背景模糊=blur(14px) saturate(1.6) 侧栏溢出=visible 导航列溢出=visible
 PASS  工具栏能插入表格、光标进单元格后多出增删行列按钮  —  插入表格✕|table=true|rowBtn=2|colBtn=2
 PASS  选中文字点「加粗」真的会加粗  —  <p><b>界面自检正文</b></p>
@@ -331,16 +331,23 @@ PASS  第五版：搜索命中行悬停浮起（上移 1px + 投影）  —  命
 PASS  第五版：Toast 从右侧滑入，用带回弹的曲线  —  动画=jw-toast-in 滑入位移=332.4 曲线=cubic-bezier(0.34, 1.56, 0.64, 1)
 PASS  第五版：Toast 挂在右下角（贴右 20px）  —  right=20px backdrop=blur(16px) saturate(1.6)
 PASS  任务详情抽屉里有「保存」按钮  —  保存
-PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 12:32:18
-PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 12:32:20
+PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 12:53:22
+PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 12:53:23
 PASS  浅色主题能切回  —  light
-PASS  自绘标题栏有红黄绿三个点，且没有文字节点  —  点数=3 文本="" 名字=关闭窗口|最小化窗口|最大化或还原窗口
+PASS  自绘标题栏有红黄绿三个点，且没有文字节点  —  点数=3 文本="" 名字=关闭窗口|最小化窗口|最大化或还原窗口 宽屏顶栏那份=none
 PASS  窗口确实是无边框的（系统标题栏高度≈0）  —  outer-inner 高差=6px
 PASS  顶栏是拖拽区、导航项不是（不然点不动）  —  topbar=drag brand=drag nav=no-drag
 PASS  点绿点能最大化、再点能还原窗口  —  宽 1279 → 1536 → 1279（还原点了 1 次）
 PASS  窗口系统材质与系统版本相符（Win11 要 acrylic）  —  material=acrylic build=26200
 PASS  CSP 已收紧（打包版不联网）  —  default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: jw-att:; font-src 'self' data:; connect-src 'self'
+PASS  第五版：窗口 ≥1200 是完整三栏（侧栏 232px、没有汉堡、首页两栏）  —  宽=1600 档=wide 侧栏=232px 汉堡=none 首页列数=2 横向溢出=0 窗口键=侧栏
+PASS  第五版：窗口 1024–1199 侧栏自动收成 60px 图标条  —  宽=1100 档=rail 侧栏=60px 汉堡=none
+PASS  第五版：窗口 768–1023 侧栏变成抽屉（默认藏在左边、出现汉堡、两栏并一栏）  —  宽=950 档=drawer 侧栏=fixed x=-241 汉堡=flex 首页列数=1 横向溢出=0
+PASS  第五版：侧栏变抽屉后，窗口按钮挪到顶栏（不然窄窗口关不掉）  —  顶栏那份=flex 可见的点=3 侧栏那份=none x=12 在汉堡左边=true
+PASS  第五版：点汉堡抽屉从左边滑出来，还带一层蒙层  —  抽屉 x=0 宽=232 展开=true 蒙层=true
+PASS  第五版：窗口 <768 变单栏（知识库列表与编辑器上下排、分类列还看得见）  —  宽=720 档=single 知识库方向=column 分类列可见=true 横向溢出=0 顶栏窗口键=flex
+PASS  第五版：窗口拉大回去，侧栏自动恢复成完整版  —  宽=1279 档=wide 侧栏=232px 汉堡=none 横向溢出=0
 ------------------------------------------------
-合计 184 项，通过 184，失败 0
+合计 191 项，通过 191，失败 0
 截图目录：C:\Users\29785\Desktop\Jw的app\tests\e2e\shots
 应用进程：exit=null signal=SIGTERM

@@ -467,6 +467,7 @@ const CHECK_SCRIPT = `(async () => {
     rec('手动备份成功', !!backup && !!backup.name, backup && backup.name);
     const backups = await inv('backup:list');
     rec('备份列表可读', Array.isArray(backups) && backups.length >= 1, '备份数=' + (backups ? backups.length : 0));
+
   } catch (err) {
     rec('自检脚本本身没报错', false, err && err.message);
   }
@@ -1468,14 +1469,14 @@ try {
           const sb = document.querySelector('.sidebar');
           const lb = document.querySelector('.nav-label');
           const bt = document.querySelector('.brand-text');
-          const wl = document.querySelector('.win-lights');
+          const wl = document.querySelector('.brand .win-lights');
           const mk = document.querySelector('.brand-mark');
           if (!sb) return JSON.stringify({ err: 'no-sidebar' });
           const cs = lb ? getComputedStyle(lb) : null;
           const sbBox = sb.getBoundingClientRect();
           const wlBox = wl ? wl.getBoundingClientRect() : null;
           const mkBox = mk ? mk.getBoundingClientRect() : null;
-          const dots = [...document.querySelectorAll('.win-light')].map((d) => {
+          const dots = [...document.querySelectorAll('.brand .win-light')].map((d) => {
             const b = d.getBoundingClientRect();
             return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width) };
           });
@@ -1525,8 +1526,8 @@ try {
         return JSON.stringify({
           side: p(document.querySelector('.sidebar')),
           label: p(document.querySelector('.nav-label')),
-          lights: p(document.querySelector('.win-lights')),
-          dot: p(document.querySelector('.win-light'))
+          lights: p(document.querySelector('.brand .win-lights')),
+          dot: p(document.querySelector('.brand .win-light'))
         });
       })()`)
     )
@@ -2253,9 +2254,11 @@ try {
   const titlebar = await cdp.eval(
     `(() => {
       const region = (el) => { const cs = getComputedStyle(el); return cs.webkitAppRegion || cs.getPropertyValue('-webkit-app-region') || ''; };
-      const lights = [...document.querySelectorAll('.win-light')];
+      const lights = [...document.querySelectorAll('.brand .win-light')];
+      const topLights = document.querySelector('.topbar .win-lights');
       return JSON.stringify({
         lights: lights.length,
+        topLights: topLights ? getComputedStyle(topLights).display : 'none',
         labels: lights.map((b) => b.getAttribute('aria-label')).join('|'),
         text: lights.map((b) => b.textContent.trim()).join(''),
         chrome: window.outerHeight - window.innerHeight,
@@ -2268,8 +2271,8 @@ try {
   const tb = JSON.parse(String(titlebar));
   results.push({
     name: '自绘标题栏有红黄绿三个点，且没有文字节点',
-    ok: tb.lights === 3 && tb.text === '',
-    detail: `点数=${tb.lights} 文本="${tb.text}" 名字=${tb.labels}`
+    ok: tb.lights === 3 && tb.text === '' && tb.topLights === 'none',
+    detail: `点数=${tb.lights} 文本="${tb.text}" 名字=${tb.labels} 宽屏顶栏那份=${tb.topLights}`
   });
   results.push({
     name: '窗口确实是无边框的（系统标题栏高度≈0）',
@@ -2325,6 +2328,170 @@ try {
     ok: cspText.includes("connect-src 'self'") && !cspText.includes('localhost') && !cspText.includes('ws:'),
     detail: cspText.slice(0, 160)
   });
+
+  // ---- 第五版（阶段9）：响应式断点（用 CDP 改视口宽度，四档逐个量） ----
+  const setViewport = async (width, height) => {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await cdp.eval('window.dispatchEvent(new Event("resize")); true');
+    await sleep(620);
+  };
+  const bandRead = async () =>
+    JSON.parse(
+      String(
+        await cdp.eval(`(() => {
+    const de = document.documentElement;
+    const sb = document.querySelector('.sidebar');
+    const sr = sb.getBoundingClientRect();
+    const scs = getComputedStyle(sb);
+    const burger = document.querySelector('.topbar-burger');
+    const dash = document.querySelector('.dash-grid');
+    const kb = document.querySelector('.kb');
+    const tree = document.querySelector('.kb-tree');
+    return JSON.stringify({
+      w: Math.round(window.innerWidth),
+      layout: de.dataset.layout || '',
+      sbW: Math.round(sr.width),
+      sbX: Math.round(sr.x),
+      sbPos: scs.position,
+      burger: burger ? getComputedStyle(burger).display : 'none',
+      lightsTop: (() => { const t = document.querySelector('.topbar .win-lights'); return t ? getComputedStyle(t).display : 'none'; })(),
+      lightsBrand: (() => { const b = document.querySelector('.brand .win-lights'); return b ? getComputedStyle(b).display : 'none'; })(),
+      dashCols: dash ? getComputedStyle(dash).gridTemplateColumns.split(' ').filter(Boolean).length : 0,
+      kbDir: kb ? getComputedStyle(kb).flexDirection : '',
+      treeShown: tree ? getComputedStyle(tree).display !== 'none' : false,
+      overflowX: Math.max(0, Math.round(de.scrollWidth - window.innerWidth))
+    });
+  })()`)
+      )
+    );
+
+  await cdp.eval("location.hash = '/'; true");
+  await sleep(620);
+
+  await setViewport(1600, 900);
+  const wideBand = await bandRead();
+  results.push({
+    name: '第五版：窗口 ≥1200 是完整三栏（侧栏 232px、没有汉堡、首页两栏）',
+    ok:
+      wideBand.layout === 'wide' &&
+      wideBand.sbW >= 224 &&
+      wideBand.sbW <= 240 &&
+      wideBand.burger === 'none' &&
+      wideBand.dashCols === 2 &&
+      wideBand.overflowX <= 1 &&
+      wideBand.lightsTop === 'none' &&
+      wideBand.lightsBrand === 'flex',
+    detail: `宽=${wideBand.w} 档=${wideBand.layout} 侧栏=${wideBand.sbW}px 汉堡=${wideBand.burger} 首页列数=${wideBand.dashCols} 横向溢出=${wideBand.overflowX} 窗口键=侧栏`
+  });
+
+  await setViewport(1100, 900);
+  const railBand = await bandRead();
+  results.push({
+    name: '第五版：窗口 1024–1199 侧栏自动收成 60px 图标条',
+    ok: railBand.layout === 'rail' && railBand.sbW <= 66 && railBand.burger === 'none',
+    detail: `宽=${railBand.w} 档=${railBand.layout} 侧栏=${railBand.sbW}px 汉堡=${railBand.burger}`
+  });
+
+  await setViewport(950, 900);
+  const drawerBand = await bandRead();
+  results.push({
+    name: '第五版：窗口 768–1023 侧栏变成抽屉（默认藏在左边、出现汉堡、两栏并一栏）',
+    ok:
+      drawerBand.layout === 'drawer' &&
+      drawerBand.sbPos === 'fixed' &&
+      drawerBand.sbX < 0 &&
+      drawerBand.burger !== 'none' &&
+      drawerBand.dashCols === 1 &&
+      drawerBand.overflowX <= 1 &&
+      drawerBand.lightsTop === 'flex' &&
+      drawerBand.lightsBrand === 'none',
+    detail: `宽=${drawerBand.w} 档=${drawerBand.layout} 侧栏=${drawerBand.sbPos} x=${drawerBand.sbX} 汉堡=${drawerBand.burger} 首页列数=${drawerBand.dashCols} 横向溢出=${drawerBand.overflowX}`
+  });
+  await cdp.shot('responsive-drawer-closed');
+
+  // 侧栏一离场，窗口按钮必须还在 —— 挪到顶栏，且在汉堡左边、真的可点
+  const drawerLights = JSON.parse(
+    String(
+      await cdp.eval(`(() => {
+    const t = document.querySelector('.topbar .win-lights');
+    const b = document.querySelector('.brand .win-lights');
+    const r = t.getBoundingClientRect();
+    const burger = document.querySelector('.topbar-burger').getBoundingClientRect();
+    const dots = [...t.querySelectorAll('.win-light')];
+    return JSON.stringify({
+      top: getComputedStyle(t).display,
+      brand: b ? getComputedStyle(b).display : 'none',
+      dots: dots.filter((el) => el.getBoundingClientRect().width >= 11).length,
+      x: Math.round(r.x),
+      leftOfBurger: r.x <= burger.x,
+      inView: r.x >= 0 && r.right < window.innerWidth
+    });
+  })()`)
+    )
+  );
+  results.push({
+    name: '第五版：侧栏变抽屉后，窗口按钮挪到顶栏（不然窄窗口关不掉）',
+    ok:
+      drawerLights.top === 'flex' &&
+      drawerLights.brand === 'none' &&
+      drawerLights.dots === 3 &&
+      drawerLights.leftOfBurger === true &&
+      drawerLights.inView === true,
+    detail: `顶栏那份=${drawerLights.top} 可见的点=${drawerLights.dots} 侧栏那份=${drawerLights.brand} x=${drawerLights.x} 在汉堡左边=${drawerLights.leftOfBurger}`
+  });
+
+  await cdp.eval("(() => { const b = document.querySelector('.topbar-burger'); if (b) b.click(); return true; })()");
+  await sleep(460);
+  const drawerOpen = JSON.parse(
+    String(
+      await cdp.eval(`(() => {
+    const sb = document.querySelector('.sidebar');
+    const r = sb.getBoundingClientRect();
+    return JSON.stringify({
+      x: Math.round(r.x),
+      w: Math.round(r.width),
+      open: sb.classList.contains('drawer-open'),
+      veil: !!document.querySelector('.sidebar-veil')
+    });
+  })()`)
+    )
+  );
+  results.push({
+    name: '第五版：点汉堡抽屉从左边滑出来，还带一层蒙层',
+    ok: drawerOpen.open === true && drawerOpen.x >= -1 && drawerOpen.w >= 224 && drawerOpen.veil === true,
+    detail: `抽屉 x=${drawerOpen.x} 宽=${drawerOpen.w} 展开=${drawerOpen.open} 蒙层=${drawerOpen.veil}`
+  });
+  await cdp.shot('responsive-drawer-open');
+  await cdp.eval("(async () => { const v = document.querySelector('.sidebar-veil'); if (v) v.click(); await new Promise((r) => setTimeout(r, 380)); return true; })()");
+
+  await cdp.eval("location.hash = '/knowledge'; true");
+  await sleep(680);
+  await setViewport(720, 860);
+  const singleBand = await bandRead();
+  results.push({
+    name: '第五版：窗口 <768 变单栏（知识库列表与编辑器上下排、分类列还看得见）',
+    ok:
+      singleBand.layout === 'single' &&
+      singleBand.kbDir === 'column' &&
+      singleBand.treeShown === true &&
+      singleBand.overflowX <= 1 &&
+      singleBand.lightsTop === 'flex',
+    detail: `宽=${singleBand.w} 档=${singleBand.layout} 知识库方向=${singleBand.kbDir} 分类列可见=${singleBand.treeShown} 横向溢出=${singleBand.overflowX} 顶栏窗口键=${singleBand.lightsTop}`
+  });
+  await cdp.shot('responsive-single');
+
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+  await cdp.eval('window.dispatchEvent(new Event("resize")); true');
+  await sleep(700);
+  const backBand = await bandRead();
+  results.push({
+    name: '第五版：窗口拉大回去，侧栏自动恢复成完整版',
+    ok: backBand.layout === 'wide' && backBand.sbW >= 224 && backBand.burger === 'none' && backBand.overflowX <= 1,
+    detail: `宽=${backBand.w} 档=${backBand.layout} 侧栏=${backBand.sbW}px 汉堡=${backBand.burger} 横向溢出=${backBand.overflowX}`
+  });
+  await cdp.eval("location.hash = '/'; true");
+  await sleep(520);
+
 } catch (err) {
   results.push({ name: '自检过程没崩', ok: false, detail: err && err.message });
 } finally {

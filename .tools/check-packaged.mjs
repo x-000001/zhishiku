@@ -160,6 +160,43 @@ for (const route of ['/inbox', '/knowledge', '/tasks', '/plans', '/goals', '/nex
   await cdp.shot('packaged' + route.replace(/\//g, '-'));
 }
 
+// ---- 第五版（阶段9）：打包版也要有响应式断点 —— 把视口压到抽屉档量一遍 ----
+await cdp.send('Emulation.setDeviceMetricsOverride', { width: 950, height: 900, deviceScaleFactor: 1, mobile: false });
+await cdp.eval('window.dispatchEvent(new Event("resize")); true');
+await sleep(900);
+const narrow = JSON.parse(
+  String(
+    await cdp.eval(`(() => {
+      const de = document.documentElement;
+      const burger = document.querySelector('.topbar-burger');
+      const tl = document.querySelector('.topbar .win-lights');
+      const bl = document.querySelector('.brand .win-lights');
+      return JSON.stringify({
+        w: Math.round(window.innerWidth),
+        layout: de.dataset.layout || '',
+        burger: burger ? getComputedStyle(burger).display : 'none',
+        topLights: tl ? getComputedStyle(tl).display : 'none',
+        brandLights: bl ? getComputedStyle(bl).display : 'none',
+        overflowX: Math.max(0, Math.round(de.scrollWidth - window.innerWidth))
+      });
+    })()`)
+  )
+);
+check(
+  '打包版窄窗口变成抽屉档（汉堡出现、没有横向滚动条）',
+  narrow.layout === 'drawer' && narrow.burger !== 'none' && narrow.overflowX <= 1,
+  `宽=${narrow.w} 档=${narrow.layout} 汉堡=${narrow.burger} 横向溢出=${narrow.overflowX}`
+);
+check(
+  '打包版窄窗口下窗口按钮在顶栏（关得掉窗口）',
+  narrow.topLights === 'flex' && narrow.brandLights === 'none',
+  `顶栏那份=${narrow.topLights} 侧栏那份=${narrow.brandLights}`
+);
+await cdp.shot('packaged-drawer');
+await cdp.send('Emulation.clearDeviceMetricsOverride');
+await cdp.eval('window.dispatchEvent(new Event("resize")); true');
+await sleep(700);
+
 // ---- 第五版（阶段8）：主题记忆 —— 真的重启一次进程，验证首帧就是存下来的主题 ----
 await cdp.eval(`window.api.invoke('settings:set', { key: 'theme', value: 'dark' })`);
 await sleep(600);
