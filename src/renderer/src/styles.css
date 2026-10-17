@@ -54,6 +54,10 @@
   --quick-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
 
   --sidebar-w: 232px;
+  /* 动画专项：图标条宽度、侧栏收起时要位移的距离、那条慢动画的时长 */
+  --rail-w: 60px;
+  --slide-shift: calc(var(--sidebar-w) - var(--rail-w));
+  --slide-dur: 0.38s;
 
   /* ============================================================
      第五版：macOS 毛玻璃令牌（浅色）
@@ -202,7 +206,18 @@ select {
   overflow: hidden;
 }
 
+/* 第五版（动画专项）：侧栏改成「定宽 + 位移」。
+   面板本身永远 232px 宽，收起时整块 translateX 出去 172px，面板里的四块内容反向位移
+   同样的距离 —— 于是图标、三个点、底部按钮在屏幕上原地不动，只有右边缘滑走，滑出去
+   的那截被 overflow:hidden 擦掉。整条动画只碰 transform：不再逐帧改 width，也就不会
+   让侧栏里的文字每帧重新排版（那才是原来卡顿最贵的一步）。
+   代价是侧栏必须脱离文档流，正文区得用 margin-left 跟着让位（见 .main）。 */
 .sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 46;
   width: var(--sidebar-w);
   flex: 0 0 var(--sidebar-w);
   background: var(--bg-panel);
@@ -210,13 +225,34 @@ select {
   display: flex;
   flex-direction: column;
   padding: 12px 8px;
-  transition: width 0.16s ease, flex-basis 0.16s ease;
+  transform: translateX(0);
+  transition:
+    transform var(--slide-dur) var(--smooth-ease),
+    box-shadow var(--slide-dur) var(--smooth-ease),
+    background-color 0.2s var(--smooth-ease);
+  will-change: transform;
   overflow: hidden;
 }
 
 .sidebar.collapsed {
-  width: 60px;
-  flex-basis: 60px;
+  transform: translateX(calc(-1 * var(--slide-shift)));
+  box-shadow: 8px 0 30px -22px rgba(15, 23, 42, 0.38);
+}
+
+/* 面板里的内容反向跟着走：屏幕上位置不变，被面板右边缘裁掉的是外侧那截 */
+.sidebar > .brand,
+.sidebar > .nav,
+.sidebar > .nav-sep,
+.sidebar > .nav-foot {
+  transform: translateX(0);
+  transition: transform var(--slide-dur) var(--smooth-ease);
+}
+
+.sidebar.collapsed > .brand,
+.sidebar.collapsed > .nav,
+.sidebar.collapsed > .nav-sep,
+.sidebar.collapsed > .nav-foot {
+  transform: translateX(var(--slide-shift));
 }
 
 .brand {
@@ -318,6 +354,13 @@ select {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* 侧栏脱离文档流后由它让位；收起时跟着侧栏同一拍、同一条曲线挪到 60px */
+  margin-left: var(--sidebar-w);
+  transition: margin-left var(--slide-dur) var(--smooth-ease);
+}
+
+.app:has(> .sidebar.collapsed) > .main {
+  margin-left: var(--rail-w);
 }
 
 .topbar {
@@ -3116,44 +3159,57 @@ label.field {
 }
 
 /* ================= 第五版：侧栏折叠/展开不再闪跳（bugfix） =================
-   病因有两个：
-   ① 文字是「折叠时卸载、展开时挂载」的，展开那一帧文字就整块出现，而侧栏宽度还在
-      从 60px 长到 232px，于是出现「先闪一下、再挤过去」的跳；
-   ② 三个点用 `display: none` 藏起来，展开时又突然插回来，把品牌行整块推开。
-   治法：文字与圆点一直挂在 DOM 里，只是把宽度/透明度收成 0（GPU 能插值），
-   侧栏本身走同一条 180ms 缓停曲线，两者同一拍进出。 */
+   原来的毛病：① 文字「折叠时卸载、展开时挂载」，展开那一帧文字整块出现；
+   ② 三个点 `display:none` 藏起来，展开时突然插回来把品牌行推开。
+   中间版本用 `max-width` 给文字做过渡 —— 但 max-width 同样是布局属性，每帧都要
+   重新排版文字，快是快了，仍然在抖。
+   动画专项（现在）：侧栏本身只走 transform（见基础规则 .sidebar），文字只做
+   opacity + translateX，一个字宽都不改；面板右边缘扫过去时顺手把文字擦掉，
+   两个效果叠在同一拍上（--slide-dur 0.38s）。 */
 .sidebar {
-  transition: width 0.18s var(--smooth-ease), flex-basis 0.18s var(--smooth-ease);
-  will-change: width;
+  will-change: transform;
 }
 
 .win-lights {
-  transition: width 0.18s var(--smooth-ease), opacity 0.12s linear,
-    margin-right 0.18s var(--smooth-ease), gap 0.18s var(--smooth-ease);
+  transition: opacity 0.12s linear;
 }
 
 .brand-text,
 .nav-label,
 .foot-text,
 .count {
-  max-width: 240px;
+  max-width: none;
   overflow: hidden;
   white-space: nowrap;
-  transition: max-width 0.18s var(--smooth-ease), opacity 0.14s linear,
-    transform 0.18s var(--smooth-ease);
+  transition:
+    opacity 0.16s linear,
+    transform 0.22s var(--smooth-ease);
 }
 
 .sidebar.collapsed .brand-text,
 .sidebar.collapsed .nav-label,
 .sidebar.collapsed .foot-text,
 .sidebar.collapsed .count {
-  max-width: 0;
   opacity: 0;
-  transform: translateX(-6px);
+  transform: translateX(-10px);
 }
 
-/* 折叠时只在图标上停一下，文字收干净，别留下半截字 */
-.sidebar.collapsed .nav-item,
+/* 折叠时面板在「内部」也要缩成图标条那么宽：
+   面板本身为了做 transform 动画一直是 232 宽，如果不收内容宽度，brand 会按 208 宽居中，
+   三个点就被摆到 x=110（跑到图标条外面的正文上了）。
+   60(rail) − 12×2(侧栏左右 padding) = 36px，正好是老折叠态的内容宽度。 */
+.sidebar.collapsed > .brand,
+.sidebar.collapsed > .nav,
+.sidebar.collapsed > .nav-sep,
+.sidebar.collapsed > .nav-foot {
+  width: 36px;
+}
+
+/* 折叠时只在图标上停一下：药丸收进图标条、文字裁干净，别留下半截字 */
+.sidebar.collapsed .nav-item {
+  overflow: hidden;
+}
+
 .sidebar.collapsed .brand {
   overflow: hidden;
 }
@@ -3161,6 +3217,11 @@ label.field {
 /* 尊重系统「减少动态效果」：折叠就是直接切，不插值 */
 @media (prefers-reduced-motion: reduce) {
   .sidebar,
+  .sidebar > .brand,
+  .sidebar > .nav,
+  .sidebar > .nav-sep,
+  .sidebar > .nav-foot,
+  .main,
   .win-lights,
   .brand-text,
   .nav-label,
@@ -3643,10 +3704,10 @@ label.field {
 }
 
 /* 侧栏有 backdrop-filter（自成层叠上下文），气泡就算 z-index 60 也出不去；
-   把整个侧栏抬到 .main 之上，气泡才不会被正文卡片盖住。 */
+   把整个侧栏抬到 .main 之上，气泡才不会被正文卡片盖住。
+   （动画专项：面板本身已经是 position: fixed，这里只补层级） */
 .sidebar.collapsed {
-  position: relative;
-  z-index: 45;
+  z-index: 49;
 }
 
 @media (min-height: 700px) {
@@ -3710,6 +3771,37 @@ html[data-theme='dark'] body::after {
   body::after {
     transition: none;
   }
+}
+
+/* ==========================================================================
+   第五版（动画专项）：动起来的时候别让 GPU 干重活
+   - 侧栏收起/展开的那 0.38s 里，把侧栏自己的 backdrop-filter 换成实色：
+     backdrop 每帧都要按新的相对位移重新采样 + 重新模糊，是最贵的一步；
+     实色变量深浅两套主题都有（--bg-panel），视觉上只是从「半透」变「实」，
+     380ms 的滑动里几乎看不出来，动画结束（App.tsx 里的 440ms 定时器）再恢复毛玻璃。
+   - 卡片/列表行只在悬停时挂 will-change（平时不留常驻合成层：这本子上的列表可能有
+     几百行，常驻 translateZ(0) 会给每一行都分一个层，显存反而吃不消）。
+   - 列表超过 50 条时不做逐条位移过渡，改成整体淡入（见 .kb-list-body.many）。
+   ========================================================================== */
+html.sidebar-animating .sidebar {
+  background: var(--bg-panel);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.card:hover,
+.card:focus-within,
+.list-row:hover,
+.task-row:hover,
+.stat:hover,
+.review-stage:hover {
+  will-change: transform;
+}
+
+/* 长列表：批量删除/过滤时不做逐条位移，新出现的行整体淡入 */
+.kb-list-body.many .list-row {
+  transition: none;
+  animation: jw-fade-in 0.18s var(--smooth-ease) both;
 }
 
 /* ==========================================================================
@@ -3777,12 +3869,23 @@ html[data-theme='dark'] body::after {
     flex: 0 0 232px;
     z-index: 70;
     transform: translateX(-104%);
-    transition: transform 0.24s var(--smooth-ease);
+    transition:
+      transform var(--slide-dur) var(--smooth-ease),
+      box-shadow var(--slide-dur) var(--smooth-ease);
     box-shadow: 0 30px 70px -22px rgba(15, 23, 42, 0.5);
     will-change: transform;
   }
+  /* 抽屉档里侧栏是「离场/进场」而不是「折叠」，折叠态不能把抽屉又拉回来 */
+  .sidebar.collapsed {
+    transform: translateX(-104%);
+  }
   .sidebar.drawer-open {
     transform: none;
+  }
+
+  /* 侧栏离场了，正文不需要为它留位 */
+  .main {
+    margin-left: 0;
   }
 
   .sidebar-veil {

@@ -899,6 +899,28 @@ try {
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 4, y: 4 });
     await sleep(120);
   }
+  // ---- 动画专项：过渡只许挂在合成/绘制属性上，别拿布局属性做动画（宽度/边距/定位会回流） ----
+  const animProps = JSON.parse(
+    String(
+      await cdp.eval(`(() => {
+    const pick = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { prop: cs.transitionProperty, wc: cs.willChange || 'auto' };
+    };
+    return JSON.stringify({ card: pick('.dash-grid .card'), row: pick('.list-row'), stat: pick('.stat') });
+  })()`)
+    )
+  );
+  const layoutProp = /(^|[\s,])(width|height|margin|margin-left|margin-top|left|top|right|bottom|padding)([\s,]|$)/;
+  const noLayoutAnim = (o) => !!o && !layoutProp.test(o.prop);
+  results.push({
+    name: '第五版：卡片/列表行的过渡只挂在合成或绘制属性上（没有 width / height / margin / left / top）',
+    ok: noLayoutAnim(animProps.card) && (animProps.row ? noLayoutAnim(animProps.row) : true) && noLayoutAnim(animProps.stat),
+    detail: `卡片[${animProps.card ? animProps.card.prop : 'n/a'}] 列表行[${animProps.row ? animProps.row.prop : 'n/a'}] 统计块[${animProps.stat ? animProps.stat.prop : 'n/a'}]`
+  });
+
   await cdp.shot('home-card-hover');
 
   // ---- 第五版 阶段6：首页可视化（进度条 / 环形目标进度 / 完成与逾期配色 / 里程碑时间轴） ----
@@ -1481,7 +1503,12 @@ try {
             return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width) };
           });
           return JSON.stringify({
+            // 面板本身定宽 232（动画只走 transform），能不能看见要看右边缘；
+            // visW = 落在视口里的那一段宽度，就是「肉眼看到的侧栏宽度」
             w: Math.round(sbBox.width),
+            visW: Math.round(Math.max(0, Math.min(sbBox.right, window.innerWidth) - Math.max(sbBox.left, 0))),
+            right: Math.round(sbBox.right),
+            transform: getComputedStyle(sb).transform,
             labelW: lb ? Math.round(lb.getBoundingClientRect().width) : -1,
             labelOpacity: cs ? Number(cs.opacity) : -1,
             labelText: lb ? lb.textContent : '',
@@ -1500,7 +1527,8 @@ try {
   const toggleSidebar = async (wantCollapsed) => {
     for (let i = 0; i < 5; i++) {
       const st = await sbRead();
-      const okNow = wantCollapsed ? st.w <= 64 : st.w > 64;
+      // 收起 = 只看得见 60px（面板自身仍是 232，靠 transform 挪出去）
+      const okNow = wantCollapsed ? st.visW <= 64 : st.visW > 64;
       if (okNow) return true;
       await cdp.eval("(() => { const b = document.querySelector('.nav-foot .icon-btn'); if (b) b.click(); return !!b; })()");
       await sleep(520);
@@ -1536,21 +1564,22 @@ try {
     const sb = document.querySelector('.sidebar');
     let seen = [];
     // 侧栏此刻应当是收起的；点一下展开并录帧。万一这一下丢了，最多重试 3 次再录。
+    // 动画只走 transform，所以录「右边缘的屏幕坐标」60 → 232 长回去的过程。
     for (let attempt = 0; attempt < 3; attempt++) {
-      const w0 = Math.round(sb.getBoundingClientRect().width);
-      seen = [w0];
+      const r0 = Math.round(sb.getBoundingClientRect().right);
+      seen = [r0];
       const t0 = performance.now();
       document.querySelector('.nav-foot .icon-btn').click();
       await new Promise((res) => {
         const tick = () => {
-          seen.push(Math.round(sb.getBoundingClientRect().width));
-          if (performance.now() - t0 > 260) res();
+          seen.push(Math.round(sb.getBoundingClientRect().right));
+          if (performance.now() - t0 > 280) res();
           else requestAnimationFrame(tick);
         };
         requestAnimationFrame(tick);
       });
-      if (Math.max(...seen) > w0) break;
-      await new Promise((r) => setTimeout(r, 240));
+      if (Math.max(...seen) > r0) break;
+      await new Promise((r) => setTimeout(r, 260));
     }
     return JSON.stringify(seen);
   })()`);
@@ -1565,8 +1594,13 @@ try {
   const backState = await sbRead();
   await cdp.shot('sidebar-expanded');
   const grew = midFrames.every((w, i) => i === 0 || w >= midFrames[i - 1] - 1);
-  const sideWired = wiring.side.includes('width') && wiring.side.includes('flex-basis');
-  const labelWired = wiring.label.includes('max-width');
+  // 动画专项：侧栏只许动 transform（width / flex-basis 由布局定死，不参与动画），
+  // 文字只许动 opacity + transform（不再用 max-width 做过渡）
+  const sideWired = wiring.side.includes('transform') && !wiring.side.includes('width');
+  const labelWired =
+    wiring.label.includes('opacity') &&
+    wiring.label.includes('transform') &&
+    !wiring.label.includes('max-width');
   const dotsWired = wiring.dot.includes('transform');
   // 三个点：折叠时同一列（x 相同、y 逐颗往下），展开时同一排（y 相同、x 逐颗往右）
   const dotsColumn = (st) =>
@@ -1583,31 +1617,70 @@ try {
     st.dots[2].x - st.dots[1].x >= 14;
   const dotsText = (st) => (st.dots || []).map((d) => `(${d.x},${d.y})`).join(' ');
   results.push({
-    name: '第五版：收起侧栏后文字收成 0 宽度（不是卸载），三个点竖排留在品牌上方',
+    name: '第五版：收起侧栏后只在左边留 60px 图标条（面板靠 transform 挪出去），文字收成 0 宽度、三个点竖排',
     ok:
-      collapsedState.w > 0 &&
-      collapsedState.w <= 64 &&
+      collapsedState.visW > 0 &&
+      collapsedState.visW <= 64 &&
+      collapsedState.w === 232 &&
       collapsedState.labelW <= 1 &&
       collapsedState.labelOpacity <= 0.05 &&
       labelStaysInDom &&
       dotsColumn(collapsedState) &&
+      collapsedState.dots.every((d) => d.x < collapsedState.visW) &&
       collapsedState.lightsW <= 16 &&
       collapsedState.markW >= 24 &&
       collapsedState.markOverflow <= 1,
-    detail: `宽 ${collapsedState.w}px 文字宽 ${collapsedState.labelW}px 透明度 ${collapsedState.labelOpacity} 三点坐标 ${dotsText(collapsedState)}（竖排） 容器 ${collapsedState.lightsW}×${collapsedState.lightsH}px 图标宽 ${collapsedState.markW}px 右侧溢出 ${collapsedState.markOverflow}px 文字仍在DOM=${labelStaysInDom}`
+    detail: `可见宽 ${collapsedState.visW}px（面板仍 ${collapsedState.w}px / 右边缘 ${collapsedState.right}px） 文字宽 ${collapsedState.labelW}px 透明度 ${collapsedState.labelOpacity} 三点坐标 ${dotsText(collapsedState)}（竖排） 容器 ${collapsedState.lightsW}×${collapsedState.lightsH}px 图标宽 ${collapsedState.markW}px 右侧溢出 ${collapsedState.markOverflow}px 文字仍在DOM=${labelStaysInDom}`
   });
   results.push({
-    name: '第五版：展开是插值动画（侧栏宽度 / 文字宽度 / 三个点走 transform），三点回到一排',
+    name: '第五版：展开是插值动画（侧栏只动 transform：右边缘 60→232，文字只动 opacity/transform），三点回到一排',
     ok:
       sideWired &&
       labelWired &&
       dotsWired &&
       grew &&
-      backState.w >= 200 &&
+      backState.visW >= 200 &&
       backState.labelW > 20 &&
       backState.labelOpacity === 1 &&
       dotsRow(backState),
-    detail: `侧栏[${wiring.side}] 文字[${wiring.label}] 三点容器[${wiring.lights}] 每个点[${wiring.dot}] 宽度轨迹 ${midFrames.slice(0, 8).join('→')} 回到 ${backState.w}px / 文字 ${backState.labelW}px / 三点坐标 ${dotsText(backState)}（一排）`
+    detail: `侧栏[${wiring.side}] 文字[${wiring.label}] 三点容器[${wiring.lights}] 每个点[${wiring.dot}] 右边缘轨迹 ${midFrames.slice(0, 8).join('→')} 回到 ${backState.visW}px / 文字 ${backState.labelW}px / 三点坐标 ${dotsText(backState)}（一排）`
+  });
+
+  // ---- 动画专项：收起/展开那 0.38s 里临时关掉侧栏毛玻璃（backdrop 每帧重算最贵） ----
+  const glassSwap = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const root = document.documentElement;
+        const sb = document.querySelector('.sidebar');
+        const read = () => ({
+          cls: root.classList.contains('sidebar-animating'),
+          bf: getComputedStyle(sb).backdropFilter,
+          bg: getComputedStyle(sb).backgroundColor
+        });
+        const before = read();
+        document.querySelector('.nav-foot .icon-btn').click();
+        await sleep(90);
+        const during = read();
+        await sleep(560);
+        const after = read();
+        // 刚才收起了，再点开恢复展开态 —— 后面的断言都按展开的侧栏走
+        document.querySelector('.nav-foot .icon-btn').click();
+        await sleep(620);
+        return JSON.stringify({ before, during, after });
+      })()`)
+    )
+  );
+  results.push({
+    name: '第五版：收起/展开那一下侧栏临时换成实色（动画中不重算毛玻璃），停手后自己恢复',
+    ok:
+      glassSwap.before.cls === false &&
+      /blur/.test(glassSwap.before.bf) &&
+      glassSwap.during.cls === true &&
+      glassSwap.during.bf === 'none' &&
+      glassSwap.after.cls === false &&
+      /blur/.test(glassSwap.after.bf),
+    detail: `动画前 class=${glassSwap.before.cls} 毛玻璃=${glassSwap.before.bf}；动画中 class=${glassSwap.during.cls} 毛玻璃=${glassSwap.during.bf} 底色=${glassSwap.during.bg}；停手后 class=${glassSwap.after.cls} 毛玻璃=${glassSwap.after.bf}`
   });
 
   // ---- 展开态不弹任何导航提示；折叠态悬停才浮出毛玻璃气泡（用户反馈第 2、3 条） ----
@@ -2352,6 +2425,8 @@ try {
       layout: de.dataset.layout || '',
       sbW: Math.round(sr.width),
       sbX: Math.round(sr.x),
+      // 面板定宽 232、靠 transform 挪；肉眼看到的宽度是「落在视口里的那一段」
+      sbVisW: Math.round(Math.max(0, Math.min(sr.right, window.innerWidth) - Math.max(sr.left, 0))),
       sbPos: scs.position,
       burger: burger ? getComputedStyle(burger).display : 'none',
       lightsTop: (() => { const t = document.querySelector('.topbar .win-lights'); return t ? getComputedStyle(t).display : 'none'; })(),
@@ -2388,8 +2463,8 @@ try {
   const railBand = await bandRead();
   results.push({
     name: '第五版：窗口 1024–1199 侧栏自动收成 60px 图标条',
-    ok: railBand.layout === 'rail' && railBand.sbW <= 66 && railBand.burger === 'none',
-    detail: `宽=${railBand.w} 档=${railBand.layout} 侧栏=${railBand.sbW}px 汉堡=${railBand.burger}`
+    ok: railBand.layout === 'rail' && railBand.sbVisW <= 66 && railBand.burger === 'none',
+    detail: `宽=${railBand.w} 档=${railBand.layout} 可见宽=${railBand.sbVisW}px（面板 ${railBand.sbW}px） 汉堡=${railBand.burger}`
   });
 
   await setViewport(950, 900);
@@ -2441,11 +2516,18 @@ try {
   });
 
   await cdp.eval("(() => { const b = document.querySelector('.topbar-burger'); if (b) b.click(); return true; })()");
-  await sleep(460);
+  // 抽屉滑出是 0.38s 的 transform 动画；软件渲染下偶尔会晚几帧才开始，所以轮询到就位为止
   const drawerOpen = JSON.parse(
     String(
-      await cdp.eval(`(() => {
+      await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const sb = document.querySelector('.sidebar');
+    let x = -999;
+    for (let i = 0; i < 14; i++) {
+      await sleep(60);
+      x = Math.round(sb.getBoundingClientRect().x);
+      if (x >= -1) break;
+    }
     const r = sb.getBoundingClientRect();
     return JSON.stringify({
       x: Math.round(r.x),
@@ -2513,7 +2595,7 @@ try {
       resizeLock.during.resizing === true &&
       /^0s/.test(resizeLock.during.dur) &&
       resizeLock.after.resizing === false &&
-      /0\.18s/.test(resizeLock.after.dur),
+      /0\.38s/.test(resizeLock.after.dur),
     detail: `拖之前=class:${resizeLock.before.resizing} 拖之中=class:${resizeLock.during.resizing} 过渡:${resizeLock.during.dur} 停手后=class:${resizeLock.after.resizing} 过渡:${resizeLock.after.dur}`
   });
 

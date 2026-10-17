@@ -183,6 +183,22 @@ export default function App(): ReactNode {
     setTheme(next);
   }, []);
 
+  // 第五版（动画专项）：收起/展开那 0.38s 里给 <html> 挂 .sidebar-animating，
+  // 让侧栏暂时用实色代替毛玻璃（每帧重算 backdrop 是最贵的一步），动画结束再摘掉。
+  const sidebarTimer = useRef(0);
+  const toggleSidebar = useCallback(() => {
+    const root = document.documentElement;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    if (!reduce) {
+      root.classList.add('sidebar-animating');
+      window.clearTimeout(sidebarTimer.current);
+      sidebarTimer.current = window.setTimeout(() => {
+        root.classList.remove('sidebar-animating');
+      }, 440);
+    }
+    setCollapsed((c) => !c);
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key.toLowerCase() === 'k') {
@@ -245,7 +261,7 @@ export default function App(): ReactNode {
             type="button"
             className="icon-btn"
             title={collapsed ? '展开侧栏' : '收起侧栏'}
-            onClick={() => setCollapsed((c) => !c)}
+            onClick={toggleSidebar}
           >
             {collapsed ? '»' : '«'}
           </button>

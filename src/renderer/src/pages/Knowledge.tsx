@@ -748,7 +748,8 @@ export default function Knowledge(props: {
           ) : null}
         </div>
 
-        <div className="kb-list-body">
+        {/* 第五版（动画专项）：超过 50 条时不做逐条位移过渡，新行整体淡入（见 styles.css .many） */}
+        <div className={'kb-list-body' + (list.length > 50 ? ' many' : '')}>
           {list.length === 0 ? (
             <Empty>
               {sel === 'trash'
