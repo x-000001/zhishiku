@@ -4584,14 +4584,22 @@ html[data-theme='dark'] {
 
 /* 第六版修正：番茄钟悬浮按钮可拖动。
    位置一律用 transform 表达（不碰 left/top，避免逐帧重排）；
-   拖动时关掉过渡，松手回弹用现有的 --spring-ease 弹簧曲线。 */
+   拖动时关掉过渡，松手回弹用现有的 --spring-ease 弹簧曲线。
+   0.8.1：z-index 抬到侧栏（46/49）之上，否则拖到左边会被侧栏盖住点不到；
+   整块声明 no-drag，别让标题栏的 -webkit-app-region: drag 把鼠标事件吃掉。 */
 .focus-dock {
   position: fixed;
   right: 18px;
   bottom: 18px;
-  z-index: 40;
+  z-index: 55;
+  -webkit-app-region: no-drag;
   transition: transform 0.18s var(--spring-ease);
   will-change: transform;
+}
+
+/* 里面的按钮 / 面板永远可点，不受窗口拖拽区影响 */
+.focus-dock * {
+  -webkit-app-region: no-drag;
 }
 
 .focus-dock.dragging {

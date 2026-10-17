@@ -3,6 +3,17 @@ import { api, onFocusState } from './api';
 import { toast } from './ui';
 import { toastError } from './errors';
 import { DEFAULT_FOCUS_MINUTES, FOCUS_PRESET_MINUTES, formatClock, formatSpan } from '../../shared/focus';
+import {
+  clampFabPos,
+  fabBasePoint,
+  fabSizeOf,
+  FAB_FALLBACK_SIZE,
+  parseFabPos,
+  snapFabEdge,
+  type FabPos,
+  type FabSize,
+  type FabView,
+} from './fabPos';
 import type { FocusState, FocusSummary } from '../../shared/types';
 
 /**
@@ -38,28 +49,13 @@ function saveMinutes(minutes: number): void {
 const POS_KEY = 'jw-focus-fab-pos';
 /** 位移超过这个距离才算拖拽，否则当成点击（触控板抖动也不至于误判） */
 const DRAG_THRESHOLD = 4;
-/** 贴边时至少留这么多像素在窗口里 */
-const EDGE = 8;
-/** 0.8.0：松手时离左/右边缘小于这个距离，就自动吸附过去 */
-const SNAP_DISTANCE = 50;
-/** 吸附到边上时预留的边距（比 EDGE 大一点，看着不贴死） */
-const SNAP_MARGIN = 16;
 
-type FabPos = { tx: number; ty: number };
-const DEFAULT_POS: FabPos = { tx: 0, ty: 0 };
-
-function readSavedPos(): FabPos {
+function readStoredPosRaw(): string | null {
   try {
-    const raw = localStorage.getItem(POS_KEY);
-    if (!raw) return DEFAULT_POS;
-    const parsed = JSON.parse(raw) as Partial<FabPos> | null;
-    if (typeof parsed?.tx === 'number' && typeof parsed?.ty === 'number') {
-      return { tx: parsed.tx, ty: parsed.ty };
-    }
+    return localStorage.getItem(POS_KEY);
   } catch {
-    /* 坏数据 / localStorage 不可用：回到默认右下角 */
+    return null;
   }
-  return DEFAULT_POS;
 }
 
 function savePos(pos: FabPos): void {
@@ -70,41 +66,8 @@ function savePos(pos: FabPos): void {
   }
 }
 
-/**
- * 把位移夹在窗口内。
- * 按钮在 CSS 里是 `right:18px; bottom:18px`，没有定位时它的左上角在
- * `(winW - 18 - w, winH - 18 - h)`；tx / ty 是这个点相对默认位置的偏移。
- */
-function clampPos(tx: number, ty: number, dock: HTMLElement | null): FabPos {
-  const w = dock?.offsetWidth || 120;
-  const h = dock?.offsetHeight || 38;
-  const baseLeft = window.innerWidth - 18 - w;
-  const baseTop = window.innerHeight - 18 - h;
-  const minX = EDGE - baseLeft;
-  const maxX = window.innerWidth - EDGE - w - baseLeft;
-  const minY = EDGE - baseTop;
-  const maxY = window.innerHeight - EDGE - h - baseTop;
-  const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), Math.max(lo, hi));
-  return { tx: clamp(tx, minX, maxX), ty: clamp(ty, minY, maxY) };
-}
-
-/**
- * 0.8.0：边缘吸附。
- * 松手时算一下悬浮球离窗口左/右边缘还有多远，小于 SNAP_DISTANCE 就把横向位置
- * 吸到 SNAP_MARGIN 处；纵向保持用户拖到的高度。最后再过一次 clampPos，保证不会飞出窗口。
- */
-function snapToEdge(pos: FabPos, dock: HTMLElement | null): FabPos {
-  const w = dock?.offsetWidth || 120;
-  const baseLeft = window.innerWidth - 18 - w;
-  const left = baseLeft + pos.tx;
-  const right = window.innerWidth - (left + w);
-  let tx = pos.tx;
-  if (left < SNAP_DISTANCE) {
-    tx = SNAP_MARGIN - baseLeft;
-  } else if (right < SNAP_DISTANCE) {
-    tx = window.innerWidth - SNAP_MARGIN - w - baseLeft;
-  }
-  return clampPos(tx, pos.ty, dock);
+function currentView(): FabView {
+  return { width: window.innerWidth, height: window.innerHeight };
 }
 
 export default function FocusDock(): ReactNode {
@@ -125,27 +88,40 @@ export default function FocusDock(): ReactNode {
     baseTy: number;
     moved: boolean;
     last: FabPos;
+    size: FabSize;
+    view: FabView;
   } | null>(null);
   const suppressClick = useRef(false);
-  const [pos, setPos] = useState<FabPos>(readSavedPos);
+  const [pos, setPos] = useState<FabPos>(() => parseFabPos(readStoredPosRaw(), FAB_FALLBACK_SIZE, currentView()));
   const [dragging, setDragging] = useState(false);
+  // 窗口尺寸单独存一份：resize 时面板换边的判断要用新尺寸，不能读渲染时缓存的旧值
+  const [view, setView] = useState<FabView>(currentView);
 
-  // 窗口尺寸变了要把按钮重新夹回可视区（重启后读到的旧位置同理）
+  // 窗口尺寸变了、按钮文字变长变短，都要把按钮重新夹回可视区（重启后读到的旧位置同理）
+  const refitPos = (): void => {
+    const size = fabSizeOf(dockRef.current);
+    const nextView = currentView();
+    setView(nextView);
+    setPos((prev) => {
+      const next = clampFabPos(prev.tx, prev.ty, size, nextView);
+      // 顺手把规范化后的坐标存回去：手改坏的 localStorage（1e999 之类）会被覆盖成正常值
+      savePos(next);
+      return next.tx === prev.tx && next.ty === prev.ty ? prev : next;
+    });
+  };
+
   useEffect(() => {
-    const refit = (): void => {
-      setPos((prev) => {
-        const next = clampPos(prev.tx, prev.ty, dockRef.current);
-        if (next.tx !== prev.tx || next.ty !== prev.ty) savePos(next);
-        return next;
-      });
-    };
-    refit();
-    window.addEventListener('resize', refit);
-    return () => window.removeEventListener('resize', refit);
+    refitPos();
+    window.addEventListener('resize', refitPos);
+    return () => window.removeEventListener('resize', refitPos);
+    // 只挂一次；refitPos 里读的都是 ref / window，不依赖渲染期状态
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onFabPointerDown = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    if (dragRef.current) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const button = event.currentTarget;
     dragRef.current = {
       id: event.pointerId,
       startX: event.clientX,
@@ -154,11 +130,18 @@ export default function FocusDock(): ReactNode {
       baseTy: pos.ty,
       moved: false,
       last: pos,
+      size: fabSizeOf(dockRef.current),
+      view: currentView(),
     };
     setDragging(true);
 
-    // 监听器挂在 window 上，抬手立刻摘掉：鼠标不按着也不会乱飞，也不会累积泄漏
-    const dock = dockRef.current;
+    // 抓住指针：鼠标甩出窗口再松手也能收到 pointerup，按钮不会“粘”在鼠标上
+    try {
+      button.setPointerCapture(event.pointerId);
+    } catch {
+      /* 合成事件 / 老环境不支持就算了，window 上的监听仍然兜底 */
+    }
+
     const onMove = (moveEvent: PointerEvent): void => {
       const drag = dragRef.current;
       if (!drag || moveEvent.pointerId !== drag.id) return;
@@ -167,18 +150,32 @@ export default function FocusDock(): ReactNode {
       if (!drag.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) drag.moved = true;
       if (!drag.moved) return;
       moveEvent.preventDefault();
-      const next = clampPos(drag.baseTx + dx, drag.baseTy + dy, dock);
+      const next = clampFabPos(drag.baseTx + dx, drag.baseTy + dy, drag.size, drag.view);
       drag.last = next;
-      if (dock) dock.style.transform = `translate3d(${next.tx}px, ${next.ty}px, 0)`;
+      if (dockRef.current) dockRef.current.style.transform = `translate3d(${next.tx}px, ${next.ty}px, 0)`;
     };
-    const onEnd = (endEvent: PointerEvent): void => {
+
+    const detach = (): void => {
       window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onEnd);
-      window.removeEventListener('pointercancel', onEnd);
+      window.removeEventListener('pointerup', onFinish);
+      window.removeEventListener('pointercancel', onFinish);
+      window.removeEventListener('blur', onAbort);
+      document.removeEventListener('visibilitychange', onVisibility);
+      try {
+        if (button.hasPointerCapture?.(event.pointerId)) button.releasePointerCapture(event.pointerId);
+      } catch {
+        /* 已经自动释放 */
+      }
+    };
+
+    /** 收尾：指针抬起 / 被取消 / 窗口失焦 都走这里，保证监听器和捕获一定被摘干净 */
+    const finish = (endEvent: PointerEvent | null): void => {
       const drag = dragRef.current;
+      if (!drag) return;
+      detach();
       dragRef.current = null;
       setDragging(false);
-      if (!drag || drag.id !== endEvent.pointerId) return;
+      if (endEvent && drag.id !== endEvent.pointerId) return;
       if (!drag.moved) return;
       // 拖完那一下会跟着来一个 click，要吃掉，否则松手就弹面板
       suppressClick.current = true;
@@ -186,19 +183,32 @@ export default function FocusDock(): ReactNode {
         suppressClick.current = false;
       }, 400);
       // 松手后先算吸附：近边就吸过去，坐标再持久化（动画由 CSS 的 --spring-ease 负责）
-      const snapped = snapToEdge(drag.last, dock);
+      const snapped = snapFabEdge(drag.last, drag.size, drag.view);
       setPos(snapped);
       savePos(snapped);
     };
+    const onFinish = (endEvent: PointerEvent): void => finish(endEvent);
+    // 切窗口 / 最小化 / Alt+Tab 时 pointerup 可能永远不来：失焦和页面隐藏都兜底收尾
+    const onAbort = (): void => finish(null);
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'hidden') finish(null);
+    };
+
     window.addEventListener('pointermove', onMove, { passive: false });
-    window.addEventListener('pointerup', onEnd);
-    window.addEventListener('pointercancel', onEnd);
+    window.addEventListener('pointerup', onFinish);
+    window.addEventListener('pointercancel', onFinish);
+    window.addEventListener('blur', onAbort);
+    document.addEventListener('visibilitychange', onVisibility);
   };
 
-  const dockStyle: CSSProperties = { transform: `translate3d(${pos.tx}px, ${pos.ty}px, 0)` };
-  // 面板默认贴在按钮右上方；靠近窗口左边/顶部时换边，别被切掉
-  const dockLeft = window.innerWidth - 18 - (dockRef.current?.offsetWidth || 120) + pos.tx;
-  const dockTop = window.innerHeight - 18 - (dockRef.current?.offsetHeight || 38) + pos.ty;
+  // 拖动中即使组件因计时刷新而重渲染，也要接着显示拖到一半的位置，不能弹回旧坐标
+  const shownPos = dragging && dragRef.current ? dragRef.current.last : pos;
+  const dockStyle: CSSProperties = { transform: `translate3d(${shownPos.tx}px, ${shownPos.ty}px, 0)` };
+  // 面板默认贴在按钮右上方；靠近窗口左边/顶部时换边，别被切掉。尺寸用 view 状态算，resize 后立刻正确
+  const size = fabSizeOf(dockRef.current);
+  const base = fabBasePoint(size, view);
+  const dockLeft = base.left + pos.tx;
+  const dockTop = base.top + pos.ty;
   const panelSide: CSSProperties = {
     ...(dockLeft < 24 ? { left: 0, right: 'auto' } : { right: 0, left: 'auto' }),
     ...(dockTop < 320 ? { top: 'calc(100% + 10px)', bottom: 'auto' } : { bottom: 'calc(100% + 10px)', top: 'auto' }),

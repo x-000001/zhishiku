@@ -4550,7 +4550,7 @@ try {
     )
   );
   results.push({
-    name: '修正：番茄钟拖到窗口边缘会被夹住，不会飞出屏幕',
+    name: '修正：番茄钟拖到窗口边缘会被夹住，不会飞出屏幕（顶部避开标题栏拖拽区）',
     ok:
       fabBounds.error === undefined &&
       fabBounds.br.l >= 0 &&
@@ -4558,7 +4558,8 @@ try {
       fabBounds.br.r <= fabBounds.vw &&
       fabBounds.br.b <= fabBounds.vh &&
       fabBounds.tl.l >= 0 &&
-      fabBounds.tl.t >= 0 &&
+      // 0.8.1：顶部不再贴到 0（那是自绘标题栏的拖拽区，压进去鼠标事件会被系统吃掉）
+      fabBounds.tl.t === 60 &&
       fabBounds.tl.r <= fabBounds.vw &&
       fabBounds.tl.b <= fabBounds.vh,
     detail:
@@ -4706,6 +4707,294 @@ try {
     ok: fabLayer.error === undefined && fabLayer.toastZ > fabLayer.dockZ && fabLayer.dockZ > 0,
     detail: '按钮层=' + fabLayer.dockZ + ' Toast层=' + fabLayer.toastZ + (fabLayer.error ? ' 错误=' + fabLayer.error : '')
   });
+
+  /* ---------------- 0.8.1：拖到顶部不再掉进「死区」 ---------------- */
+
+  // 1) 视口缩到 900x620，把按钮拖到左上极限：顶部必须停在安全区 60px；
+  //    然后用「真实鼠标」点一下 —— 修复前按钮压在标题栏拖拽区里，这一下会被系统当成拖窗口。
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 900, height: 620, deviceScaleFactor: 0, mobile: false });
+  await sleep(420);
+  const fabDeadzone = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const fab = document.querySelector('.focus-fab');
+        if (!fab) return JSON.stringify({ error: '没有番茄钟按钮' });
+        const fire = (el, type, x, y) =>
+          el.dispatchEvent(new PointerEvent(type, { pointerId: 21, bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, pointerType: 'mouse' }));
+        const dragTo = async (x, y) => {
+          const rect = fab.getBoundingClientRect();
+          const cx = rect.left + rect.width / 2;
+          const cy = rect.top + rect.height / 2;
+          fire(fab, 'pointerdown', cx, cy);
+          await sleep(30);
+          fire(window, 'pointermove', x, y);
+          await sleep(40);
+          fire(window, 'pointerup', x, y);
+          await sleep(340);
+        };
+        const closeBtn = document.querySelector('.focus-panel .icon-btn');
+        if (closeBtn) closeBtn.click();
+        await sleep(120);
+        await dragTo(window.innerWidth / 2, window.innerHeight / 2);
+        await dragTo(0, 0);
+        const rect = fab.getBoundingClientRect();
+        const dock = fab.parentElement;
+        const dockZ = Number(getComputedStyle(dock).zIndex) || 0;
+        const sidebarZ = Number(getComputedStyle(document.querySelector('.sidebar')).zIndex) || 0;
+        const appRegion = String(getComputedStyle(dock).webkitAppRegion || '');
+        return JSON.stringify({
+          vw: window.innerWidth,
+          vh: window.innerHeight,
+          left: Math.round(rect.left),
+          top: Math.round(rect.top),
+          right: Math.round(rect.right),
+          bottom: Math.round(rect.bottom),
+          dockZ,
+          sidebarZ,
+          appRegion,
+          panel: !!document.querySelector('.focus-panel')
+        });
+      })()`)
+    )
+  );
+  const fabCenter = JSON.parse(
+    String(
+      await cdp.eval(`(() => {
+        const fab = document.querySelector('.focus-fab');
+        if (!fab) return JSON.stringify({ error: '没有番茄钟按钮' });
+        const r = fab.getBoundingClientRect();
+        return JSON.stringify({ x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) });
+      })()`)
+    )
+  );
+  if (fabCenter.error === undefined) {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: fabCenter.x, y: fabCenter.y, button: 'left', clickCount: 1 });
+    await sleep(70);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: fabCenter.x, y: fabCenter.y, button: 'left', clickCount: 1 });
+    await sleep(340);
+  }
+  const panelAfterRealClick = await cdp.eval("!!document.querySelector('.focus-panel')");
+  results.push({
+    name: '0.8.1：拖到顶部极限不会掉进标题栏死区，真实鼠标点它还能弹出面板',
+    ok:
+      fabDeadzone.error === undefined &&
+      fabCenter.error === undefined &&
+      fabDeadzone.top === 60 &&
+      fabDeadzone.left === 16 &&
+      fabDeadzone.dockZ >= 55 &&
+      String(fabDeadzone.appRegion).includes('no-drag') &&
+      fabDeadzone.panel === false &&
+      panelAfterRealClick === true,
+    detail:
+      '窗口=' +
+      fabDeadzone.vw +
+      'x' +
+      fabDeadzone.vh +
+      ' 左上极限=' +
+      JSON.stringify({ l: fabDeadzone.left, t: fabDeadzone.top }) +
+      ' 按钮层=' +
+      fabDeadzone.dockZ +
+      '/侧栏=' +
+      fabDeadzone.sidebarZ +
+      ' app-region=' +
+      fabDeadzone.appRegion +
+      ' 拖动后面板=' +
+      fabDeadzone.panel +
+      ' 真实鼠标点后=' +
+      panelAfterRealClick +
+      (fabDeadzone.error ? ' 错误=' + fabDeadzone.error : '')
+  });
+
+  // 2) 窗口再缩到 760x560：按钮必须还被完整关在可视区里（而不是留在窗口外面）
+  await cdp.eval("(() => { const b = document.querySelector('.focus-panel .icon-btn'); if (b) { b.click(); return true; } return false; })()");
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 760, height: 560, deviceScaleFactor: 0, mobile: false });
+  await sleep(520);
+  const fabShrink = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const fab = document.querySelector('.focus-fab');
+        if (!fab) return JSON.stringify({ error: '缩小窗口后按钮不见了' });
+        await sleep(400); // 等 resize 夹取 + 弹簧动画
+        const rect = fab.getBoundingClientRect();
+        const saved = localStorage.getItem('jw-focus-fab-pos');
+        return JSON.stringify({
+          vw: window.innerWidth,
+          vh: window.innerHeight,
+          left: Math.round(rect.left),
+          top: Math.round(rect.top),
+          right: Math.round(rect.right),
+          bottom: Math.round(rect.bottom),
+          w: Math.round(rect.width),
+          saved
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '0.8.1：窗口改小后悬浮球自动夹回可视区，不会留在窗口外面',
+    ok:
+      fabShrink.error === undefined &&
+      fabShrink.w > 0 &&
+      fabShrink.left >= 0 &&
+      fabShrink.top >= 60 &&
+      fabShrink.right <= fabShrink.vw &&
+      fabShrink.bottom <= fabShrink.vh,
+    detail:
+      '窗口=' +
+      fabShrink.vw +
+      'x' +
+      fabShrink.vh +
+      ' 按钮=' +
+      JSON.stringify({ l: fabShrink.left, t: fabShrink.top, r: fabShrink.right, b: fabShrink.bottom }) +
+      ' 存的=' +
+      fabShrink.saved +
+      (fabShrink.error ? ' 错误=' + fabShrink.error : '')
+  });
+
+  // 3) 从极限位置还能把它拖出来（死区/粘手如果发生，这一步就动不了）
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+  await sleep(520);
+  const fabEscape = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const fab = document.querySelector('.focus-fab');
+        if (!fab) return JSON.stringify({ error: '恢复窗口后按钮不见了' });
+        const fire = (el, type, x, y) =>
+          el.dispatchEvent(new PointerEvent(type, { pointerId: 23, bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, pointerType: 'mouse' }));
+        await sleep(300);
+        const before = fab.getBoundingClientRect();
+        const cx = before.left + before.width / 2;
+        const cy = before.top + before.height / 2;
+        fire(fab, 'pointerdown', cx, cy);
+        await sleep(30);
+        fire(window, 'pointermove', window.innerWidth / 2, window.innerHeight / 2);
+        await sleep(40);
+        fire(window, 'pointerup', window.innerWidth / 2, window.innerHeight / 2);
+        await sleep(380);
+        const after = fab.getBoundingClientRect();
+        return JSON.stringify({
+          vw: window.innerWidth,
+          vh: window.innerHeight,
+          bx: Math.round(before.left),
+          by: Math.round(before.top),
+          ax: Math.round(after.left),
+          ay: Math.round(after.top),
+          dx: Math.round(after.left - before.left),
+          dy: Math.round(after.top - before.top),
+          saved: localStorage.getItem('jw-focus-fab-pos'),
+          panel: !!document.querySelector('.focus-panel'),
+          dragging: fab.parentElement.className.indexOf('dragging') >= 0
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '0.8.1：按钮停在极限位置时仍然拖得出来（不会粘在角落）',
+    ok:
+      fabEscape.error === undefined &&
+      (Math.abs(fabEscape.dx) >= 40 || Math.abs(fabEscape.dy) >= 40) &&
+      fabEscape.panel === false &&
+      fabEscape.dragging === false,
+    detail:
+      '窗口=' +
+      fabEscape.vw +
+      'x' +
+      fabEscape.vh +
+      ' 前=' +
+      fabEscape.bx +
+      ',' +
+      fabEscape.by +
+      ' 后=' +
+      fabEscape.ax +
+      ',' +
+      fabEscape.ay +
+      ' 位移=' +
+      fabEscape.dx +
+      ',' +
+      fabEscape.dy +
+      ' 存=' +
+      fabEscape.saved +
+      ' 拖动后面板=' +
+      fabEscape.panel +
+      ' dragging类=' +
+      fabEscape.dragging +
+      (fabEscape.error ? ' 错误=' + fabEscape.error : '')
+  });
+
+  // 4) localStorage 被写坏（1e999 解析出来是 Infinity）：刷新后按钮必须回到右下角，而不是消失
+  await cdp.eval("localStorage.setItem('jw-focus-fab-pos', JSON.stringify({ tx: 1e999, ty: -1e999 })); true");
+  await cdp.eval('location.reload(); true');
+  await sleep(2400);
+  const fabDirty = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        let fab = document.querySelector('.focus-fab');
+        const deadline = Date.now() + 8000;
+        while (!fab && Date.now() < deadline) {
+          await sleep(120);
+          fab = document.querySelector('.focus-fab');
+        }
+        if (!fab) return JSON.stringify({ error: '脏数据刷新后按钮没回来' });
+        await sleep(500);
+        const rect = fab.getBoundingClientRect();
+        const dock = fab.parentElement;
+        const m = getComputedStyle(dock).transform;
+        const nums = String(m).match(/-?[0-9.]+/g) || [];
+        let saved = null;
+        try {
+          saved = JSON.parse(localStorage.getItem('jw-focus-fab-pos') || 'null');
+        } catch {
+          saved = null;
+        }
+        return JSON.stringify({
+          vw: window.innerWidth,
+          vh: window.innerHeight,
+          left: Math.round(rect.left),
+          top: Math.round(rect.top),
+          right: Math.round(rect.right),
+          bottom: Math.round(rect.bottom),
+          w: Math.round(rect.width),
+          tx: Number(nums[4]),
+          ty: Number(nums[5]),
+          saved
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '0.8.1：localStorage 存了脏位置（1e999）时，刷新后按钮回到右下角而不是消失',
+    ok:
+      fabDirty.error === undefined &&
+      fabDirty.w > 0 &&
+      Math.abs(Number(fabDirty.tx)) <= 2 &&
+      Math.abs(Number(fabDirty.ty)) <= 2 &&
+      !!fabDirty.saved &&
+      Math.abs(Number(fabDirty.saved.tx)) <= 2 &&
+      Math.abs(Number(fabDirty.saved.ty)) <= 2 &&
+      fabDirty.left >= 0 &&
+      fabDirty.top >= 60 &&
+      fabDirty.right <= fabDirty.vw &&
+      fabDirty.bottom <= fabDirty.vh,
+    detail:
+      '按钮=' +
+      JSON.stringify({ w: fabDirty.w, l: fabDirty.left, t: fabDirty.top, r: fabDirty.right, b: fabDirty.bottom }) +
+      ' transform=' +
+      fabDirty.tx +
+      ',' +
+      fabDirty.ty +
+      ' 存的=' +
+      JSON.stringify(fabDirty.saved) +
+      ' 窗口=' +
+      fabDirty.vw +
+      'x' +
+      fabDirty.vh +
+      (fabDirty.error ? ' 错误=' + fabDirty.error : '')
+  });
+
 
   // ================= 第七版（0.7.0）：AI 辅助 =================
   // 主进程真发 HTTP，但打的是本地 stub（/ai/v1 正常、/ai-bad/v1 回 401、127.0.0.1:1 断网）。

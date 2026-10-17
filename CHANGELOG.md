@@ -4,6 +4,29 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 `主.次.修订`。
 
+## [0.8.1] - 2026-10-18
+
+### 修复
+
+- **番茄钟悬浮球拖到窗口顶部会变成「死区」**：以前能拖到 `y=8`，正好压进自绘标题栏的窗口拖拽区（`.topbar` 的 `-webkit-app-region: drag`），鼠标事件被 Windows 当成「拖窗口」吃掉——按钮看着在，却点不开面板、也拖不动，只能重启。现在纵向上限抬到标题栏下方 60px（`FAB_TOP_SAFE`），按钮整块声明 `-webkit-app-region: no-drag`，落在任何位置都能点。
+- **拖到左边缘被侧栏盖住**：侧栏 `z-index` 是 46（折叠态 49），悬浮球原来是 40，压到左边会被侧栏覆盖、点不到。现在 `.focus-dock` 抬到 **55**（仍低于弹窗 60、右键菜单/Toast 80，层级关系不乱）。
+- **鼠标甩出窗口再松手，按钮会「粘」在鼠标上**：拖拽时改用 `setPointerCapture`，并给 `pointerup` / `pointercancel` / `blur` / `visibilitychange` 统一收尾——不管指针在哪里结束，监听器和捕获都会被摘干净。
+- **窗口缩小 / 重启后按钮可能落在窗口外**：`refitPos()` 在读位置、窗口 resize、按钮尺寸变化时都会重新夹回可视区，并把规范化后的坐标写回 `localStorage`。
+- **`localStorage` 里位置被改坏（`1e999` → `Infinity`、NaN、手改 JSON）时按钮会消失**：新增 `parseFabPos` 白名单校验（必须是有限数且 `|值| ≤ 20000`），坏数据一律回默认右下角；不再是 `clamp` 之后得到 NaN、`transform` 失效。
+- **面板换边用到旧窗口尺寸**：窗口尺寸单独存 `view` state，`panelSide` 按最新尺寸算，缩窗口后面板不会切错边。
+
+### 变更
+
+- 版本号 0.8.0 → 0.8.1；`package-lock.json` 顶层版本同步。
+- 新增 `src/renderer/src/fabPos.ts`（纯函数：`fabSizeOf` / `fabBasePoint` / `fabRect` / `clampFabPos` / `snapFabEdge` / `parseFabPos`，常量 `FAB_EDGE=8` / `FAB_TOP_SAFE=60` / `FAB_SNAP_DISTANCE=50` / `FAB_SNAP_MARGIN=16` / `FAB_BASE_INSET=18` / `FAB_MAX_ABS=20000`），`focus.tsx` 里原来的 `clampPos` / `snapToEdge` / `readSavedPos` 全部换成它，DOM 结构与类名没动。
+- `styles.css` 只改了 `.focus-dock` 那一处（`z-index: 55` + `-webkit-app-region: no-drag`），另外加一条 `.focus-dock *` 的 `no-drag`。
+- 数据库、`user_version`（仍是 6）、IPC 通道、番茄钟业务逻辑（计时 / 休息 / 记录）一行没动。
+
+### 验证
+
+- typecheck 0 错、单测 **303**（22 个文件；新增 `tests/unit/fab-pos.test.ts` 11 条：默认点、四边夹取、顶部安全区、吸边、脏数据回退、超大窗口/极小窗口）、e2e **281/281**（新增 4 条：900×620 窗口拖到顶部极限后用**真实鼠标**点能弹出面板、窗口改小后自动夹回可视区、停在极限位置仍然拖得出来、`localStorage` 写 `1e999` 刷新后回右下角）、强杀 **6/6**、打包自检 **23/23**。
+- 旧断言一条没删：0.6.1 那条「拖到左上极限」只是把期望的 `t=8` 改成 `t=60`（配合新的顶部安全区，用户已确认），其余 277 条原样全过。
+
 ## [0.8.0] - 2026-10-19
 
 发布：[GitHub Release v0.8.0](https://github.com/x-000001/zhishiku/releases/tag/v0.8.0)（附件 JwKB-Setup-0.8.0.exe，112,537,948 字节）
