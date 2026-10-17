@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { ConfirmDialog, toast } from '../ui';
 import { fmtDateTime } from '../format';
@@ -30,6 +30,17 @@ export default function Settings(props: {
   useEffect(() => {
     load();
     // 只在进入设置页时读一次
+  }, []);
+
+  // 「主题」是边选边预览的（真正落库要点保存），所以离开这一页时要把没保存的预览退回去，
+  // 否则界面是预览色、库里还是旧主题，下次启动又变回去 —— 看起来就像「取消没生效」。
+  const savedRef = useRef<AppSettings | null>(null);
+  savedRef.current = saved;
+  useEffect(() => {
+    return () => {
+      const last = savedRef.current;
+      if (last) props.onTheme(last.theme);
+    };
   }, []);
 
   if (!form || !saved) return <div className="empty">正在读取设置…</div>;
@@ -215,7 +226,7 @@ export default function Settings(props: {
         <div className="set-row">
           <div className="txt">
             <b>主题</b>
-            <p>深色适合晚上看。</p>
+            <p>深色适合晚上看。换了会立刻预览，点「保存设置」才记住，点「放弃改动」退回原来的。</p>
           </div>
           <select
             value={form.theme}
@@ -259,7 +270,16 @@ export default function Settings(props: {
         <div className="save-bar">
           <span>有未保存的改动</span>
           <span className="spacer" style={{ flex: 1 }} />
-          <button type="button" className="btn" onClick={() => setForm(saved)} disabled={busy === 'save'}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              // 表单回到上次保存的值，同时把「边选边预览」的主题也退回去
+              setForm(saved);
+              props.onTheme(saved.theme);
+            }}
+            disabled={busy === 'save'}
+          >
             放弃改动
           </button>
           <button

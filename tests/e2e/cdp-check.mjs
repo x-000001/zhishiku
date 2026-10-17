@@ -1837,6 +1837,40 @@ try {
     detail: `URL 里的主题=${ta.query} 首帧记号=${ta.boot} 镜像=${ta.mirror}→${ta.mirrorAfter}`
   });
 
+  // ---- 第五版（阶段8 修正）：「放弃改动」要把「边选边预览」的主题也退回去 ----
+  const discardTest = await cdp.eval(`(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    const root = document.documentElement;
+    const themeSel = () => [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'dark'));
+    const savedTheme = (await window.api.invoke('settings:get')).theme;
+    const sel = themeSel();
+    if (!sel) return JSON.stringify({ err: '找不到主题下拉框' });
+    const other = savedTheme === 'dark' ? 'light' : 'dark';
+    setter.call(sel, other);
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await wait(420);
+    const preview = root.getAttribute('data-theme');
+    const btn = [...document.querySelectorAll('.save-bar button')].find((b) => (b.textContent || '').includes('放弃'));
+    if (!btn) return JSON.stringify({ err: '没有「放弃改动」按钮' });
+    btn.click();
+    await wait(460);
+    const mirror = () => { try { return localStorage.getItem('jw-theme') || ''; } catch { return 'denied'; } };
+    const now = themeSel();
+    return JSON.stringify({ savedTheme, other, preview, after: root.getAttribute('data-theme'), selNow: now ? now.value : '', mirror: mirror() });
+  })()`);
+  const dt = JSON.parse(String(discardTest));
+  results.push({
+    name: '第五版：放弃改动会把主题预览也退回上次保存的那个',
+    ok:
+      !dt.err &&
+      dt.preview === dt.other &&
+      dt.after === dt.savedTheme &&
+      dt.selNow === dt.savedTheme &&
+      dt.mirror === dt.savedTheme,
+    detail: `库里=${dt.savedTheme} 预览=${dt.preview} 放弃后=${dt.after} 下拉=${dt.selNow} 镜像=${dt.mirror}`
+  });
+
   // ---- 优化项 8：四个页面都有「保存」按钮，点了会报「已保存 HH:MM:SS」 ----
   // 知识库：先点开一篇笔记，编辑器头部才有「保存」
   await cdp.eval("location.hash = '/knowledge'; true");
