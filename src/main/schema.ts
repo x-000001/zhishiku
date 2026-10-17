@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS note_tag (
   tag_id  INTEGER NOT NULL REFERENCES tag(id) ON DELETE CASCADE,
   PRIMARY KEY (note_id, tag_id)
 );
+-- 第六版（标签全局管理）：按标签反查笔记、算引用数都走这个索引
+CREATE INDEX IF NOT EXISTS idx_note_tag_tag ON note_tag(tag_id);
 
 CREATE TABLE IF NOT EXISTS attachment (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

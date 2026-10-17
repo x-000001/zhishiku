@@ -75,6 +75,8 @@ export function registerNotes(handle: Handle): void {
     db.setNoteTags(p.noteId, p.names);
     return db.getNote(p.noteId);
   });
+  handle('tag:rename', (p: { id: Id; name: string }) => db.renameTag(p.id, p.name));
+  handle('tag:delete', (p: { id: Id }) => db.deleteTagById(p.id));
 
   /* ---------------- 搜索 ---------------- */
 

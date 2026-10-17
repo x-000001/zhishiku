@@ -34,6 +34,8 @@ import type {
   ReviewSource,
   SearchHit,
   Tag,
+  TagDeleteResult,
+  TagRenameResult,
   Task,
   TaskFilter,
   UpdateCheck,
@@ -122,6 +124,8 @@ export const api = {
   listTags: () => call<Tag[]>('tag:list'),
   setNoteTags: (noteId: Id, names: string[]) =>
     call<Note & { tags: Tag[]; attachments: Attachment[] }>('tag:set', { noteId, names }),
+  renameTag: (id: Id, name: string) => call<TagRenameResult>('tag:rename', { id, name }),
+  deleteTag: (id: Id) => call<TagDeleteResult>('tag:delete', { id }),
 
   search: (q: string, limit?: number) => call<SearchHit[]>('search:query', { q, limit }),
   reindex: () => call<number>('search:reindex'),

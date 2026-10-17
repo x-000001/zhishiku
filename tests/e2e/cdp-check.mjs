@@ -97,7 +97,13 @@ const child = spawn(
     '.',
     `--remote-debugging-port=${PORT}`,
     '--no-sandbox',
+    // 软件渲染 + 别把窗口当「被遮挡」：否则 Chromium 会把 rAF/过渡降频，
+    // 悬停换色、侧栏插值这类动画断言会假失败（机器上开着别的全屏窗口时尤其明显）
     '--disable-gpu',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-background-timer-throttling',
+    '--disable-features=CalculateNativeWinOcclusion',
     `--user-data-dir=${path.join(root, 'tests', 'e2e', 'ud')}`
   ],
   {
@@ -3826,6 +3832,184 @@ try {
       updInstall.alive === true &&
       updInstall.modalGone === true,
     detail: '提示=' + String(updInstall.texts).slice(0, 60) + ' 应用存活=' + updInstall.alive + ' 弹窗关闭=' + updInstall.modalGone
+  });
+
+  // ---- 阶段1：标签全局管理（左侧入口 + 筛选 + 改名 + 删除）----
+  const tagPrep = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const inv = (ch, p) => window.api.invoke(ch, p);
+        const note = await inv('note:create', { title: '标签管理自检笔记', content: '标签管理自检正文' });
+        const tagged = await inv('tag:set', { noteId: note.id, names: ['自检标签甲', '自检标签乙'] });
+        location.hash = '/';
+        await sleep(260);
+        location.hash = '/knowledge';
+        await sleep(760);
+        const head = [...document.querySelectorAll('.tree-item')].find((el) => (el.innerText || '').includes('标签管理'));
+        if (!head) {
+          return JSON.stringify({ error: '左侧没有标签管理入口', tree: [...document.querySelectorAll('.tree-item')].map((e) => (e.innerText || '').replace(/\\s+/g, ' ').trim()).slice(0, 24) });
+        }
+        const collapsed = ![...document.querySelectorAll('.tree-item')].some((el) => el.querySelector('[title="标签操作"]'));
+        head.click();
+        await sleep(460);
+        const rows = [...document.querySelectorAll('.tree-item')].filter((el) => el.querySelector('[title="标签操作"]'));
+        return JSON.stringify({
+          noteId: note.id,
+          tagCount: tagged && tagged.tags ? tagged.tags.length : 0,
+          collapsed,
+          headText: (head.innerText || '').replace(/\\s+/g, ' ').trim(),
+          rows: rows.map((el) => (el.innerText || '').replace(/\\s+/g, ' ').trim()).slice(0, 12)
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '阶段1：知识库左侧「标签管理」入口能展开，标签带引用数',
+    ok:
+      tagPrep.error === undefined &&
+      tagPrep.tagCount === 2 &&
+      tagPrep.collapsed === true &&
+      tagPrep.rows.some((t) => t.includes('自检标签甲 (1)')),
+    detail: '入口=' + tagPrep.headText + ' 标签=' + JSON.stringify(tagPrep.rows) + (tagPrep.error ? ' 错误=' + tagPrep.error : '')
+  });
+  await cdp.shot('tag-manage');
+
+  const tagFilter = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const rows = [...document.querySelectorAll('.tree-item')].filter((el) => el.querySelector('[title="标签操作"]'));
+        const row = rows.find((el) => (el.innerText || '').includes('自检标签甲'));
+        if (!row) return JSON.stringify({ error: '找不到刚建的标签行' });
+        row.click();
+        await sleep(760);
+        const rows2 = [...document.querySelectorAll('.tree-item')].filter((el) => el.querySelector('[title="标签操作"]'));
+        const sameRow = rows2.find((el) => (el.innerText || '').includes('自检标签甲'));
+        return JSON.stringify({
+          listRows: document.querySelectorAll('.kb-list-body .list-row').length,
+          selectedText: sameRow ? (sameRow.innerText || '').replace(/\\s+/g, ' ').trim() : '',
+          selectedClass: sameRow ? sameRow.className : '',
+          head: ((document.querySelector('.kb-list-head') || {}).innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 80)
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '阶段1：点左侧标签，右侧列表立刻只剩这个标签下的笔记',
+    ok:
+      tagFilter.error === undefined &&
+      tagFilter.listRows === 1 &&
+      /selected/.test(String(tagFilter.selectedClass)) &&
+      /自检标签甲/.test(String(tagFilter.selectedText)),
+    detail: '列表=' + tagFilter.listRows + ' 选中=' + tagFilter.selectedText + ' 类=' + tagFilter.selectedClass + ' 头部=' + tagFilter.head
+  });
+
+  const tagRenamed = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const row = [...document.querySelectorAll('.tree-item')].filter((el) => el.querySelector('[title="标签操作"]')).find((el) => (el.innerText || '').includes('自检标签甲'));
+        if (!row) return JSON.stringify({ error: '找不到标签行' });
+        const box = row.getBoundingClientRect();
+        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: box.left + 24, clientY: box.top + 12 }));
+        await sleep(280);
+        const menu = document.querySelector('.ctx-menu');
+        if (!menu) return JSON.stringify({ error: '标签行右键没有菜单' });
+        const items = [...menu.querySelectorAll('.ctx-item .ctx-label')].map((b) => b.textContent.trim());
+        const rename = [...menu.querySelectorAll('.ctx-item')].find((b) => b.textContent.includes('改标签名'));
+        if (!rename) return JSON.stringify({ error: '菜单里没有改标签名', items });
+        rename.click();
+        await sleep(400);
+        const dlg = document.querySelector('.modal');
+        if (!dlg) return JSON.stringify({ error: '改名没有弹窗', items });
+        const input = dlg.querySelector('.modal-body input.input');
+        if (!input) return JSON.stringify({ error: '改名弹窗没有输入框', items });
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(input, '自检标签甲改');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(140);
+        const submit = dlg.querySelector('.modal-foot button.btn.primary');
+        if (submit) submit.click();
+        await sleep(900);
+        const toast = [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ');
+        await sleep(300);
+        return JSON.stringify({
+          items,
+          toast: toast.slice(0, 120),
+          rows: [...document.querySelectorAll('.tree-item')].filter((el) => el.querySelector('[title="标签操作"]')).map((el) => (el.innerText || '').replace(/\\s+/g, ' ').trim()).slice(0, 12),
+          listRows: document.querySelectorAll('.kb-list-body .list-row').length
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '阶段1：右键「改标签名」→ 就地改名，关联的笔记跟着走',
+    ok:
+      tagRenamed.error === undefined &&
+      /改名为/.test(String(tagRenamed.toast)) &&
+      tagRenamed.rows.some((t) => t.includes('自检标签甲改')) &&
+      tagRenamed.listRows === 1,
+    detail: '菜单=' + JSON.stringify(tagRenamed.items) + ' 提示=' + tagRenamed.toast + (tagRenamed.error ? ' 错误=' + tagRenamed.error : '')
+  });
+
+  const tagDeleted = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const row = [...document.querySelectorAll('.tree-item')].filter((el) => el.querySelector('[title="标签操作"]')).find((el) => (el.innerText || '').includes('自检标签甲改'));
+        if (!row) return JSON.stringify({ error: '找不到改名后的标签行' });
+        const box = row.getBoundingClientRect();
+        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: box.left + 24, clientY: box.top + 12 }));
+        await sleep(280);
+        const del = [...document.querySelectorAll('.ctx-menu .ctx-item')].find((b) => b.textContent.includes('删除标签'));
+        if (!del) return JSON.stringify({ error: '菜单里没有删除标签' });
+        del.click();
+        await sleep(420);
+        const dlg = document.querySelector('.modal');
+        if (!dlg) return JSON.stringify({ error: '删除没有弹确认框' });
+        const title = (dlg.querySelector('.modal-head span') || {}).innerText || '';
+        const message = (dlg.querySelector('.modal-body') || {}).innerText || '';
+        const before = await window.api.invoke('note:list', {});
+        const yes = [...dlg.querySelectorAll('.modal-foot button')].find((b) => /删除/.test(b.textContent));
+        if (yes) yes.click();
+        await sleep(1000);
+        const toast = [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ');
+        const allTags = await window.api.invoke('tag:list');
+        const after = await window.api.invoke('note:list', {});
+        return JSON.stringify({
+          title: (title || '').replace(/\\s+/g, ' ').trim(),
+          message: (message || '').replace(/\\s+/g, ' ').trim().slice(0, 160),
+          toast: toast.slice(0, 140),
+          beforeTotal: Array.isArray(before) ? before.length : -1,
+          afterTotal: Array.isArray(after) ? after.length : -1,
+          stillHasTag: (Array.isArray(allTags) ? allTags : []).some((t) => t.name === '自检标签甲改'),
+          rows: [...document.querySelectorAll('.tree-item')].filter((el) => el.querySelector('[title="标签操作"]')).map((el) => (el.innerText || '').replace(/\\s+/g, ' ').trim()).slice(0, 12)
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '阶段1：右键「删除标签」→ 二次确认说明不删笔记 → 标签消失、笔记还在',
+    ok:
+      tagDeleted.error === undefined &&
+      /不会删除笔记/.test(String(tagDeleted.message)) &&
+      /已删除/.test(String(tagDeleted.toast)) &&
+      tagDeleted.stillHasTag === false &&
+      tagDeleted.beforeTotal === tagDeleted.afterTotal &&
+      !tagDeleted.rows.some((t) => t.includes('自检标签甲改')),
+    detail:
+      '确认标题=' +
+      tagDeleted.title +
+      ' 提示=' +
+      tagDeleted.toast +
+      ' 笔记数=' +
+      tagDeleted.beforeTotal +
+      '→' +
+      tagDeleted.afterTotal +
+      ' 标签还在=' +
+      tagDeleted.stillHasTag +
+      (tagDeleted.error ? ' 错误=' + tagDeleted.error : '')
   });
 
   await cdp.eval("location.hash = '/'; true");

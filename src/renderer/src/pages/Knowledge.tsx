@@ -78,6 +78,11 @@ export default function Knowledge(props: {
   );
   const [tagFilterOpen, setTagFilterOpen] = useState(false);
 
+  /* 标签全局管理：左侧展开式列表 + 改名 / 删除两个确认框 */
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [tagRename, setTagRename] = useState<{ tag: Tag; value: string } | null>(null);
+  const [tagDelete, setTagDelete] = useState<Tag | null>(null);
+
   const draftTimer = useRef<number | null>(null);
   const wordTimer = useRef<number | null>(null);
   /** touchBody 定义在 scheduleDraft 之前，用 ref 转一手避免顺序问题 */
@@ -299,6 +304,61 @@ export default function Knowledge(props: {
       /* 刷不到就算了，不影响编辑 */
     }
   }, []);
+
+  /** 只刷新这篇笔记的标签区，不动正文（理由同上）。 */
+  const refreshNoteTags = useCallback(async (id: Id) => {
+    try {
+      const full = await api.getNote(id);
+      if (full) {
+        setNote((prev) => (prev && prev.id === id ? { ...prev, tags: full.tags } : prev));
+        setTagText(full.tags.map((t) => t.name).join(', '));
+      }
+    } catch {
+      /* 刷不到就算了，不影响编辑 */
+    }
+  }, []);
+
+  /* ---------------- 标签全局管理 ---------------- */
+
+  const submitTagRename = async (): Promise<void> => {
+    const job = tagRename;
+    if (!job) return;
+    const name = job.value.trim();
+    if (!name) {
+      toast('标签名不能为空');
+      return;
+    }
+    setTagRename(null);
+    try {
+      const res = await api.renameTag(job.tag.id, name);
+      // 撞名合并时标签 id 会变，选中的得跟着换到合并后的那个
+      if (tagId === job.tag.id) setTagId(res.tag.id);
+      void loadTags();
+      void loadList();
+      if (openId != null) void refreshNoteTags(openId);
+      toast(
+        res.merged
+          ? `已合并到「${res.tag.name}」，影响 ${res.affected} 篇笔记`
+          : `标签已改名为「${res.tag.name}」，影响 ${res.affected} 篇笔记`
+      );
+    } catch (err) {
+      toastError('改标签名失败：', err);
+    }
+  };
+
+  const doDeleteTag = async (tag: Tag): Promise<void> => {
+    setTagDelete(null);
+    try {
+      const res = await api.deleteTag(tag.id);
+      if (tagId === tag.id) setTagId(null);
+      void loadTags();
+      void loadList();
+      if (openId != null) void refreshNoteTags(openId);
+      toast(`标签「${res.name}」已删除，${res.affected} 篇笔记的关联已解除（笔记都还在）`);
+    } catch (err) {
+      toastError('删除标签失败：', err);
+    }
+  };
 
   /**
    * 把拖进来的文件复制成附件。渲染层只有 File 对象，
@@ -653,6 +713,92 @@ export default function Knowledge(props: {
 
         <div style={{ height: 8 }} />
         <TreeRow icon="🗑" name="回收站" selected={sel === 'trash'} onSelect={() => setSel('trash')} />
+
+        {/* 标签全局管理：展开式列表，行样式复用分类树的 .tree-item */}
+        <div style={{ height: 8 }} />
+        <div
+          role="treeitem"
+          tabIndex={0}
+          aria-expanded={tagsOpen}
+          className="tree-item"
+          title={tagsOpen ? '收起标签列表' : '展开标签列表：点标签就能筛笔记'}
+          onClick={() => setTagsOpen((v) => !v)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setTagsOpen((v) => !v);
+            }
+          }}
+        >
+          <span aria-hidden="true">🏷</span>
+          <span className="name">标签管理{tags.length > 0 ? `（${tags.length}）` : ''}</span>
+          <span className="muted" aria-hidden="true">
+            {tagsOpen ? '▾' : '▸'}
+          </span>
+        </div>
+        {tagsOpen ? (
+          tags.length === 0 ? (
+            <div className="muted" style={{ padding: '6px 8px 6px 22px', fontSize: 12 }}>
+              还没有标签，在笔记右下角的标签框里添加
+            </div>
+          ) : (
+            tags.map((tag) => (
+              <div
+                key={tag.id}
+                role="treeitem"
+                tabIndex={0}
+                aria-selected={tagId === tag.id}
+                className={tagId === tag.id ? 'tree-item selected' : 'tree-item'}
+                style={{ paddingLeft: 22 }}
+                title={`只看用了「${tag.name}」的笔记`}
+                onClick={() => {
+                  setSel('all');
+                  setTagId(tagId === tag.id ? null : tag.id);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setSel('all');
+                    setTagId(tagId === tag.id ? null : tag.id);
+                  }
+                }}
+                onContextMenu={(e) => {
+                  showContextMenu(
+                    e,
+                    tagMenuItems(tag, {
+                      onRename: (t) => setTagRename({ tag: t, value: t.name }),
+                      onDelete: setTagDelete
+                    })
+                  );
+                }}
+              >
+                <span aria-hidden="true">#</span>
+                <span className="name">
+                  {tag.name} ({tag.note_count ?? 0})
+                </span>
+                <span className="actions">
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="标签操作"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      showContextMenu(
+                        e,
+                        tagMenuItems(tag, {
+                          onRename: (t) => setTagRename({ tag: t, value: t.name }),
+                          onDelete: setTagDelete
+                        })
+                      );
+                    }}
+                  >
+                    ⋯
+                  </button>
+                </span>
+              </div>
+            ))
+          )
+        ) : null}
       </div>
 
       {/* 中栏：笔记列表 */}
@@ -1428,6 +1574,50 @@ export default function Knowledge(props: {
           />
         </Modal>
       ) : null}
+
+      {tagRename ? (
+        <Modal
+          title="改标签名字"
+          onClose={() => setTagRename(null)}
+          width={420}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setTagRename(null)}>
+                取消
+              </button>
+              <button type="button" className="btn primary" onClick={() => void submitTagRename()}>
+                确定
+              </button>
+            </>
+          }
+        >
+          <input
+            className="input"
+            autoFocus
+            value={tagRename.value}
+            placeholder="标签名字"
+            onChange={(e) => setTagRename({ ...tagRename, value: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void submitTagRename();
+              if (e.key === 'Escape') setTagRename(null);
+            }}
+          />
+          <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+            新名字和已有标签重名时会自动合并成一条。
+          </p>
+        </Modal>
+      ) : null}
+
+      {tagDelete ? (
+        <ConfirmDialog
+          title={`删除标签「${tagDelete.name}」？`}
+          message={`该操作会批量影响相关笔记，但不会删除笔记。当前有 ${tagDelete.note_count ?? 0} 篇笔记用了这个标签，删除后它们只是少一个标签。`}
+          confirmLabel="删除标签"
+          danger
+          onCancel={() => setTagDelete(null)}
+          onConfirm={() => doDeleteTag(tagDelete)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1525,6 +1715,17 @@ interface CatMenuHost {
   onRename: (cat: Category) => void;
   onMove: (cat: Category, dir: 'up' | 'down') => void;
   onDelete: (cat: Category) => void;
+}
+
+/** 标签行右键菜单的项目（和行尾 ⋯ 是同一组动作）。 */
+function tagMenuItems(
+  tag: Tag,
+  h: { onRename: (tag: Tag) => void; onDelete: (tag: Tag) => void }
+): MenuItem[] {
+  return [
+    { label: '改标签名', onSelect: () => h.onRename(tag) },
+    { label: '删除标签', danger: true, separator: true, onSelect: () => h.onDelete(tag) }
+  ];
 }
 
 /** 分类行右侧那排小图标：点的时候别让选中跟着跳，所以统一 stopPropagation。 */

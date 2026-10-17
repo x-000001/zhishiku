@@ -65,6 +65,22 @@ export interface Tag {
   note_count?: number;
 }
 
+/** 改标签名的结果：撞名会自动合并，merged 表示发生了合并。 */
+export interface TagRenameResult {
+  tag: Tag;
+  merged: boolean;
+  /** 改名前这个标签关联了多少篇笔记（含回收站里的） */
+  affected: number;
+}
+
+/** 删除标签的结果：只拆关联，笔记不动。 */
+export interface TagDeleteResult {
+  id: Id;
+  name: string;
+  /** 受影响的笔记篇数（含回收站里的） */
+  affected: number;
+}
+
 export interface Attachment {
   id: Id;
   note_id: Id | null;

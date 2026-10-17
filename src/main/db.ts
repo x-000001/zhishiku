@@ -43,6 +43,8 @@ import type {
   ReviewSource,
   SearchHit,
   Tag,
+  TagDeleteResult,
+  TagRenameResult,
   Task,
   TaskFilter,
   TaskPriority,
@@ -148,7 +150,7 @@ function snippetAround(content: string, query: string, len = 90): string {
 /* 建表与迁移                                                          */
 /* ------------------------------------------------------------------ */
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 /** 给老库补列：SQLite 没有 ADD COLUMN IF NOT EXISTS，先查表结构再决定。 */
 function addColumnIfMissing(table: string, column: string, decl: string): void {
@@ -257,6 +259,11 @@ function migrate(): void {
        end
        where typeof(priority) <> 'text'`
     );
+  }
+  if (current < 5) {
+    // v4 → v5：标签全局管理。表结构不用动（tag / note_tag 第一版就有），
+    // 只补一个按标签反查的索引 —— 引用数统计和「点标签筛选」都靠它。
+    database.exec('CREATE INDEX IF NOT EXISTS idx_note_tag_tag ON note_tag(tag_id)');
   }
   if (current < SCHEMA_VERSION) {
     database.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
@@ -809,13 +816,38 @@ export function rebuildSearchIndex(): number {
 /* 标签                                                                */
 /* ------------------------------------------------------------------ */
 
-export function listTags(): Tag[] {
-  return all<Tag>(
-    `select t.id, t.name,
+/** 引用数 = 未删除笔记里用了这个标签的篇数；回收站里的笔记不算。 */
+const TAG_SELECT = `select t.id, t.name,
             (select count(*) from note_tag nt join note n on n.id = nt.note_id
               where nt.tag_id = t.id and n.deleted_at is null) as note_count
-     from tag t order by t.name`
-  );
+     from tag t`;
+
+export function listTags(): Tag[] {
+  return all<Tag>(`${TAG_SELECT} order by t.name`);
+}
+
+function tagById(id: Id): Tag | undefined {
+  return one<Tag>(`${TAG_SELECT} where t.id = ?`, id);
+}
+
+/** 标签名最长 40 字，和分类名同一量级。 */
+const TAG_NAME_MAX = 40;
+
+/** 洗标签名：去首尾空白、把换行/制表压成空格、禁逗号（逗号在笔记里用来分隔多个标签）。 */
+function cleanTagName(raw: string): string {
+  const name = String(raw ?? '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!name) throw new Error('标签名不能为空');
+  if (name.length > TAG_NAME_MAX) throw new Error(`标签名最多 ${TAG_NAME_MAX} 个字符`);
+  if (name.includes(',')) throw new Error('标签名里不能有逗号，「,」用来分隔多个标签');
+  return name;
+}
+
+function countTagNotes(id: Id): number {
+  const row = one<{ c: number }>('select count(*) as c from note_tag where tag_id = ?', id);
+  return Number(row?.c ?? 0);
 }
 
 export function setNoteTags(noteId: Id, names: string[]): void {
@@ -829,8 +861,60 @@ export function setNoteTags(noteId: Id, names: string[]): void {
   }
 }
 
-export function deleteTag(id: Id): void {
-  run('delete from tag where id = ?', id);
+/**
+ * 全局改标签名。撞名时自动合并（两条并一条）—— 与其报错让用户自己清理，
+ * 不如合并后告诉他影响了多少篇。整个过程一个事务，中途出错整体回滚。
+ */
+export function renameTag(id: Id, rawName: string): TagRenameResult {
+  const name = cleanTagName(rawName);
+  const current = tagById(id);
+  if (!current) throw new Error('这个标签已经不在了，刷新一下再试');
+  const same = one<{ id: Id }>('select id from tag where name = ? and id <> ?', name, id);
+  const affected = countTagNotes(id);
+  const database = requireDb();
+  database.exec('BEGIN');
+  try {
+    let merged = false;
+    let afterId = id;
+    if (same) {
+      // 合并：把旧标签下的笔记改挂到目标标签上（note_tag 主键会自然去重），再删掉旧标签
+      run(
+        'insert or ignore into note_tag(note_id, tag_id) select note_id, ? from note_tag where tag_id = ?',
+        same.id,
+        id
+      );
+      run('delete from tag where id = ?', id);
+      merged = true;
+      afterId = same.id;
+    } else {
+      run('update tag set name = ? where id = ?', name, id);
+    }
+    const tag = tagById(afterId);
+    if (!tag) throw new Error('标签改名后没能读回来');
+    database.exec('COMMIT');
+    return { tag, merged, affected };
+  } catch (err) {
+    database.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/** 删除标签：只拆「笔记 ↔ 标签」的关联，笔记本身一条不动。 */
+export function deleteTagById(id: Id): TagDeleteResult {
+  const current = tagById(id);
+  if (!current) throw new Error('这个标签已经不在了，刷新一下再试');
+  const affected = countTagNotes(id);
+  const database = requireDb();
+  database.exec('BEGIN');
+  try {
+    run('delete from note_tag where tag_id = ?', id);
+    run('delete from tag where id = ?', id);
+    database.exec('COMMIT');
+    return { id, name: current.name, affected };
+  } catch (err) {
+    database.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 /* ------------------------------------------------------------------ */
