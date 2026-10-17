@@ -4625,3 +4625,386 @@ html[data-theme='dark'] {
   bottom: calc(100% + 10px);
   z-index: 71;
 }
+
+/* ---------------- 第七版（0.7.0）：AI 辅助 ----------------
+   划词气泡 / 预览对比 / 摘要 / 分类整理 / 知识联想 / 设置卡片。
+   全部用现有主题变量，深浅色都跟着走；弹窗本身已经是毛玻璃（.modal base）。 */
+
+.tb-ai {
+  color: var(--brand);
+  font-weight: 620;
+  letter-spacing: 0.01em;
+}
+
+.tb-ai:hover {
+  background: var(--brand-soft);
+}
+
+/* 划词气泡：浮在选区下面，不抢焦点（按钮都在 mousedown 里 preventDefault） */
+.ai-bubble {
+  position: fixed;
+  z-index: 78;
+  transform: translate(-50%, 0);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 208px;
+  max-width: 300px;
+  padding: 8px 10px 9px;
+  border-radius: var(--radius);
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  box-shadow: var(--shadow-lg);
+  animation: jw-ai-bubble-in 140ms var(--spring-ease) both;
+}
+
+@keyframes jw-ai-bubble-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px) scale(0.97);
+  }
+}
+
+.ai-bubble-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-bubble-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 640;
+  color: var(--brand);
+}
+
+.ai-bubble-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.ai-bubble-btn {
+  padding: 4px 9px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.14s var(--smooth-ease), border-color 0.14s var(--smooth-ease);
+}
+
+.ai-bubble-btn:hover {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand-strong);
+}
+
+.ai-bubble-hint {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+
+.ai-lang-select {
+  max-width: 130px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+/* 预览对比：左原文、右 AI 结果 */
+.ai-preview-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.ai-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ai-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 620;
+  color: var(--text-soft);
+}
+
+.ai-preview-src,
+.ai-preview-out,
+.ai-summary-out {
+  margin: 0;
+  padding: 10px 12px;
+  min-height: 120px;
+  max-height: 46vh;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-sunken);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ai-preview-out {
+  border-color: color-mix(in srgb, var(--brand) 32%, var(--border));
+  background: color-mix(in srgb, var(--brand) 6%, var(--bg-sunken));
+}
+
+.ai-summary-out {
+  min-height: 90px;
+  max-height: 40vh;
+}
+
+.ai-preview-lang {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.ai-busy {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--brand);
+}
+
+.ai-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--brand);
+  animation: jw-ai-caret 0.9s steps(2, start) infinite;
+}
+
+@keyframes jw-ai-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+.ai-error-text {
+  color: var(--danger);
+}
+
+.ai-error-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--border));
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.ai-error-bar > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.ai-tip {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+.ai-tip kbd {
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-hover);
+  font-family: var(--font);
+  font-size: 10.5px;
+}
+
+.ai-block + .ai-block {
+  margin-top: 14px;
+}
+
+.ai-block-head {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 620;
+  color: var(--text-soft);
+}
+
+.ai-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-chip {
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px dashed var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.14s var(--smooth-ease), border-color 0.14s var(--smooth-ease), transform 0.14s var(--spring-ease);
+}
+
+.ai-chip:hover:not(:disabled) {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  transform: translateY(-1px);
+}
+
+.ai-chip.on,
+.ai-chip:disabled {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--ok) 46%, var(--border));
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+  color: var(--ok);
+  cursor: default;
+}
+
+.ai-cat-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-cat-name {
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.ai-related-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-related-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+}
+
+.ai-related-txt {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ai-related-txt p {
+  margin: 2px 0 0;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.ai-related-ops {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ai-privacy p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.ai-privacy ul {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--text-soft);
+}
+
+/* 插进正文的摘要引用块 */
+blockquote.ai-summary {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--brand);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--brand) 7%, transparent);
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.75;
+}
+
+blockquote.ai-summary b {
+  color: var(--brand-strong);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+/* 设置页 AI 卡片：输入框在窄窗口下别把行撑破 */
+.ai-settings-card .set-row {
+  flex-wrap: wrap;
+}
+
+.ai-settings-card .input {
+  font-family: var(--font);
+}
+
+.ai-test-result {
+  min-height: 1.4em;
+}
+
+@media (max-width: 900px) {
+  .ai-preview-cols {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-preview-src,
+  .ai-preview-out,
+  .ai-summary-out {
+    max-height: 30vh;
+  }
+}

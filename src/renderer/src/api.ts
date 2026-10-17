@@ -1,4 +1,11 @@
 import type {
+  AiConfigInput,
+  AiConfigPublic,
+  AiRunPayload,
+  AiRunResult,
+  AiStreamEventWithId
+} from '../../shared/ai';
+import type {
   AppInfo,
   AppSettings,
   Attachment,
@@ -58,10 +65,15 @@ function call<T>(channel: string, payload?: unknown): Promise<T> {
 
 /** 渲染进程用的事件通道白名单。 */
 export function onEvent(
-  channel: 'nav:go' | 'capture:focus' | 'notice:due' | 'update:progress' | 'focus:state',
+  channel: 'nav:go' | 'capture:focus' | 'notice:due' | 'update:progress' | 'focus:state' | 'ai:stream',
   listener: (payload: unknown) => void
 ): () => void {
   return bridge.on(channel, listener);
+}
+
+/** AI 流式输出：主进程把增量一段段推过来（渲染层从不自己发请求）。 */
+export function onAiStream(listener: (event: AiStreamEventWithId) => void): () => void {
+  return bridge.on('ai:stream', (payload) => listener(payload as AiStreamEventWithId));
 }
 
 /** 番茄钟状态变化（主进程是唯一计时源，渲染层只镜像）。 */
@@ -291,7 +303,16 @@ export const api = {
   resumeFocus: () => call<FocusState>('focus:resume'),
   abandonFocus: () => call<FocusState>('focus:abandon'),
   skipBreak: () => call<FocusState>('focus:skip-break'),
-  focusSummary: () => call<FocusSummary>('focus:summary')
+  focusSummary: () => call<FocusSummary>('focus:summary'),
+
+  /* ---------------- 第七版：AI 辅助（全部请求走主进程） ---------------- */
+  aiGetConfig: () => call<AiConfigPublic>('ai:config:get'),
+  aiSetConfig: (patch: AiConfigInput) => call<AiConfigPublic>('ai:config:set', patch),
+  /** 拿一条极小请求试连通性；失败会带中文原因 reject。 */
+  aiTestConfig: () => call<{ ok: true; model: string; reply: string }>('ai:config:test'),
+  /** 发起一次 AI 请求：立刻拿 requestId，文字随后从 onAiStream 推来。 */
+  aiRun: (payload: AiRunPayload) => call<AiRunResult>('ai:run', payload),
+  aiCancel: (requestId: number) => call<boolean>('ai:cancel', { requestId })
 };
 
 export type Api = typeof api;

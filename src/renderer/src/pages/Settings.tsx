@@ -11,7 +11,8 @@ import type {
   UpdateDownload,
   UpdateProgress
 } from '../../../shared/types';
-import { toastError } from '../errors';
+import type { AiConfigInput, AiConfigPublic } from '../../../shared/ai';
+import { errText, toastError } from '../errors';
 
 /** 把字节数说成人话：安装包几十 MB，进度里只显示 MB 就够了。 */
 function fmtSize(bytes: number): string {
@@ -40,6 +41,12 @@ export default function Settings(props: {
   const [downloaded, setDownloaded] = useState<UpdateDownload | null>(null);
   const [installing, setInstalling] = useState(false);
 
+  /* 第七版：AI 模型设置（Key 只在主进程里存，这里拿不到完整 Key） */
+  const [ai, setAi] = useState<AiConfigPublic | null>(null);
+  const [aiForm, setAiForm] = useState({ baseUrl: '', model: '', apiKey: '' });
+  const [aiBusy, setAiBusy] = useState<'save' | 'test' | ''>('');
+  const [aiTestText, setAiTestText] = useState('');
+
   // 卸载时自动退订，不留在渲染进程里
   useEffect(() => onUpdateProgress(setProgress), []);
 
@@ -51,6 +58,13 @@ export default function Settings(props: {
       props.onTheme(s.theme);
     });
     void api.listBackups().then(setBackups).catch(() => setBackups([]));
+    void api
+      .aiGetConfig()
+      .then((cfg) => {
+        setAi(cfg);
+        setAiForm((prev) => ({ baseUrl: cfg.baseUrl, model: cfg.model, apiKey: prev.apiKey }));
+      })
+      .catch(() => undefined);
   }, [props]);
 
   useEffect(() => {
@@ -209,6 +223,62 @@ export default function Settings(props: {
     } catch (err) {
       setInstalling(false);
       toastError('启动安装程序失败：', err);
+    }
+  };
+
+  /* ---------------- 第七版：AI 模型设置 ---------------- */
+
+  /** 保存 AI 配置。Key 留空 = 不改；想删 Key 用旁边的「清除 Key」。 */
+  const saveAi = async (): Promise<void> => {
+    setAiBusy('save');
+    try {
+      const patch: AiConfigInput = {
+        baseUrl: aiForm.baseUrl.trim(),
+        model: aiForm.model.trim()
+      };
+      if (aiForm.apiKey.trim()) patch.apiKey = aiForm.apiKey.trim();
+      const next = await api.aiSetConfig(patch);
+      setAi(next);
+      setAiForm((prev) => ({ ...prev, apiKey: '' }));
+      toast(next.hasKey ? '已保存 AI 设置，Key 只存在本机' : '已保存，但还没填 Key，AI 还不能用');
+    } catch (err) {
+      toastError('保存 AI 设置失败：', err);
+    } finally {
+      setAiBusy('');
+    }
+  };
+
+  /** 测试连接：让主进程发一次极短的请求，把中文错误原样显示在这里。 */
+  const testAi = async (): Promise<void> => {
+    setAiBusy('test');
+    setAiTestText('');
+    try {
+      const res = await api.aiTestConfig();
+      setAiTestText(`连通了：${res.model} 回了「${res.reply}」`);
+      toast('AI 连接正常');
+    } catch (err) {
+      setAiTestText('连接失败：' + errText(err));
+      toastError('测试失败：', err);
+    } finally {
+      setAiBusy('');
+    }
+  };
+
+  const clearAiKey = async (): Promise<void> => {
+    try {
+      setAi(await api.aiSetConfig({ apiKey: '' }));
+      toast('已清除 Key，AI 功能先停用');
+    } catch (err) {
+      toastError('清除 Key 失败：', err);
+    }
+  };
+
+  const toggleAiPrivacy = async (): Promise<void> => {
+    if (!ai) return;
+    try {
+      setAi(await api.aiSetConfig({ privacyAck: !ai.privacyAck }));
+    } catch (err) {
+      toastError('更新 AI 隐私设置失败：', err);
     }
   };
 
@@ -393,6 +463,106 @@ export default function Settings(props: {
             onClick={() => patch({ closeToTray: !form.closeToTray })}
           />
         </div>
+      </div>
+
+      {/* 第七版：AI 模型设置。Key 存主进程，这里只显示「有没有配」和打码尾巴。 */}
+      <div className="card ai-settings-card">
+        <div className="card-head">
+          <h2>AI 模型（OpenAI 兼容接口）</h2>
+          <span className="spacer" />
+          <span className="badge">{ai?.hasKey ? '已配好 Key' : '还没填 Key'}</span>
+          <button
+            type="button"
+            className={aiBusy === 'test' ? 'btn sm loading ai-test-btn' : 'btn sm ai-test-btn'}
+            disabled={aiBusy === 'test'}
+            onClick={() => void testAi()}
+            title="让主进程按上面的地址真发一次很短的中文请求"
+          >
+            {aiBusy === 'test' ? '测试中…' : '测试连接'}
+          </button>
+          <button
+            type="button"
+            className={aiBusy === 'save' ? 'btn sm primary loading ai-save-btn' : 'btn sm primary ai-save-btn'}
+            disabled={aiBusy === 'save'}
+            onClick={() => void saveAi()}
+          >
+            {aiBusy === 'save' ? '保存中…' : '保存 AI 设置'}
+          </button>
+        </div>
+        <div className="set-row">
+          <div className="txt">
+            <b>Base URL</b>
+            <p>OpenAI 兼容的接口地址，例如 https://api.deepseek.com/v1 或 https://api.openai.com/v1 。</p>
+          </div>
+          <input
+            className="input ai-base-url"
+            style={{ width: 300 }}
+            placeholder="https://api.deepseek.com/v1"
+            spellCheck={false}
+            value={aiForm.baseUrl}
+            onChange={(e) => setAiForm({ ...aiForm, baseUrl: e.target.value })}
+          />
+        </div>
+        <div className="set-row">
+          <div className="txt">
+            <b>模型名</b>
+            <p>接口里要填的模型 id，例如 deepseek-chat、gpt-4o-mini。</p>
+          </div>
+          <input
+            className="input ai-model"
+            style={{ width: 200 }}
+            placeholder="deepseek-chat"
+            spellCheck={false}
+            value={aiForm.model}
+            onChange={(e) => setAiForm({ ...aiForm, model: e.target.value })}
+          />
+        </div>
+        <div className="set-row">
+          <div className="txt">
+            <b>API Key</b>
+            <p>
+              {ai?.hasKey
+                ? `已经存了一个（${ai.keyHint}）${
+                    ai.encrypted ? '，用系统加密存在本机设置里' : '，系统不支持加密，是明文存在本机设置里'
+                  }。要换就填新的；留空 = 不改。`
+                : '只存在本机设置里（系统支持时会加密），不会写进日志，也不会出现在渲染层。'}
+            </p>
+          </div>
+          <input
+            className="input ai-key"
+            type="password"
+            style={{ width: 240 }}
+            placeholder={ai?.hasKey ? '留空 = 不修改' : 'sk-…'}
+            autoComplete="off"
+            spellCheck={false}
+            value={aiForm.apiKey}
+            onChange={(e) => setAiForm({ ...aiForm, apiKey: e.target.value })}
+          />
+          {ai?.hasKey ? (
+            <button type="button" className="btn sm" onClick={() => void clearAiKey()}>
+              清除 Key
+            </button>
+          ) : null}
+        </div>
+        <div className="set-row">
+          <div className="txt">
+            <b>隐私说明</b>
+            <p>
+              只有你点「润色 / 摘要 / 分类整理…」的时候才联网，把选中的文字或整篇正文发给你配置的模型服务；
+              本地笔记、搜索、复习都不受影响，也不会被改动。
+              {ai?.privacyAck ? '（已经确认过）' : '（第一次用 AI 时会再问你一次）'}
+            </p>
+          </div>
+          <button
+            type="button"
+            className={ai?.privacyAck ? 'switch on' : 'switch'}
+            aria-label="AI 隐私确认开关"
+            onClick={() => void toggleAiPrivacy()}
+          />
+        </div>
+        <p className="muted ai-test-result">
+          {aiTestText || 'Key 只在本机主进程里使用；渲染层拿到的只有「有没有配」和打码后的尾巴。填好后点「测试连接」验证一下。'}
+        </p>
       </div>
 
       {dirty ? (

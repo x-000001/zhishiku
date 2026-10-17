@@ -29,12 +29,89 @@ fs.mkdirSync(shotDir, { recursive: true });
 let stubUpdateMode = 'newer';
 let stubDelayMs = 0; // 让「正在连接…」这个加载态能被稳定观察到（本地回包太快会瞬过）
 let stubAssetMode = 'normal';
+/* 第七版：AI 的 stub。主进程真的走 net.fetch 发 HTTP 请求，只是打到这里，
+   不连外网、不花额度。URL 前缀区分场景：/ai/v1 = 正常；/ai-bad/v1 = 401。
+   回复内容按「用户消息里的动作关键词」区分，和真实模型无关。 */
+function aiReplyFor(messages) {
+  const raw = JSON.stringify(messages ?? []);
+  if (raw.includes('请只回复两个字')) return '可用';
+  if (raw.includes('请润色下面这段文字')) return '这是润色后的句子。';
+  if (raw.includes('请把下面这段文字扩写到')) return '这是扩写后的句子，补了一点细节。';
+  if (raw.includes('请把下面这段文字压缩到')) return '这是缩写后的句子。';
+  if (raw.includes('请把下面这段文字翻译成')) return 'TRANSLATED TEXT';
+  if (raw.includes('请为下面这篇笔记写一段摘要'))
+    return '这篇笔记讲了把零散知识收进知识库、再靠复习把它记住的完整流程。';
+  if (raw.includes('请推荐 3 到 5 个标签'))
+    return JSON.stringify({
+      tags: ['知识管理', 'AI', '测试标签'],
+      category: '学习',
+      reason: 'stub 给出的理由'
+    });
+  if (raw.includes('请阅读下面这篇笔记'))
+    return JSON.stringify({
+      items: [
+        { title: '为什么要复习', detail: 'stub 联想条目一' },
+        { title: '标签该怎么管', detail: 'stub 联想条目二' }
+      ]
+    });
+  return 'AI 回复';
+}
 /* 假安装包：内容固定，测试里断言「落盘大小 + SHA256 对得上」就用它算 */
 const stubInstaller = Buffer.alloc(384 * 1024, 0x5a);
 const stubInstallerSha = createHash('sha256').update(stubInstaller).digest('hex');
 let stubPort = 0;
 const stubServer = http.createServer((req, res) => {
   const url = req.url || '';
+  /* 第七版：AI（POST /ai/…/chat/completions）。流式 = SSE 一块一块发，
+     非流式（标签/联想/测试连接）= 一次性 JSON。 */
+  if (req.method === 'POST' && /^\/ai(-|\/|$)/.test(url)) {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
+    req.on('end', () => {
+      if (url.startsWith('/ai-bad/')) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'invalid api key (stub)' } }));
+        return;
+      }
+      let payload = {};
+      try {
+        payload = JSON.parse(body || '{}');
+      } catch {
+        payload = {};
+      }
+      const reply = aiReplyFor(payload.messages);
+      if (!payload.stream) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ choices: [{ message: { content: reply } }] }));
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive'
+      });
+      // 拆成小段慢慢发，让「打字机效果」在测试里是真实可见的
+      const pieces = reply.match(/[\s\S]{1,5}/g) ?? [];
+      let index = 0;
+      const timer = setInterval(() => {
+        if (res.destroyed) {
+          clearInterval(timer);
+          return;
+        }
+        if (index >= pieces.length) {
+          clearInterval(timer);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: pieces[index] } }] }) + '\n\n');
+        index += 1;
+      }, 12);
+    });
+    return;
+  }
   if (url.startsWith('/download/')) {
     res.writeHead(200, {
       'content-type': 'application/octet-stream',
@@ -4544,6 +4621,289 @@ try {
     ok: fabLayer.error === undefined && fabLayer.toastZ > fabLayer.dockZ && fabLayer.dockZ > 0,
     detail: '按钮层=' + fabLayer.dockZ + ' Toast层=' + fabLayer.toastZ + (fabLayer.error ? ' 错误=' + fabLayer.error : '')
   });
+
+  // ================= 第七版（0.7.0）：AI 辅助 =================
+  // 主进程真发 HTTP，但打的是本地 stub（/ai/v1 正常、/ai-bad/v1 回 401、127.0.0.1:1 断网）。
+  const AI_PRELUDE = `const q=(s)=>document.querySelector(s);
+    const qa=(s)=>[...document.querySelectorAll(s)];
+    const txt=(s)=>{const el=q(s);return el?el.textContent.trim():'';};
+    const sleep=(ms)=>new Promise((r)=>setTimeout(r,ms));
+    const waitFor=async(fn,ms=5000)=>{const t0=Date.now();while(Date.now()-t0<ms){try{const v=fn();if(v)return v;}catch{}await sleep(60);}return null;};
+    const clickText=(s,w)=>{const el=qa(s).find((x)=>((x.textContent)||'').includes(w));if(!el)throw new Error('找不到 '+w+' @ '+s);el.click();return el;};
+    const selectText=(len)=>{const el=q('.rt-editor');if(!el)throw new Error('没有打开笔记');el.focus();const w=document.createTreeWalker(el,NodeFilter.SHOW_TEXT);let n=null;while(w.nextNode()){const v=w.currentNode.nodeValue||'';if(v.trim().length>=len){n=w.currentNode;break;}}if(!n)throw new Error('正文里没有可选的文字');const v=n.nodeValue||'';const s=v.search(/\\S/);const r=document.createRange();r.setStart(n,s);r.setEnd(n,Math.min(v.length,s+len));const sel=window.getSelection();sel.removeAllRanges();sel.addRange(r);document.dispatchEvent(new Event('selectionchange'));return sel.toString();};`;
+
+  // 1) 配置只停在主进程 + 设置页卡片 + 测试连接
+  const aiCfg = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    const set = await window.api.invoke('ai:config:set', {
+      baseUrl: 'http://127.0.0.1:${stubPort}/ai/v1',
+      model: 'stub-model',
+      apiKey: 'sk-e2e-secret-123456',
+      privacyAck: false
+    });
+    rec('AI：Key 只在主进程，渲染层拿到的只有打码尾巴', set.hasKey === true && !JSON.stringify(set).includes('sk-e2e-secret-123456') && String(set.keyHint).includes('…'), 'hint=' + set.keyHint);
+    location.hash = '/settings';
+    const card = await waitFor(() => q('.ai-settings-card'), 5000);
+    rec('AI：设置页有「AI 模型」卡片（地址 / 模型 / Key）', !!card && !!q('.ai-base-url') && !!q('.ai-model') && !!q('.ai-key'), card ? '三个输入框都在' : '卡片没出现');
+    if (card) clickText('.ai-test-btn', '测试连接');
+    const tested = await waitFor(() => /连通了/.test(txt('.ai-test-result')), 8000);
+    rec('AI：设置页「测试连接」能连通（stub 回「可用」）', !!tested, txt('.ai-test-result').slice(0, 80));
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiCfg);
+  await cdp.shot('ai-settings');
+
+  // 2) 打开笔记 → 摘要（第一次用先隐私确认，流式完后自动插入开头）
+  const aiSummary = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    location.hash = '/knowledge';
+    // 自己造一篇正文够长的笔记，别依赖之前测试留下的笔记内容
+    await window.api.invoke('note:create', {
+      title: 'AI 摘要自检',
+      html: '<p>间隔重复与主动回忆是复习的两条主线，这段文字用来测试 AI 摘要和划词。</p>'
+    });
+    location.hash = '/';
+    await sleep(350);
+    location.hash = '/knowledge';
+    const row = await waitFor(() => qa('.list-row').find((r) => ((r.textContent) || '').includes('AI 摘要自检')), 8000);
+    if (!row) throw new Error('知识库列表里没找到自检笔记');
+    row.click();
+    const ed = await waitFor(() => { const el = q('.rt-editor'); return el && (el.textContent || '').includes('间隔重复') ? el : null; }, 8000);
+    rec('AI：能打开一篇有正文的笔记', !!ed, ed ? '正文长度=' + (ed.textContent || '').trim().length : '没有编辑器');
+    clickText('.tb-ai', 'AI');
+    await waitFor(() => q('.ctx-menu'), 3000);
+    clickText('.ctx-item', '摘要（插到开头）');
+    const privacy = await waitFor(() => q('.modal.ai-privacy'), 5000);
+    rec('AI：第一次用之前先弹隐私说明', !!privacy, privacy ? '隐私弹窗出现' : '没有隐私弹窗');
+    if (privacy) clickText('.ai-privacy-agree', '我知道');
+    const modal = await waitFor(() => q('.modal.ai-summary'), 6000);
+    const quote = await waitFor(() => q('.rt-editor blockquote.ai-summary'), 9000);
+    rec('AI：摘要生成完自动以引用块插到笔记开头', !!modal && !!quote, quote ? '开头引用块=' + (quote.textContent || '').slice(0, 48) : '没插进去');
+    rec('AI：摘要弹窗提供「撤销插入」', !!q('.ai-undo'), q('.ai-undo') ? '按钮在' : '没有按钮');
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiSummary);
+  await cdp.shot('ai-summary');
+
+  // 3) 撤销插入：原生撤销一步就把整块拿掉
+  const aiUndo = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    const before = !!q('.rt-editor blockquote.ai-summary');
+    clickText('.ai-undo', '撤销插入');
+    await sleep(400);
+    rec('AI：点「撤销插入」把摘要整块拿掉（原生撤销一步）', before && !q('.rt-editor blockquote.ai-summary'), '撤销前=' + before + ' 撤销后=' + String(!!q('.rt-editor blockquote.ai-summary')));
+    clickText('.modal.ai-summary .modal-foot .btn', '完成');
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiUndo);
+
+  // 4) 划词 → 气泡 → 润色：预览对比，确认前不改正文
+  const aiBubble = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    const picked = selectText(8);
+    const bubble = await waitFor(() => q('.ai-bubble'), 4000);
+    rec('AI：选中正文就浮出划词气泡（润色/扩写/缩写/翻译）', !!bubble && qa('.ai-bubble .ai-bubble-btn').length === 4, bubble ? '选中「' + picked + '」，按钮=' + qa('.ai-bubble .ai-bubble-btn').length : '没有气泡');
+    const lang = await waitFor(() => q('.ai-bubble .ai-lang-select'), 3000);
+    rec('AI：划词气泡里有目标语言下拉（中/英/日/韩…）', !!lang && lang.options.length >= 4, lang ? '语言项=' + lang.options.length : '没有下拉');
+    clickText('.ai-bubble .ai-bubble-btn', '润色');
+    const result = await waitFor(() => { const el = q('.ai-preview-out'); return el && /这是润色后的句子/.test(el.textContent || '') ? el : null; }, 9000);
+    rec('AI：润色弹窗两栏对比（原文 / AI 结果），结果是流式到达的', !!result && !!q('.ai-preview-src'), result ? '结果=' + (result.textContent || '').trim().slice(0, 32) : '结果没到');
+    rec('AI：确认替换之前正文一个字都没改', !(q('.rt-editor').textContent || '').includes('这是润色后的句子'), '正文仍是原文');
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiBubble);
+  await cdp.shot('ai-polish');
+
+  // 4b) 确认替换才写回
+  const aiConfirm = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    const btn = await waitFor(() => { const b = q('.ai-confirm'); return b && !b.disabled ? b : null; }, 7000);
+    if (btn) btn.click();
+    const replaced = await waitFor(() => (q('.rt-editor').textContent || '').includes('这是润色后的句子'), 5000);
+    rec('AI：点「确认替换」才把结果写回正文', !!btn && !!replaced, replaced ? '正文里出现 AI 结果' : '没有写回');
+    rec('AI：替换后预览弹窗自动关闭', !q('.modal.ai-preview'), '');
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiConfirm);
+
+  // 5) 翻译：目标语言可选，未确认不写入
+  const aiTranslate = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    selectText(8);
+    await waitFor(() => q('.ai-bubble'), 4000);
+    const lang = await waitFor(() => q('.ai-bubble .ai-lang-select'), 3000);
+    if (!lang) throw new Error('气泡里没有语言下拉');
+    lang.value = 'en';
+    lang.dispatchEvent(new Event('change', { bubbles: true }));
+    clickText('.ai-bubble .ai-bubble-btn', '翻译');
+    const result = await waitFor(() => { const el = q('.ai-preview-out'); return el && /TRANSLATED TEXT/.test(el.textContent || '') ? el : null; }, 9000);
+    rec('AI：翻译能指定目标语言（选英文 → 标题带「英文」，结果按目标语言返回）', !!result && txt('.modal.ai-preview .modal-head').includes('英文'), '标题=' + txt('.modal.ai-preview .modal-head'));
+    rec('AI：翻译结果没确认前不进正文', !(q('.rt-editor').textContent || '').includes('TRANSLATED TEXT'), '正文未被改写');
+    clickText('.modal.ai-preview .modal-foot .btn', '取消');
+    await sleep(300);
+    rec('AI：点「取消」后正文保持原样', !(q('.rt-editor').textContent || '').includes('TRANSLATED TEXT'), '取消完成');
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiTranslate);
+
+  // 6) 分类整理：标签点一下就加进笔记 + 一个分类建议
+  const aiTagsOpen = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    clickText('.tb-ai', 'AI');
+    await waitFor(() => q('.ctx-menu'), 3000);
+    clickText('.ctx-item', '分类整理');
+    const chip = await waitFor(() => q('.ai-tag-chip'), 9000);
+    rec('AI：分类整理给出可点的标签建议', !!chip && qa('.ai-tag-chip').length >= 2, chip ? '标签=' + qa('.ai-tag-chip').map((c) => (c.textContent || '').replace(/^\\+ /, '').trim()).join('/') : '没有标签');
+    rec('AI：分类整理附带一个分类建议', /学习/.test(txt('.ai-cat-suggest')), '分类建议=' + txt('.ai-cat-suggest'));
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiTagsOpen);
+  await cdp.shot('ai-tags');
+
+  const aiTags = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    const chip = await waitFor(() => q('.ai-tag-chip'), 5000);
+    const firstName = chip ? (chip.textContent || '').replace(/^\\+ /, '').trim() : '';
+    if (chip) chip.click();
+    const added = await waitFor(() => qa('.ai-tag-chip.on').length >= 1, 6000);
+    const tagInput = q('input[placeholder^="标签，用逗号分开"]');
+    rec('AI：点一下标签就加进当前笔记', !!added && !!tagInput && (tagInput.value || '').includes(firstName), tagInput ? '标签栏=' + tagInput.value : '没有标签输入框');
+    clickText('.modal.ai-tags .modal-foot .btn', '完成');
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiTags);
+
+  // 7) 知识联想：列点，且「新建笔记」默认落进当前分类并直接打开
+  const aiRelatedOpen = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    clickText('.tb-ai', 'AI');
+    await waitFor(() => q('.ctx-menu'), 3000);
+    clickText('.ctx-item', '知识联想');
+    const item = await waitFor(() => q('.ai-related-item'), 9000);
+    rec('AI：知识联想列出可继续想的点', !!item && qa('.ai-related-item').length >= 2, item ? '条数=' + qa('.ai-related-item').length : '没有联想');
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiRelatedOpen);
+  await cdp.shot('ai-related');
+
+  const aiRelated = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    const catBefore = txt('.tree-item.selected');
+    clickText('.ai-related-item .btn.primary', '新建笔记');
+    const titleInput = await waitFor(() => { const el = q('.editor-title'); return el && (el.value || '').includes('为什么要复习') ? el : null; }, 7000);
+    rec('AI：联想「新建笔记」直接打开新笔记', !!titleInput, titleInput ? '新笔记标题=' + titleInput.value : '没有打开新笔记');
+    rec('AI：新建的笔记默认带当前分类', txt('.tree-item.selected') === catBefore, '分类=' + catBefore + ' → ' + txt('.tree-item.selected'));
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiRelated);
+
+  // 8) Key 无效：几秒内中文报错，不卡死
+  const aiBadKey = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    await window.api.invoke('ai:config:set', { baseUrl: 'http://127.0.0.1:${stubPort}/ai-bad/v1' });
+    const t0 = Date.now();
+    selectText(8);
+    await waitFor(() => q('.ai-bubble'), 4000);
+    clickText('.ai-bubble .ai-bubble-btn', '润色');
+    const err = await waitFor(() => { const el = q('.ai-preview-out .ai-error-text') || q('.ai-preview .ai-error-bar span'); return el && /API Key/.test(el.textContent || '') ? el : null; }, 10000);
+    const ms = Date.now() - t0;
+    rec('AI：Key 无效时 5 秒内中文报错、界面不卡死', !!err && ms < 10000, '耗时≈' + ms + 'ms，提示=' + (err ? (err.textContent || '').trim().slice(0, 60) : '没报错'));
+    clickText('.modal.ai-preview .modal-foot .btn', '取消');
+    await sleep(300);
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiBadKey);
+
+  // 9) 断网：只提示，不影响本地读写
+  const aiOffline = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    await window.api.invoke('ai:config:set', { baseUrl: 'http://127.0.0.1:1/v1' });
+    selectText(8);
+    await waitFor(() => q('.ai-bubble'), 4000);
+    clickText('.ai-bubble .ai-bubble-btn', '润色');
+    const err = await waitFor(() => { const el = q('.ai-preview-out .ai-error-text') || q('.ai-preview .ai-error-bar span'); return el && /(连不上|网络|AI 请求失败)/.test(el.textContent || '') ? el : null; }, 12000);
+    rec('AI：断网时会中文提示（不崩、不卡死）', !!err, err ? '提示=' + (err.textContent || '').trim().slice(0, 70) : '没有提示');
+    const info = await window.api.invoke('app:info');
+    const integrity = await window.api.invoke('data:integrity');
+    rec('AI：断网不影响本地功能（库仍可读、完整性正常）', !!info && !!info.dataRoot && integrity && integrity.ok !== false, '完整性=' + JSON.stringify(integrity).slice(0, 60));
+    clickText('.modal.ai-preview .modal-foot .btn', '取消');
+    await window.api.invoke('ai:config:set', { baseUrl: 'http://127.0.0.1:${stubPort}/ai/v1' });
+    await sleep(300);
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiOffline);
 
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);

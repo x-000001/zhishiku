@@ -5,7 +5,27 @@ import { ConfirmDialog, Empty, Modal, toast } from '../ui';
 import { showContextMenu, type MenuItem } from '../menu';
 import { relative } from '../format';
 import { diffLines, renderMarkdown } from '../../../shared/markdown';
-import { attachmentUrl, htmlToPlainText, sanitizeHtml } from '../../../shared/html';
+import { attachmentUrl, escapeHtml, htmlToPlainText, sanitizeHtml } from '../../../shared/html';
+import {
+  AI_ACTION_LABELS,
+  AI_DEFAULT_LANG,
+  AI_QUICK_ACTIONS,
+  AI_SUMMARY_CLASS,
+  AI_TARGET_LANGS,
+  type AiConfigPublic,
+  type AiFullAction,
+  type AiLangValue,
+  type AiRelatedItem,
+  type AiTextAction
+} from '../../../shared/ai';
+import {
+  AiBubble,
+  AiPreviewModal,
+  AiPrivacyModal,
+  AiRelatedModal,
+  AiSummaryModal,
+  AiTagsModal
+} from '../ai';
 import * as rich from '../rich';
 import { describeSaveError, saveStamp } from '../save';
 import { applyOrder, moveWithinGroup } from '../reorder';
@@ -83,6 +103,33 @@ export default function Knowledge(props: {
   const [tagRename, setTagRename] = useState<{ tag: Tag; value: string } | null>(null);
   const [tagDelete, setTagDelete] = useState<Tag | null>(null);
 
+  /* ---------------- 第七版：AI 辅助（0.7.0） ----------------
+   * 划词气泡只做「选动作 + 选目标语言」；真正的请求、对比、替换都交给弹窗。
+   * API Key 不在渲染层：这里只拿 AiConfigPublic（hasKey/keyHint），请求全走主进程。
+   */
+  const [aiBubble, setAiBubble] = useState<{
+    text: string;
+    left: number;
+    top: number;
+    range: Range;
+  } | null>(null);
+  const [aiLang, setAiLang] = useState<AiLangValue>(AI_DEFAULT_LANG);
+  const [aiPreview, setAiPreview] = useState<{
+    action: AiTextAction;
+    source: string;
+    range: Range | null;
+  } | null>(null);
+  const [aiFull, setAiFull] = useState<AiFullAction | null>(null);
+  const [aiPrivacy, setAiPrivacy] = useState<{
+    baseUrl: string;
+    model: string;
+    resolve: (ok: boolean) => void;
+  } | null>(null);
+  /** 上次读到的主进程侧配置（设置页改过之后可以再读一次） */
+  const aiConfigRef = useRef<AiConfigPublic | null>(null);
+  /** 分类整理里连续点标签时，用 ref 记住「已经加过的」，避免和 note.tags 的异步刷新打架 */
+  const aiPendingTags = useRef<string[]>([]);
+
   const draftTimer = useRef<number | null>(null);
   const wordTimer = useRef<number | null>(null);
   /** touchBody 定义在 scheduleDraft 之前，用 ref 转一手避免顺序问题 */
@@ -141,6 +188,56 @@ export default function Knowledge(props: {
     document.addEventListener('selectionchange', onSel);
     return () => document.removeEventListener('selectionchange', onSel);
   }, []);
+
+  /**
+   * 第七版：选中正文里的一段文字就浮出 AI 气泡。
+   * 只在编辑态显示、只认编辑器里的选区；气泡本身用 onMouseDown preventDefault，不会把选区弄丢。
+   */
+  useEffect(() => {
+    if (mode !== 'edit' || openId == null) {
+      setAiBubble(null);
+      return;
+    }
+    const onSel = () => {
+      const el = editorRef.current;
+      const sel = window.getSelection();
+      if (!el || !sel || sel.rangeCount === 0 || sel.isCollapsed) {
+        setAiBubble(null);
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      if (!el.contains(range.commonAncestorContainer)) {
+        setAiBubble(null);
+        return;
+      }
+      const text = sel.toString().trim();
+      if (!text) {
+        setAiBubble(null);
+        return;
+      }
+      const rect = range.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        setAiBubble(null);
+        return;
+      }
+      const next = {
+        text,
+        left: Math.max(150, Math.min(window.innerWidth - 150, rect.left + rect.width / 2)),
+        top: Math.min(window.innerHeight - 120, rect.bottom + 8),
+        range: range.cloneRange()
+      };
+      setAiBubble((prev) =>
+        prev &&
+        prev.text === next.text &&
+        Math.abs(prev.left - next.left) < 2 &&
+        Math.abs(prev.top - next.top) < 2
+          ? prev
+          : next
+      );
+    };
+    document.addEventListener('selectionchange', onSel);
+    return () => document.removeEventListener('selectionchange', onSel);
+  }, [mode, openId]);
 
   useEffect(
     () => () => {
@@ -597,6 +694,193 @@ export default function Knowledge(props: {
     } catch (err) {
       toastError('设置标签失败：', err);
     }
+  };
+
+  /* ---------------- 第七版：AI 的入口与落地动作 ---------------- */
+
+  /** 取当前正文里选中的 Range（工具栏菜单打开时用）。 */
+  const currentSelectionRange = (): Range | null => {
+    const el = editorRef.current;
+    const sel = window.getSelection();
+    if (!el || !sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+    const range = sel.getRangeAt(0);
+    if (!el.contains(range.commonAncestorContainer)) return null;
+    return sel.toString().trim() ? range.cloneRange() : null;
+  };
+
+  const notePlainText = (): string => htmlToPlainText(htmlRef.current);
+
+  /**
+   * 用 AI 之前先确认两件事：配置齐不齐、用户知不知道内容会发给第三方。
+   * 返回 null 表示这次不继续（原因已经用 toast / 弹窗说清楚了）。
+   */
+  const ensureAiReady = async (): Promise<boolean> => {
+    let cfg = aiConfigRef.current;
+    if (!cfg) {
+      try {
+        cfg = await api.aiGetConfig();
+        aiConfigRef.current = cfg;
+      } catch (err) {
+        toastError('读取 AI 设置失败：', err);
+        return false;
+      }
+    }
+    if (!cfg.hasKey || !cfg.baseUrl.trim() || !cfg.model.trim()) {
+      toast('还没配好 AI：去「设置 → AI 模型」填地址、模型名和 Key');
+      return false;
+    }
+    if (!cfg.privacyAck) {
+      const readyCfg = cfg;
+      const agreed = await new Promise<boolean>((resolve) => {
+        setAiPrivacy({ baseUrl: readyCfg.baseUrl, model: readyCfg.model, resolve });
+      });
+      if (!agreed) return false;
+      try {
+        cfg = await api.aiSetConfig({ privacyAck: true });
+        aiConfigRef.current = cfg;
+      } catch (err) {
+        toastError('保存 AI 设置失败：', err);
+        return false;
+      }
+    }
+    return true;
+  };
+
+  /** 打开划词预览：气泡和工具栏菜单都走这里。确认之前一个字都不写回正文。 */
+  const openAiText = (action: AiTextAction, source?: string, range?: Range | null): void => {
+    const text = (source ?? aiBubble?.text ?? '').trim();
+    const target = range ?? aiBubble?.range ?? currentSelectionRange();
+    if (!text) {
+      toast('先在正文里选中一段文字，再用 AI');
+      return;
+    }
+    setAiBubble(null);
+    setAiPreview({ action, source: text.slice(0, 4000), range: target ? target.cloneRange() : null });
+  };
+
+  /** 用户在弹窗里点了「确认替换」，才把结果写回刚选中的位置。 */
+  const replaceSelectionWithAi = (text: string): void => {
+    const job = aiPreview;
+    if (!job) return;
+    const editor = editorRef.current;
+    if (!editor || !job.range || !editor.contains(job.range.commonAncestorContainer)) {
+      toast('刚才的选区已经不在了，重新选中再试一次');
+      return;
+    }
+    const html = escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br/>');
+    editor.focus();
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(job.range);
+    rich.exec('insertHTML', html);
+    setAiPreview(null);
+    setAiBubble(null);
+    touchBody();
+    toast('已替换，不满意可以 Ctrl+Z 撤销');
+  };
+
+  /** 摘要：以「引用块」一次性插到开头，原生撤销栈里是一整块。 */
+  const insertAiSummary = (text: string): void => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    setMode('edit');
+    const quote =
+      `<blockquote class="${AI_SUMMARY_CLASS}"><b>AI 摘要</b><br/>` +
+      escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br/>') +
+      '</blockquote><p><br/></p>';
+    editor.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.setStart(editor, 0);
+    range.collapse(true);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    rich.exec('insertHTML', quote);
+    touchBody();
+  };
+
+  /** 撤销刚插入的摘要：优先用编辑器原生撤销（一步撤掉整块），不行再手动摘掉。 */
+  const undoAiSummary = (): boolean => {
+    const editor = editorRef.current;
+    if (!editor) return false;
+    editor.focus();
+    document.execCommand('undo');
+    const first = editor.firstElementChild;
+    if (first && first.classList.contains(AI_SUMMARY_CLASS)) first.remove();
+    touchBody();
+    return true;
+  };
+
+  /** 分类整理：点一下标签就加进笔记（连续点也不会互相覆盖）。 */
+  const addAiTag = (name: string): void => {
+    if (openId == null) return;
+    const base = note?.tags.map((t) => t.name) ?? [];
+    const next = Array.from(new Set([...base, ...aiPendingTags.current, name]));
+    aiPendingTags.current = next;
+    void applyTags(next);
+  };
+
+  /** 分类整理：把笔记挪到 AI 建议的分类（只认已存在的分类）。 */
+  const applyAiCategory = (name: string): boolean => {
+    const target = cats.find((c) => c.name.trim() === name.trim());
+    if (!target) {
+      toast(`没找到叫「${name}」的分类，先去左边建一个`);
+      return false;
+    }
+    if (!note) return false;
+    if (note.category_id === target.id) {
+      toast('这篇已经在那个分类里了');
+      return true;
+    }
+    void doMove(note.id, target.id);
+    return true;
+  };
+
+  /** 知识联想 → 新建笔记：默认落进当前笔记的分类，然后直接把新笔记打开。 */
+  const createNoteFromAi = async (item: AiRelatedItem): Promise<void> => {
+    const catId = note?.category_id ?? (typeof sel === 'number' ? sel : null);
+    try {
+      const created = await api.createNote({
+        categoryId: catId,
+        title: item.title,
+        html: item.detail ? `<p>${escapeHtml(item.detail)}</p>` : ''
+      });
+      if (!created) return;
+      if (catId != null) setSel(catId);
+      await loadList();
+      setAiFull(null);
+      setOpenId(created.id);
+      toast('已新建笔记并打开');
+    } catch (err) {
+      toastError('新建笔记失败：', err);
+    }
+  };
+
+  /** 全文动作的统一入口：先按当前正文快照做配置/隐私检查，再开弹窗。 */
+  const startAiFull = async (action: AiFullAction): Promise<void> => {
+    if (openId == null) return;
+    if (!notePlainText().trim()) {
+      toast('这篇笔记还没有正文，AI 没东西可读');
+      return;
+    }
+    if (!(await ensureAiReady())) return;
+    if (action === 'tags') aiPendingTags.current = [];
+    setAiFull(action);
+  };
+
+  /** 工具栏「✨ AI」：划词四项（没选中时置灰）+ 全文三项。 */
+  const openAiMenu = (e: ReactMouseEvent<HTMLElement>): void => {
+    const hasSelection = !!currentSelectionRange();
+    const items: MenuItem[] = AI_QUICK_ACTIONS.map((action) => ({
+      label: AI_ACTION_LABELS[action],
+      hint: action === 'translate' ? AI_TARGET_LANGS.find((l) => l.value === aiLang)?.label : undefined,
+      disabled: !hasSelection,
+      onSelect: () => openAiText(action)
+    }));
+    items.push({ label: '摘要（插到开头）', separator: true, onSelect: () => void startAiFull('summary') });
+    items.push({ label: '分类整理', onSelect: () => void startAiFull('tags') });
+    items.push({ label: '知识联想', onSelect: () => void startAiFull('related') });
+    showContextMenu(e, items);
   };
 
   const tree = useMemo(() => buildTree(cats), [cats]);
@@ -1268,6 +1552,16 @@ export default function Knowledge(props: {
                     </button>
                   </>
                 ) : null}
+                <span className="tb-sep" />
+                <button
+                  type="button"
+                  className="tb tb-ai"
+                  title="AI 助手：润色 / 扩写 / 缩写 / 翻译 / 摘要 / 分类整理 / 知识联想"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={openAiMenu}
+                >
+                  ✨ AI
+                </button>
                 <span className="spacer" style={{ flex: 1 }} />
                 <span className="tb-hint">Ctrl+B 加粗 · Ctrl+S 保存</span>
               </div>
@@ -1478,6 +1772,73 @@ export default function Knowledge(props: {
             第一行会当成表头。插好后把光标放进表格，工具栏上会多出「＋行 / －行 / ＋列 / －列」。
           </p>
         </Modal>
+      ) : null}
+
+      {/* 第七版：AI 划词气泡 + 四类弹窗（预览确认 / 摘要 / 分类整理 / 知识联想） */}
+      {aiBubble ? (
+        <AiBubble
+          left={aiBubble.left}
+          top={aiBubble.top}
+          lang={aiLang}
+          onLang={setAiLang}
+          onAction={(action) => openAiText(action)}
+        />
+      ) : null}
+
+      {aiPreview ? (
+        <AiPreviewModal
+          action={aiPreview.action}
+          source={aiPreview.source}
+          initialLang={aiLang}
+          onConfirm={replaceSelectionWithAi}
+          onClose={() => setAiPreview(null)}
+        />
+      ) : null}
+
+      {aiFull === 'summary' ? (
+        <AiSummaryModal
+          title={title}
+          noteText={notePlainText()}
+          onInsert={(text) => insertAiSummary(text)}
+          onUndo={undoAiSummary}
+          onClose={() => setAiFull(null)}
+        />
+      ) : null}
+
+      {aiFull === 'tags' && note ? (
+        <AiTagsModal
+          title={title}
+          noteText={notePlainText()}
+          tags={note.tags.map((t) => t.name)}
+          categories={cats.map((c) => c.name)}
+          onAddTag={(name) => addAiTag(name)}
+          onApplyCategory={(name) => applyAiCategory(name)}
+          onClose={() => setAiFull(null)}
+        />
+      ) : null}
+
+      {aiFull === 'related' ? (
+        <AiRelatedModal
+          title={title}
+          noteText={notePlainText()}
+          onNewNote={(item) => createNoteFromAi(item)}
+          onClose={() => setAiFull(null)}
+        />
+      ) : null}
+
+      {aiPrivacy ? (
+        <AiPrivacyModal
+          baseUrl={aiPrivacy.baseUrl}
+          model={aiPrivacy.model}
+          onAgree={() => {
+            aiPrivacy.resolve(true);
+            setAiPrivacy(null);
+          }}
+          onCancel={() => {
+            aiPrivacy.resolve(false);
+            setAiPrivacy(null);
+          }}
+        />
       ) : null}
 
       {versionsOpen && openId != null ? (

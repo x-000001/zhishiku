@@ -1,0 +1,583 @@
+/**
+ * AI 请求的纯逻辑：拼请求、读流式响应、超时控制、把各种故障翻成中文。
+ * 网络通过注入的 fetcher 走（真实实现是主进程的 net.fetch），单测里换成假的，
+ * 不启动 Electron、不真联网。渲染层永远拿不到 Key，也永远不直接发请求。
+ */
+import {
+  AI_ACTION_LABELS,
+  clampAiText,
+  type AiAction,
+  type AiRelatedItem,
+  type AiRunPayload,
+  type AiTagSuggestion
+} from '../shared/ai';
+
+/** 三道时间闸：等响应头、两次流式分片之间、整个请求。任何一道到点都掐掉，拒绝无限转圈。 */
+export interface AiTimeouts {
+  headersMs: number;
+  idleMs: number;
+  totalMs: number;
+}
+
+export const AI_TIMEOUTS: AiTimeouts = {
+  headersMs: 10_000,
+  idleMs: 60_000,
+  totalMs: 180_000
+};
+
+/** 网络请求的最小抽象：真实实现是主进程的 net.fetch，单测里换成假的。 */
+export interface AiHttpResponse {
+  status: number;
+  ok: boolean;
+  body: ReadableStream<Uint8Array> | null;
+  text(): Promise<string>;
+}
+
+export type AiFetcher = (
+  url: string,
+  init: {
+    method: 'POST';
+    headers: Record<string, string>;
+    body: string;
+    signal: AbortSignal;
+  }
+) => Promise<AiHttpResponse>;
+
+export interface AiConfig {
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
+
+export interface AiMessage {
+  role: 'system' | 'user';
+  content: string;
+}
+
+/** 配置不全时给一句能照着做的提示，而不是 TypeError。 */
+export function assertAiConfig(config: AiConfig): AiConfig {
+  if (!config.apiKey) throw new Error('还没填 API Key，请先到「设置 → AI 模型」里配置');
+  if (!config.model) throw new Error('还没填模型名，请先到「设置 → AI 模型」里配置');
+  if (!config.baseUrl) throw new Error('还没填接口地址，请先到「设置 → AI 模型」里配置');
+  return config;
+}
+
+/**
+ * 接口地址规范化：允许用户填 `https://api.openai.com/v1`、结尾带 `/`、
+ * 或者直接把完整的 `/chat/completions` 贴进来；统一成可以拼的基址，其他协议一律拒绝。
+ */
+export function normalizeBaseUrl(raw: string): string {
+  const value = String(raw ?? '').trim();
+  if (!value) throw new Error('接口地址不能为空');
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('接口地址不像一个网址，应以 https:// 开头（例如 https://api.openai.com/v1）');
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('接口地址只支持 http/https');
+  }
+  let path = url.pathname.replace(/\/+$/, '');
+  path = path.replace(/\/chat\/completions$/i, '');
+  const suffix = path ? path : '';
+  return url.origin + suffix;
+}
+
+/** 拼出真正的对话接口地址。 */
+export function chatEndpoint(baseUrl: string): string {
+  const base = normalizeBaseUrl(baseUrl);
+  return base + '/chat/completions';
+}
+
+/** 模型名只允许常见字符，避免被拼进 header/URL 里搞出花样。 */
+function safeModel(model: string): string {
+  const value = String(model ?? '').trim();
+  if (!value) throw new Error('模型名不能为空');
+  if (!/^[A-Za-z0-9._:\-/]+$/.test(value)) throw new Error('模型名里只能有字母、数字和 . _ : - /');
+  return value;
+}
+
+function langLabel(target?: string): string {
+  const value = String(target ?? 'auto').trim();
+  switch (value) {
+    case 'zh-CN':
+      return '简体中文';
+    case 'en':
+      return '英文';
+    case 'ja':
+      return '日文';
+    case 'ko':
+      return '韩文';
+    case 'fr':
+      return '法文';
+    case 'de':
+      return '德文';
+    case 'es':
+      return '西班牙文';
+    default:
+      return 'auto';
+  }
+}
+
+const SYSTEM_PROMPT =
+  '你是一个中文知识库写作助手。你的输出会直接写进用户的笔记，所以：只输出要写进笔记的正文，' +
+  '不要解释你在做什么，不要加“好的/以下是”这类开场白，不要用 Markdown 标题。';
+
+/** 全文动作发给模型的正文最多这么多字，避免一篇长文烧掉整月额度。 */
+const FULL_TEXT_LIMIT = 8000;
+
+/** 按动作拼出对话消息。标签/联想会额外要求「只输出 JSON」。 */
+export function buildMessages(action: AiAction, payload: AiRunPayload): AiMessage[] {
+  const messages: AiMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }];
+  const text = String(payload.text ?? '').trim();
+  const noteText = clampAiText(payload.noteText ?? '', FULL_TEXT_LIMIT);
+  const title = String(payload.title ?? '').trim();
+
+  switch (action) {
+    case 'polish':
+      messages.push({
+        role: 'user',
+        content:
+          '请润色下面这段文字：保持原意、语气自然、别加新内容、别删关键信息。只输出润色后的文字。\n\n' +
+          clampAiText(text)
+      });
+      break;
+    case 'expand':
+      messages.push({
+        role: 'user',
+        content:
+          '请把下面这段文字扩写到大约原来的 1.5 倍：补充细节和过渡，但不要改变原意，也不要编造事实。只输出扩写后的文字。\n\n' +
+          clampAiText(text)
+      });
+      break;
+    case 'shorten':
+      messages.push({
+        role: 'user',
+        content:
+          '请把下面这段文字压缩到大约原来的一半：保留关键信息，去掉重复和客套。只输出缩写后的文字。\n\n' +
+          clampAiText(text)
+      });
+      break;
+    case 'translate': {
+      const target = langLabel(payload.targetLang);
+      const instruction =
+        target === 'auto'
+          ? '请把下面这段文字翻译成另一种常用语言：原文是中文就翻成英文，原文不是中文就翻成简体中文。'
+          : `请把下面这段文字翻译成${target}：保留原意和语气，人名、代码、专有名词保持原样。`;
+      messages.push({ role: 'user', content: instruction + '只输出译文。\n\n' + clampAiText(text) });
+      break;
+    }
+    case 'summary':
+      messages.push({
+        role: 'user',
+        content:
+          '请为下面这篇笔记写一段摘要：100 到 180 字，直接说笔记讲了什么，不要分点、不要评价好坏、不要复述标题。只输出摘要正文。\n\n标题：' +
+          (title || '（无）') +
+          '\n正文：\n' +
+          noteText
+      });
+      break;
+    case 'tags': {
+      const tags = (payload.tags ?? []).filter(Boolean).slice(0, 60);
+      const categories = (payload.categories ?? []).filter(Boolean).slice(0, 60);
+      messages.push({
+        role: 'user',
+        content:
+          '下面是一篇笔记的标题和正文。请推荐 3 到 5 个标签（能复用已有标签就复用），并给出 1 个最合适的分类（只能从已有分类里挑，都不合适就用 null）。\n' +
+          '已有标签：' +
+          (tags.length ? tags.join('、') : '（无）') +
+          '\n已有分类：' +
+          (categories.length ? categories.join('、') : '（无）') +
+          '\n只输出一个 JSON 对象，不要代码块，不要解释：\n' +
+          '{"tags":["标签1","标签2"],"category":"分类名或null","reason":"一句话理由"}\n\n' +
+          '标题：' +
+          (title || '（无）') +
+          '\n正文：\n' +
+          noteText
+      });
+      break;
+    }
+    case 'related':
+      messages.push({
+        role: 'user',
+        content:
+          '请阅读下面这篇笔记，提出 3 个值得继续深入的问题或相关知识点。每条给一个 16 字以内的标题和一句说明。\n' +
+          '只输出一个 JSON 对象，不要代码块，不要解释：\n' +
+          '{"items":[{"title":"标题","detail":"一句说明"}]}\n\n' +
+          '标题：' +
+          (title || '（无）') +
+          '\n正文：\n' +
+          noteText
+      });
+      break;
+    default:
+      throw new Error('不认识的 AI 动作：' + String(action));
+  }
+  return messages;
+}
+
+export interface BuiltRequest {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export interface BuildChatOptions {
+  stream: boolean;
+  maxTokens?: number;
+  temperature?: number;
+}
+
+/** 把配置 + 消息拼成一次 POST /chat/completions。 */
+export function buildChatRequest(config: AiConfig, messages: AiMessage[], options: BuildChatOptions): BuiltRequest {
+  assertAiConfig(config);
+  const body = {
+    model: safeModel(config.model),
+    messages,
+    stream: options.stream,
+    temperature: options.temperature ?? 0.3,
+    max_tokens: options.maxTokens ?? 1024
+  };
+  return {
+    url: chatEndpoint(config.baseUrl),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer ' + config.apiKey
+    },
+    body: JSON.stringify(body)
+  };
+}
+
+/** 从一条 SSE data 里取增量文字；[DONE] 返回 null，表示结束。 */
+export function parseSseDataLine(line: string): { done: boolean; delta: string } | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('data:')) return null;
+  const data = trimmed.slice(5).trim();
+  if (!data) return null;
+  if (data === '[DONE]') return { done: true, delta: '' };
+  try {
+    const parsed = JSON.parse(data) as Record<string, unknown>;
+    return { done: false, delta: pickDelta(parsed) };
+  } catch {
+    return null;
+  }
+}
+
+/** 兼容 OpenAI 及其同构接口的几种返回形状。 */
+function pickDelta(parsed: Record<string, unknown>): string {
+  const error = parsed.error as Record<string, unknown> | undefined;
+  if (error && typeof error.message === 'string') throw new Error('AI 服务返回错误：' + error.message);
+  const choices = parsed.choices;
+  if (!Array.isArray(choices) || !choices.length) return '';
+  const first = choices[0] as Record<string, unknown>;
+  const delta = first.delta as Record<string, unknown> | undefined;
+  if (delta && typeof delta.content === 'string') return delta.content;
+  const message = first.message as Record<string, unknown> | undefined;
+  if (message && typeof message.content === 'string') return message.content;
+  if (typeof first.text === 'string') return first.text;
+  return '';
+}
+
+/** 把 HTTP 状态码翻成用户能照着处理的中文。 */
+export function describeAiHttpError(status: number, bodyText = '', apiKey = ''): Error {
+  const snippet = redactSecret(String(bodyText ?? '').replace(/\s+/g, ' ').trim(), apiKey).slice(0, 180);
+  const tail = snippet ? '（' + snippet + '）' : '';
+  switch (status) {
+    case 401:
+      return new Error('API Key 不对或已失效（HTTP 401），请到设置里重新填');
+    case 402:
+      return new Error('账号余额不足（HTTP 402），请先充值或换个 Key');
+    case 403:
+      return new Error('这个 Key 没有调用权限（HTTP 403），请检查 Key 的权限设置');
+    case 404:
+      return new Error('接口地址不对（HTTP 404），Base URL 一般是 https://…/v1 这种结尾');
+    case 400:
+      return new Error('请求被 AI 服务拒绝了（HTTP 400），多半是模型名不对' + tail);
+    case 413:
+      return new Error('发给 AI 的内容太长了（HTTP 413），换一段短的试试');
+    case 429:
+      return new Error('请求太频繁，被 AI 服务限流了（HTTP 429），过一会儿再试');
+    default:
+      if (status >= 500) return new Error('AI 服务端出错了（HTTP ' + status + '），稍后再试' + tail);
+      return new Error('AI 请求失败（HTTP ' + status + '）' + tail);
+  }
+}
+
+/** 把网络异常翻成中文；超时在调用方按三道闸分别处理。 */
+export function describeAiNetworkError(err: unknown): Error {
+  const e = err instanceof Error ? err : new Error(String(err));
+  if (e.name === 'AiTimeout') return e;
+  const lower = e.message.toLowerCase();
+  if (e.name === 'AbortError' || lower.includes('aborted') || lower.includes('abort')) {
+    return new Error('这次请求已经取消');
+  }
+  if (
+    lower.includes('fetch failed') ||
+    lower.includes('econnrefused') ||
+    lower.includes('enotfound') ||
+    lower.includes('eai_again') ||
+    lower.includes('etimedout') ||
+    lower.includes('network') ||
+    lower.includes('certificate') ||
+    lower.includes('socket') ||
+    lower.includes('proxy') ||
+    // Electron 的 net.fetch 失败时抛的是 Chromium 的错误串，不是 Node 的 errno：
+    // net::ERR_CONNECTION_REFUSED / ERR_INTERNET_DISCONNECTED / ERR_NAME_NOT_RESOLVED
+    lower.includes('net::err_') ||
+    lower.includes('connection_refused') ||
+    lower.includes('internet_disconnected') ||
+    lower.includes('name_not_resolved') ||
+    lower.includes('connection_reset') ||
+    lower.includes('timed_out')
+  ) {
+    return new Error('连不上 AI 服务，请检查网络或代理设置（本地功能不受影响）');
+  }
+  return new Error('AI 请求失败：' + (e.message || '未知错误'));
+}
+
+function timeoutError(kind: 'headers' | 'idle' | 'total', timeouts: AiTimeouts): Error {
+  const seconds = (ms: number): number => Math.round(ms / 1000);
+  const error = new Error(
+    kind === 'headers'
+      ? `AI 服务 ${seconds(timeouts.headersMs)} 秒没有响应，请检查网络或接口地址`
+      : kind === 'idle'
+        ? `AI 服务 ${seconds(timeouts.idleMs)} 秒没有新内容，已经停下来（点“继续”可以再试）`
+        : `这次 AI 请求超过 ${seconds(timeouts.totalMs)} 秒还没完，已经停下来`
+  );
+  error.name = 'AiTimeout';
+  return error;
+}
+
+/** 把可能在报错里出现的 Key 打码，避免日志/弹窗泄露。 */
+export function redactSecret(text: string, secret: string): string {
+  if (!secret || secret.length < 6) return text;
+  return text.split(secret).join(maskAiKey(secret));
+}
+
+/** sk-abcdef123456 → sk-…3456 */
+export function maskAiKey(key: string): string {
+  const value = String(key ?? '').trim();
+  if (!value) return '';
+  if (value.length <= 8) return '…' + value.slice(-2);
+  return value.slice(0, 3) + '…' + value.slice(-4);
+}
+
+interface StreamOptions {
+  signal?: AbortSignal;
+  timeouts?: Partial<AiTimeouts>;
+  maxTokens?: number;
+  fetcher: AiFetcher;
+  config: AiConfig;
+  messages: AiMessage[];
+  onDelta?: (delta: string) => void;
+}
+
+function mergeTimeouts(partial?: Partial<AiTimeouts>): AiTimeouts {
+  return { ...AI_TIMEOUTS, ...(partial ?? {}) };
+}
+
+/** 读完整流，边读边把增量交给 onDelta，最后返回拼好的全文。 */
+export async function streamChat(options: StreamOptions): Promise<string> {
+  const timeouts = mergeTimeouts(options.timeouts);
+  const request = buildChatRequest(options.config, options.messages, {
+    stream: true,
+    maxTokens: options.maxTokens
+  });
+  const controller = new AbortController();
+  let abortKind: 'headers' | 'idle' | 'total' | null = null;
+  const abortWith = (kind: 'headers' | 'idle' | 'total'): void => {
+    if (abortKind) return;
+    abortKind = kind;
+    controller.abort();
+  };
+  const onExternalAbort = (): void => controller.abort();
+  options.signal?.addEventListener('abort', onExternalAbort, { once: true });
+
+  let headersTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+    () => abortWith('headers'),
+    timeouts.headersMs
+  );
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const totalTimer = setTimeout(() => abortWith('total'), timeouts.totalMs);
+  const resetIdle = (): void => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => abortWith('idle'), timeouts.idleMs);
+  };
+  const clearTimers = (): void => {
+    if (headersTimer) clearTimeout(headersTimer);
+    if (idleTimer) clearTimeout(idleTimer);
+    clearTimeout(totalTimer);
+    headersTimer = null;
+    idleTimer = null;
+  };
+
+  let text = '';
+  let rawAll = '';
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const handleLine = (line: string): boolean => {
+    const parsed = parseSseDataLine(line);
+    if (!parsed) return false;
+    if (parsed.done) return true;
+    if (parsed.delta) {
+      text += parsed.delta;
+      options.onDelta?.(parsed.delta);
+    }
+    return false;
+  };
+
+  try {
+    const response = await options.fetcher(request.url, {
+      method: 'POST',
+      headers: request.headers,
+      body: request.body,
+      signal: controller.signal
+    });
+    if (headersTimer) {
+      clearTimeout(headersTimer);
+      headersTimer = null;
+    }
+    if (!response.ok) {
+      const bodyText = await safeReadText(response);
+      throw describeAiHttpError(response.status, bodyText, options.config.apiKey);
+    }
+    resetIdle();
+
+    if (!response.body) {
+      const bodyText = await safeReadText(response);
+      const fromJson = readNonStreamBody(bodyText);
+      if (fromJson) options.onDelta?.(fromJson);
+      return fromJson;
+    }
+
+    const reader = response.body.getReader();
+    let finished = false;
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      resetIdle();
+      const piece = decoder.decode(chunk.value, { stream: true });
+      rawAll += piece;
+      buffer += piece;
+      let index = buffer.indexOf('\n');
+      while (index >= 0) {
+        const line = buffer.slice(0, index).replace(/\r$/, '');
+        buffer = buffer.slice(index + 1);
+        if (handleLine(line)) {
+          finished = true;
+          break;
+        }
+        index = buffer.indexOf('\n');
+      }
+      if (finished) break;
+    }
+    if (!finished && buffer.trim()) handleLine(buffer);
+    // 有的网关会无视 stream:true 直接回整段 JSON：流里没有 data: 行，兜底解析整段
+    if (!text && rawAll.trim().startsWith('{')) {
+      const fromJson = readNonStreamBody(rawAll);
+      if (fromJson) options.onDelta?.(fromJson);
+      return fromJson;
+    }
+    return text;
+  } catch (err) {
+    if (abortKind) throw timeoutError(abortKind, timeouts);
+    if (options.signal?.aborted) throw new Error('已取消');
+    throw describeAiNetworkError(err);
+  } finally {
+    clearTimers();
+    options.signal?.removeEventListener('abort', onExternalAbort);
+  }
+}
+
+/** 非流式：一次请求拿到完整文字（标签/联想/测试连接用）。 */
+export async function chatOnce(options: StreamOptions): Promise<string> {
+  const timeouts = mergeTimeouts(options.timeouts);
+  const request = buildChatRequest(options.config, options.messages, {
+    stream: false,
+    maxTokens: options.maxTokens
+  });
+  const controller = new AbortController();
+  let abortKind: 'headers' | 'idle' | 'total' | null = null;
+  const abortWith = (kind: 'headers' | 'idle' | 'total'): void => {
+    if (abortKind) return;
+    abortKind = kind;
+    controller.abort();
+  };
+  const onExternalAbort = (): void => controller.abort();
+  options.signal?.addEventListener('abort', onExternalAbort, { once: true });
+  let headersTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+    () => abortWith('headers'),
+    timeouts.headersMs
+  );
+  const totalTimer = setTimeout(() => abortWith('total'), timeouts.totalMs);
+  try {
+    const response = await options.fetcher(request.url, {
+      method: 'POST',
+      headers: request.headers,
+      body: request.body,
+      signal: controller.signal
+    });
+    if (headersTimer) {
+      clearTimeout(headersTimer);
+      headersTimer = null;
+    }
+    if (!response.ok) {
+      const bodyText = await safeReadText(response);
+      throw describeAiHttpError(response.status, bodyText, options.config.apiKey);
+    }
+    const bodyText = await safeReadText(response);
+    return readNonStreamBody(bodyText);
+  } catch (err) {
+    if (abortKind) throw timeoutError(abortKind, timeouts);
+    if (options.signal?.aborted) throw new Error('已取消');
+    throw describeAiNetworkError(err);
+  } finally {
+    if (headersTimer) clearTimeout(headersTimer);
+    clearTimeout(totalTimer);
+    options.signal?.removeEventListener('abort', onExternalAbort);
+  }
+}
+
+async function safeReadText(response: AiHttpResponse): Promise<string> {
+  try {
+    return await response.text();
+  } catch {
+    return '';
+  }
+}
+
+/** 从一整段 JSON 里取 choices[0].message.content。 */
+function readNonStreamBody(bodyText: string): string {
+  const trimmed = String(bodyText ?? '').trim();
+  if (!trimmed) throw new Error('AI 返回了空内容，再试一次吧');
+  if (!trimmed.startsWith('{')) {
+    throw new Error('AI 返回的内容不是 JSON，可能接口地址不对（也要确认这个接口支持 OpenAI 兼容格式）');
+  }
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    throw new Error('AI 返回的内容不是有效 JSON，可能接口地址不对');
+  }
+  const content = pickDelta(parsed);
+  if (!content) {
+    const error = parsed.error as Record<string, unknown> | undefined;
+    if (error && typeof error.message === 'string') throw new Error('AI 服务返回错误：' + error.message);
+    throw new Error('AI 返回的内容里没有文字，可能模型名不对或接口不兼容');
+  }
+  return content;
+}
+
+/** 动作名给人看的中文（日志/提示用）。 */
+export function actionLabel(action: AiAction): string {
+  return AI_ACTION_LABELS[action] ?? String(action);
+}
+
+/** 全文动作只发普通文字，这里统一收口，防止渲染层误传 HTML。 */
+export function plainForAi(text: string): string {
+  return clampAiText(text);
+}
+
+export type { AiTagSuggestion, AiRelatedItem };
