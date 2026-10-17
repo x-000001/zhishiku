@@ -299,4 +299,39 @@ describe('老库自动升级', () => {
     expect(db.listTasks({ view: 'all' }).find((t) => t.id === urgent)!.priority).toBe('urgent');
     expect(db.integrityCheck()).toBe('ok');
   });
+
+  it('第五版（0.5.0 用户）升到第六版：只补标签索引，标签和关联一篇不少', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'jwkb-mig5-'));
+    const paths = ensureDirs(root);
+    db.openDatabase(paths);
+
+    // 造出真实使用中的数据：两篇笔记 + 两个标签，其中「工作」挂两篇
+    const a = db.createNote({ title: '第五版时代的笔记甲', content: '一' });
+    const b = db.createNote({ title: '第五版时代的笔记乙', content: '二' });
+    db.setNoteTags(a, ['学习', '工作']);
+    db.setNoteTags(b, ['工作']);
+
+    // 伪装成「0.5.0 写下的库」：第六版只加了一个索引，把索引删掉、版本号退回 5
+    db.getRawDb().exec('drop index if exists idx_note_tag_tag');
+    db.getRawDb().exec('pragma user_version = 4');
+    db.closeDatabase();
+
+    db.openDatabase(paths);
+
+    const version = db.getRawDb().prepare('pragma user_version').get() as { user_version: number };
+    expect(Number(version.user_version)).toBe(5);
+    const index = db
+      .getRawDb()
+      .prepare(`select name from sqlite_master where type = 'index' and name = 'idx_note_tag_tag'`)
+      .get() as { name: string } | undefined;
+    expect(index?.name).toBe('idx_note_tag_tag');
+
+    // 数据没被迁移碰过：标签、引用数、笔记都还在
+    const tags = db.listTags();
+    expect(tags.find((t) => t.name === '学习')!.note_count).toBe(1);
+    expect(tags.find((t) => t.name === '工作')!.note_count).toBe(2);
+    expect(db.getNote(a)!.title).toBe('第五版时代的笔记甲');
+    expect(db.getNote(b)!.title).toBe('第五版时代的笔记乙');
+    expect(db.integrityCheck()).toBe('ok');
+  });
 });
