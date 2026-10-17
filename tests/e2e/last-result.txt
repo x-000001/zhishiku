@@ -100,10 +100,10 @@ PASS  删父分类后子分类上提一级，没有跟着一起没  —  tmpSub.
 PASS  分类能上移，顺序真的换了  —  ["工作","学习","生活","项目","资料收藏","排序自检分类","待删子分类"] → ["工作","学习","生活","项目","资料收藏","待删子分类","排序自检分类"]
 PASS  设置能读  —  {"dataRoot":"C:\\Users\\29785\\Desktop\\Jw的app\\.e2e-data","versionKeep":20,"theme":"light","notifyEnabled":true,"closeToTray":true}
 PASS  设置能改并持久化  —  versionKeep=5
-PASS  手动备份成功  —  手动_2026-10-17_143851
+PASS  手动备份成功  —  手动_2026-10-17_145840
 PASS  备份列表可读  —  备份数=2
 PASS  插图真的复制进了数据目录的附件夹（原件删了也不影响）  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments\2026-10\e2e-pixel.png
-PASS  备份目录里有快照且含 kb.db  —  2026-10-17_143850, 手动_2026-10-17_143851
+PASS  备份目录里有快照且含 kb.db  —  2026-10-17_145839, 手动_2026-10-17_145840
 PASS  数据库文件落在数据目录  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\kb.db
 PASS  附件目录已建好  —  C:\Users\29785\Desktop\Jw的app\.e2e-data\attachments
 PASS  页面 / 有实际内容  —  今日待办
@@ -286,7 +286,7 @@ PASS  列表上方有「拖动卡片可以调顺序」的提示  —  true
 PASS  第五版：可拖动的笔记行是「抓住」手型  —  cursor=grab
 PASS  第五版：拖动中的卡片倾斜浮起、且没有过渡（跟手）  —  transform=matrix(1.02984, 0.017976, -0.017976, 1.02984, 0, 0) transition=0s cursor=grabbing
 PASS  第五版：落点是 3px 品牌色圆头高亮线 + 目标行浅底  —  class=list-row drag-able drop-after 线高=3px 色=rgb(10, 114, 232)
-PASS  第五版：松手落位的卡片回弹一下（弹簧动画）  —  animation=jw-settle transform=matrix(0.984543, -0.000174656, 0.000174656, 0.984543, 0, 0)
+PASS  第五版：松手落位的卡片回弹一下（弹簧动画）  —  animation=jw-settle transform=matrix(0.98192, -0.00117254, 0.00117254, 0.98192, 0, 0)
 PASS  第五版：卡片是毛玻璃（backdrop-filter 带模糊）  —  backdrop-filter=blur(20px) saturate(1.8)
 PASS  第五版：鼠标移上去卡片浮起 translateY(-2px) scale(1.005)  —  hover 前=none hover 后 translateY=-2 scaleX=1.005
 PASS  第五版：卡片/列表行的过渡只挂在合成或绘制属性上（没有 width / height / margin / left / top）  —  卡片[transform, box-shadow, background, border-color] 列表行[background, box-shadow, transform, border-color] 统计块[transform, box-shadow, background, border-color]
@@ -308,12 +308,12 @@ PASS  第五版：按钮默认态有底色 / 描边 / 圆角  —  底色=rgb(25
 PASS  第五版：悬停态换底色 + 抬 1px  —  底色 rgb(255, 255, 255) → rgb(242, 244, 249)，位移 -1px
 PASS  第五版：按下态缩到 0.97（「按进去」的手感）  —  按下时 scaleX=0.97 scaleY=0.97
 PASS  第五版：输入框聚焦态有品牌色描边 + 光环  —  描边=rgb(20, 120, 232) 光环=rgba(0, 122, 255, 0.173) 0px 0px 0px 2.58699px
-PASS  第五版：键盘 Tab 聚焦时画 :focus-visible 光环  —  {"tag":"BUTTON.btn","fv":true,"shadow":"rgba(0, 119, 249, 0.19) 0px 0.0792394px 0.158479px 2.76228px"}
+PASS  第五版：键盘 Tab 聚焦时画 :focus-visible 光环  —  {"tag":"BUTTON.btn","fv":true,"shadow":"rgba(18, 20, 30, 0.06) 0px 1px 2px 0px"}
 PASS  第五版：禁用态 45% 透明 + not-allowed + 无投影  —  {"opacity":"0.45","cursor":"not-allowed","shadow":"none"}
 PASS  第五版：加载态是 12px 转圈（无限循环，按钮不变宽）  —  {"w":"12px","h":"12px","anim":"jw-spin","iter":"infinite","radius":"50%","cursor":"progress"}
 PASS  第五版：收起侧栏后只在左边留 60px 图标条（面板靠 transform 挪出去），文字收成 0 宽度、三个点竖排  —  可见宽 60px（面板仍 232px / 右边缘 60px） 文字宽 0px 透明度 0 三点坐标 (24,18) (24,35) (24,52)（竖排） 容器 12×12px 图标宽 28px 右侧溢出 -16px 文字仍在DOM=true
-PASS  第五版：展开是插值动画（侧栏只动 transform：右边缘 60→232，文字只动 opacity/transform），三点回到一排  —  侧栏[transform, box-shadow, background-color @ 0.38s, 0.38s, 0.2s] 文字[opacity, transform @ 0.16s, 0.22s] 三点容器[opacity @ 0.12s] 每个点[transform, filter @ 0.24s, 0.15s] 右边缘轨迹 60→60→146→225 回到 232px / 文字 27px / 三点坐标 (18,24) (37,24) (56,24)（一排）
-PASS  第五版：收起/展开那一下侧栏临时换成实色（动画中不重算毛玻璃），停手后自己恢复  —  动画前 class=false 毛玻璃=blur(20px) saturate(1.8)；动画中 class=true 毛玻璃=none 底色=rgba(255, 255, 255, 0.914)；停手后 class=false 毛玻璃=blur(20px) saturate(1.8)
+PASS  第五版：展开是插值动画（侧栏只动 transform：右边缘 60→232，文字只动 opacity/transform），三点回到一排  —  侧栏[transform, box-shadow, background-color @ 0.38s, 0.38s, 0.2s] 文字[opacity, transform @ 0.16s, 0.22s] 三点容器[opacity @ 0.12s] 每个点[transform, filter @ 0.24s, 0.15s] 右边缘轨迹 60→60→164→227 回到 232px / 文字 27px / 三点坐标 (18,24) (37,24) (56,24)（一排）
+PASS  第五版：收起/展开那一下侧栏临时换成实色（动画中不重算毛玻璃），停手后自己恢复  —  动画前 class=false 毛玻璃=blur(20px) saturate(1.8)；动画中 class=true 毛玻璃=none 底色=rgba(255, 255, 255, 0.867)；停手后 class=false 毛玻璃=blur(20px) saturate(1.8)
 PASS  第五版：不再弹系统提示（title 已去掉），只有折叠态才有毛玻璃气泡  —  title="" data-tip="首页"；展开态 opacity=0；折叠态 content="首页" opacity=1 延迟=0.32s 圆角=7px 背景模糊=blur(14px) saturate(1.6) 侧栏溢出=visible 导航列溢出=visible
 PASS  工具栏能插入表格、光标进单元格后多出增删行列按钮  —  插入表格✕|table=true|rowBtn=2|colBtn=2
 PASS  选中文字点「加粗」真的会加粗  —  <p><b>界面自检正文</b></p>
@@ -329,12 +329,12 @@ PASS  笔记编辑页有「保存」按钮  —  clicked/保存
 PASS  目标编辑页有「保存」按钮  —  保存
 PASS  第五版：里程碑变成时间轴（一条竖线串起来，走过的段变绿）  —  时间轴=true 检查点=3 已完成=1 灰段=1 绿段=1 竖线宽=2px 勾=rgb(26, 143, 69) 打开=clicked 添加=added-2
 PASS  第五版：搜索框一聚焦，面板就从搜索框方向展开且是毛玻璃  —  动画=jw-palette-in origin=500px -28px 底色=rgba(255, 255, 255, 0.62) backdrop=blur(24px) saturate(1.8)
-PASS  第五版：搜索命中行悬停浮起（上移 1px + 投影）  —  命中=2 行 富文本自检界面自检正（按层叠规则）translateY=0 投影=rgba(0, 0, 0, 0) 0px 0px 0px 0 过渡=transform, box-shadow, background 命中规则=.search-modal .modal-body .list-row:hover → transform:translateY(-1px),box-shadow:0 6px 18px rgba(15, 23, 42, 0.12),transform:translateY(-1px),box-sha
+PASS  第五版：搜索命中行悬停浮起（上移 1px + 投影）  —  命中=2 行 富文本自检界面自检正（按层叠规则）translateY=-0.0218597 投影=rgba(15, 23, 42, 0.004) 0px 0. 过渡=transform, box-shadow, background 命中规则=.search-modal .modal-body .list-row:hover → transform:translateY(-1px),box-shadow:0 6px 18px rgba(15, 23, 42, 0.12),transform:translateY(-1px),box-sha
 PASS  第五版：Toast 从右侧滑入，用带回弹的曲线  —  动画=jw-toast-in 滑入位移=332.4 曲线=cubic-bezier(0.34, 1.56, 0.64, 1)
 PASS  第五版：Toast 挂在右下角（贴右 20px）  —  right=20px backdrop=blur(16px) saturate(1.6)
 PASS  任务详情抽屉里有「保存」按钮  —  保存
-PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 14:39:57
-PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 14:39:59
+PASS  任务点保存后报「已保存 HH:MM:SS」  —  已保存 14:59:45
+PASS  设置页点「保存设置」报「已保存 HH:MM:SS」  —  已保存 14:59:47
 PASS  浅色主题能切回  —  light
 PASS  自绘标题栏有红黄绿三个点，且没有文字节点  —  点数=3 文本="" 名字=关闭窗口|最小化窗口|最大化或还原窗口 宽屏顶栏那份=none
 PASS  窗口确实是无边框的（系统标题栏高度≈0）  —  outer-inner 高差=6px
@@ -366,7 +366,9 @@ PASS  第五版：弹出的提示（Toast）会被屏幕阅读器念出来（rol
 PASS  第五版：弹窗有名字（aria-labelledby 指向标题）、打开时焦点在弹窗里、点 × 先播退场再卸干净  —  标题指向=jw-modal-title 读出=改分类名字 焦点在弹窗里=true 退场类=true 关干净=true 错误=
 PASS  第五版：系统开了「减少动态效果」时，侧栏/卡片动画几乎取消、平滑滚动也关掉；切回来动画照旧  —  减少动效[侧栏=1e-06s 卡片=1e-06s 滚动=auto] 恢复后侧栏=0.38s, 0.38s, 0.2s
 PASS  第五版：笔记行能用 Tab 走到，回车就打开（不用鼠标）  —  行可聚焦=focused 回车后选中=📌知识管理测试笔记1  详情标题=
+PASS  第五版修复：深色模式下分段标签不再「白底白字」（文字与底色对比度 ≥ 4.5:1）  —  /review 最低对比=12.63:1/2个；/next 最低对比=12.63:1/5个
+PASS  第五版修复：浅色模式下分段标签观感不变（对比度同样 ≥ 4.5:1）  —  /review 最低对比=15.08:1/2个；/next 最低对比=15.08:1/5个
 ------------------------------------------------
-合计 210 项，通过 210，失败 0
+合计 212 项，通过 212，失败 0
 截图目录：C:\Users\29785\Desktop\Jw的app\tests\e2e\shots
 应用进程：exit=null signal=SIGTERM

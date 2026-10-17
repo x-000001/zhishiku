@@ -3176,6 +3176,66 @@ try {
     detail: '行可聚焦=' + a11yFocusedRow + ' 回车后选中=' + a11yRk.selected + ' 详情标题=' + a11yRk.editor
   });
 
+  // ---- 深色模式「白底白字」回归（复习与复盘 / 下一阶段目标 的分段标签）----
+  // 那几组标签只挂 .on、没有 .btn，等于完全靠浏览器默认外观：深色下默认底色是浅灰 rgb(240,240,240)，
+  // 而文字继承成近白 → 对比度只有 1.07:1，几乎看不见。现在补了 .tabs > button 的主题变量样式。
+  const tabContrastScript = (theme) => `(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const nums = (s) => s.slice(s.indexOf('(') + 1, s.lastIndexOf(')')).split(',').map((v) => parseFloat(v)).filter((v) => !Number.isNaN(v));
+    const lum = (c) => {
+      const f = c.slice(0, 3).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+      return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2];
+    };
+    const bgOf = (el) => {
+      let n = el;
+      while (n && n !== document.documentElement) {
+        const c = nums(getComputedStyle(n).backgroundColor);
+        if (c.length === 3 || (c.length === 4 && c[3] > 0.9)) return c;
+        n = n.parentElement;
+      }
+      return [0, 0, 0];
+    };
+    document.documentElement.setAttribute('data-theme', '${theme}');
+    const pages = [];
+    for (const route of ['/review', '/next']) {
+      location.hash = route;
+      await sleep(560);
+      const rows = [...document.querySelectorAll('.tabs > button')].map((b) => {
+        const cs = getComputedStyle(b);
+        const fg = nums(cs.color);
+        const bg = bgOf(b);
+        const l1 = lum(fg);
+        const l2 = lum(bg);
+        return {
+          on: b.classList.contains('on'),
+          text: (b.textContent || '').trim().slice(0, 8),
+          ratio: Math.round(((Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)) * 100) / 100
+        };
+      });
+      pages.push({ route: route, count: rows.length, min: rows.length ? Math.min(...rows.map((r) => r.ratio)) : 0, rows: rows });
+    }
+    return JSON.stringify(pages);
+  })()`;
+  const darkTabPages = JSON.parse(String(await cdp.eval(tabContrastScript('dark'))));
+  const lightTabPages = JSON.parse(String(await cdp.eval(tabContrastScript('light'))));
+  const fmtTabPages = (pages) => pages.map((p) => p.route + ' 最低对比=' + p.min + ':1/' + p.count + '个').join('；');
+  results.push({
+    name: '第五版修复：深色模式下分段标签不再「白底白字」（文字与底色对比度 ≥ 4.5:1）',
+    ok: darkTabPages.every((p) => p.count > 0 && p.min >= 4.5),
+    detail: fmtTabPages(darkTabPages)
+  });
+  results.push({
+    name: '第五版修复：浅色模式下分段标签观感不变（对比度同样 ≥ 4.5:1）',
+    ok: lightTabPages.every((p) => p.count > 0 && p.min >= 4.5),
+    detail: fmtTabPages(lightTabPages)
+  });
+  // 截图留证：深色下的复习页 + 下一阶段目标页
+  await cdp.eval("(async () => { location.hash = '/review'; await new Promise((r) => setTimeout(r, 620)); document.documentElement.setAttribute('data-theme', 'dark'); await new Promise((r) => setTimeout(r, 260)); return true; })()");
+  await cdp.shot('dark-tabs-review');
+  await cdp.eval("(async () => { location.hash = '/next'; await new Promise((r) => setTimeout(r, 620)); document.documentElement.setAttribute('data-theme', 'dark'); await new Promise((r) => setTimeout(r, 260)); return true; })()");
+  await cdp.shot('dark-tabs-next');
+  await cdp.eval("document.documentElement.setAttribute('data-theme', 'light'); true");
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {

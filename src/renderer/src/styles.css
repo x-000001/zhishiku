@@ -4,6 +4,10 @@
    ============================================================ */
 
 :root {
+  /* 告诉浏览器「这一页是浅色的」：原生控件（滚动条、select 弹层、日期选择器、
+     以及没被我们样式覆盖的裸 button）才会跟着走浅色，不会在深色页面里冒出浅灰底 */
+  color-scheme: light;
+
   /* 表面与文字（第五版：浅蓝灰底 + 白色毛玻璃面） */
   --bg: #e9eef6;
   --bg-panel: #ffffff;
@@ -94,6 +98,9 @@
 }
 
 [data-theme='dark'] {
+  /* 原生控件也跟着转深色（上一版这里没写，裸 button 就会保持浅灰底 + 继承近白字） */
+  color-scheme: dark;
+
   /* 深色 = 偏蓝灰，不刺眼（第五版） */
   --bg: #1a1a2e;
   --bg-panel: #22242f;
@@ -2128,6 +2135,55 @@ label.field {
   color: var(--text);
   font-weight: 600;
   box-shadow: var(--shadow-sm);
+}
+
+/* 裸 <button> 版的分段标签（复习/复盘、日/周/月复盘、目标池、学习计划的条目/日历）：
+   它们只挂 .on、没有 .btn，之前完全靠浏览器默认外观 —— 深色模式下默认底色还是浅灰，
+   而文字颜色继承成近白，就成了「白底白字」。这里用主题变量补一套同样的分段控件观感，
+   深色下是半透明暗底 + 浅字，选中项才用面板色，文字与底色对比度 > 4.5:1。 */
+.tabs > button:not(.btn) {
+  min-height: 28px;
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    background-color 0.16s var(--smooth-ease),
+    color 0.16s var(--smooth-ease),
+    border-color 0.16s var(--smooth-ease),
+    transform 0.16s var(--smooth-ease);
+}
+
+.tabs > button:not(.btn):hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tabs > button:not(.btn):active {
+  transform: translateY(0.5px);
+}
+
+.tabs > button:not(.btn):focus-visible {
+  outline: 2px solid var(--focus-ring, var(--brand));
+  outline-offset: 1px;
+}
+
+.tabs > button:not(.btn).on {
+  background: var(--bg-panel);
+  border-color: var(--border);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.tabs > button:not(.btn):disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .field > label {
