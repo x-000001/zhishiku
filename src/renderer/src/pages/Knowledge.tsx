@@ -1499,6 +1499,51 @@ function TreeRow(props: {
   );
 }
 
+/** 分类行右键菜单的项目（和第 10 阶段的行内小图标是同一组动作）。 */
+function catMenuItems(cat: Category, h: CatMenuHost): MenuItem[] {
+  return [
+    { label: '新建子分类', onSelect: () => h.onAddChild(cat) },
+    { label: '改名字', onSelect: () => h.onRename(cat) },
+    { label: '上移', onSelect: () => h.onMove(cat, 'up') },
+    { label: '下移', onSelect: () => h.onMove(cat, 'down') },
+    { label: '删除分类', danger: true, separator: true, onSelect: () => h.onDelete(cat) }
+  ];
+}
+
+interface CatMenuHost {
+  onAddChild: (cat: Category) => void;
+  onRename: (cat: Category) => void;
+  onMove: (cat: Category, dir: 'up' | 'down') => void;
+  onDelete: (cat: Category) => void;
+}
+
+/** 分类行右侧那排小图标：点的时候别让选中跟着跳，所以统一 stopPropagation。 */
+function TreeActions({ cat, ...h }: { cat: Category } & CatMenuHost): ReactNode {
+  const act = (fn: () => void) => (e: ReactMouseEvent) => {
+    e.stopPropagation();
+    fn();
+  };
+  return (
+    <>
+      <button type="button" className="icon-btn" title="新建子分类" onClick={act(() => h.onAddChild(cat))}>
+        ＋
+      </button>
+      <button type="button" className="icon-btn" title="上移" onClick={act(() => h.onMove(cat, 'up'))}>
+        ↑
+      </button>
+      <button type="button" className="icon-btn" title="下移" onClick={act(() => h.onMove(cat, 'down'))}>
+        ↓
+      </button>
+      <button type="button" className="icon-btn" title="重命名" onClick={act(() => h.onRename(cat))}>
+        ✎
+      </button>
+      <button type="button" className="icon-btn" title="删除分类" onClick={act(() => h.onDelete(cat))}>
+        ✕
+      </button>
+    </>
+  );
+}
+
 function TreeNode(props: {
   node: TreeNodeType;
   sel: CatSel;
@@ -1530,72 +1575,16 @@ function TreeNode(props: {
         onDragLeave={props.onDragLeave}
         onContextMenu={(e) => {
           e.preventDefault();
-          showContextMenu(e, [
-            { label: '新建子分类', onSelect: () => props.onAddChild(cat) },
-            { label: '改名字', onSelect: () => props.onRename(cat) },
-            { label: '上移', onSelect: () => props.onMove(cat, 'up') },
-            { label: '下移', onSelect: () => props.onMove(cat, 'down') },
-            { label: '删除分类', danger: true, separator: true, onSelect: () => props.onDelete(cat) }
-          ]);
+          showContextMenu(e, catMenuItems(cat, props));
         }}
         actions={
-          <>
-            <button
-              type="button"
-              className="icon-btn"
-              title="新建子分类"
-              onClick={(e) => {
-                e.stopPropagation();
-                props.onAddChild(cat);
-              }}
-            >
-              ＋
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              title="上移"
-              onClick={(e) => {
-                e.stopPropagation();
-                props.onMove(cat, 'up');
-              }}
-            >
-              ↑
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              title="下移"
-              onClick={(e) => {
-                e.stopPropagation();
-                props.onMove(cat, 'down');
-              }}
-            >
-              ↓
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              title="重命名"
-              onClick={(e) => {
-                e.stopPropagation();
-                props.onRename(cat);
-              }}
-            >
-              ✎
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              title="删除分类"
-              onClick={(e) => {
-                e.stopPropagation();
-                props.onDelete(cat);
-              }}
-            >
-              ✕
-            </button>
-          </>
+          <TreeActions
+            cat={cat}
+            onAddChild={props.onAddChild}
+            onRename={props.onRename}
+            onMove={props.onMove}
+            onDelete={props.onDelete}
+          />
         }
       />
       {children.length && open ? (
@@ -1613,6 +1602,87 @@ function TreeNode(props: {
 /* 版本历史                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 回滚：不做二次确认，改成「先回滚 + 5 秒撤销」——
+ * 回滚前后都各留一个版本点，所以这是一条可逆的路（PRD H3：确认框只留给清空回收站/恢复备份/删含子内容分类）。
+ */
+async function rollbackToVersion(o: { noteId: Id; version: NoteVersion; onRolledBack: () => void }): Promise<void> {
+  const before = await api.getNote(o.noteId);
+  if (!before) {
+    toast('读不到这篇笔记，先刷新一下');
+    return;
+  }
+  const beforeHtml = before.content_html || renderMarkdown(before.content);
+  try {
+    await api.rollbackVersion(o.version.id);
+  } catch (err) {
+    toastError('回滚失败：', err);
+    return;
+  }
+  toast('已回滚到这个版本', {
+    actionLabel: '撤销',
+    onAction: async () => {
+      try {
+        await api.saveNote(o.noteId, before.title, { html: beforeHtml }, '撤销回滚');
+        toast('已恢复到回滚前的内容');
+        o.onRolledBack();
+      } catch (err) {
+        toastError('恢复失败：', err);
+      }
+    }
+  });
+  o.onRolledBack();
+}
+
+/** 单个版本的预览（只读渲染，跟正文同一套 markdown + 消毒流程）。 */
+function VersionPreviewModal({ version, onClose }: { version: NoteVersion; onClose: () => void }): ReactNode {
+  return (
+    <Modal title={`版本预览 · ${relative(version.created_at)}`} onClose={onClose} width={760}>
+      <div className="muted" style={{ marginBottom: 8 }}>
+        {version.title || '无标题'} · {version.word_count} 字 · {version.reason}
+      </div>
+      <div className="md-preview note-body" style={{ maxHeight: '58vh', overflow: 'auto' }}>
+        <div
+          dangerouslySetInnerHTML={{
+            __html: version.content_html || renderMarkdown(version.content)
+          }}
+        />
+      </div>
+    </Modal>
+  );
+}
+
+/** 某个版本 → 现在的行级对比（绿色新增、红色删掉）。 */
+function VersionCompareModal({
+  version,
+  current,
+  onClose
+}: {
+  version: NoteVersion;
+  current: { title: string; content: string };
+  onClose: () => void;
+}): ReactNode {
+  const lines = diffLines(version.content, htmlToPlainText(current.content));
+  return (
+    <Modal title={`对比：${relative(version.created_at)} 的版本 → 现在`} onClose={onClose} width={860}>
+      <div className="muted" style={{ marginBottom: 8 }}>
+        绿色是现在多出来的，红色是那个版本里有、现在已经没有的。
+      </div>
+      <div style={{ maxHeight: '58vh', overflow: 'auto', background: 'var(--bg-sunken)', borderRadius: 8, padding: 8 }}>
+        {lines.map((line, index) => (
+          <div
+            key={index}
+            className={line.type === 'add' ? 'diff-line add' : line.type === 'del' ? 'diff-line del' : 'diff-line'}
+          >
+            {line.type === 'add' ? '+ ' : line.type === 'del' ? '- ' : '  '}
+            {line.text || ' '}
+          </div>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
 function VersionDrawer(props: {
   noteId: Id;
   current: { title: string; content: string };
@@ -1623,38 +1693,6 @@ function VersionDrawer(props: {
   const [preview, setPreview] = useState<NoteVersion | null>(null);
   const [compare, setCompare] = useState<NoteVersion | null>(null);
 
-  /**
-   * 回滚：不做二次确认，改成「先回滚 + 5 秒撤销」——
-   * 回滚前后都各留一个版本点，所以这是一条可逆的路（PRD H3：确认框只留给清空回收站/恢复备份/删含子内容分类）。
-   */
-  const doRollback = async (ver: NoteVersion): Promise<void> => {
-    const before = await api.getNote(props.noteId);
-    if (!before) {
-      toast('读不到这篇笔记，先刷新一下');
-      return;
-    }
-    const beforeHtml = before.content_html || renderMarkdown(before.content);
-    try {
-      await api.rollbackVersion(ver.id);
-    } catch (err) {
-      toastError('回滚失败：', err);
-      return;
-    }
-    toast('已回滚到这个版本', {
-      actionLabel: '撤销',
-      onAction: async () => {
-        try {
-          await api.saveNote(props.noteId, before.title, { html: beforeHtml }, '撤销回滚');
-          toast('已恢复到回滚前的内容');
-          props.onRolledBack();
-        } catch (err) {
-          toastError('恢复失败：', err);
-        }
-      }
-    });
-    props.onRolledBack();
-  };
-
   useEffect(() => {
     api
       .listVersions(props.noteId)
@@ -1662,47 +1700,9 @@ function VersionDrawer(props: {
       .catch((err) => toastError('读取版本失败：', err));
   }, [props.noteId]);
 
-  if (preview) {
-    return (
-      <Modal title={`版本预览 · ${relative(preview.created_at)}`} onClose={() => setPreview(null)} width={760}>
-        <div className="muted" style={{ marginBottom: 8 }}>
-          {preview.title || '无标题'} · {preview.word_count} 字 · {preview.reason}
-        </div>
-        <div className="md-preview note-body" style={{ maxHeight: '58vh', overflow: 'auto' }}>
-          <div
-            dangerouslySetInnerHTML={{
-              __html: preview.content_html || renderMarkdown(preview.content)
-            }}
-          />
-        </div>
-      </Modal>
-    );
-  }
-
+  if (preview) return <VersionPreviewModal version={preview} onClose={() => setPreview(null)} />;
   if (compare) {
-    const lines = diffLines(compare.content, htmlToPlainText(props.current.content));
-    return (
-      <Modal
-        title={`对比：${relative(compare.created_at)} 的版本 → 现在`}
-        onClose={() => setCompare(null)}
-        width={860}
-      >
-        <div className="muted" style={{ marginBottom: 8 }}>
-          绿色是现在多出来的，红色是那个版本里有、现在已经没有的。
-        </div>
-        <div style={{ maxHeight: '58vh', overflow: 'auto', background: 'var(--bg-sunken)', borderRadius: 8, padding: 8 }}>
-          {lines.map((line, index) => (
-            <div
-              key={index}
-              className={line.type === 'add' ? 'diff-line add' : line.type === 'del' ? 'diff-line del' : 'diff-line'}
-            >
-              {line.type === 'add' ? '+ ' : line.type === 'del' ? '- ' : '  '}
-              {line.text || ' '}
-            </div>
-          ))}
-        </div>
-      </Modal>
-    );
+    return <VersionCompareModal version={compare} current={props.current} onClose={() => setCompare(null)} />;
   }
 
   return (
@@ -1739,7 +1739,13 @@ function VersionDrawer(props: {
                 <button type="button" className="btn sm ghost" onClick={() => setCompare(ver)}>
                   对比
                 </button>
-                <button type="button" className="btn sm" onClick={() => void doRollback(ver)}>
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() =>
+                    void rollbackToVersion({ noteId: props.noteId, version: ver, onRolledBack: props.onRolledBack })
+                  }
+                >
                   回滚
                 </button>
               </div>

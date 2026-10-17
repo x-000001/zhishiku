@@ -521,6 +521,35 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
 /* 详情抽屉                                                            */
 /* ------------------------------------------------------------------ */
 
+/** 抽屉里的「标签 + 控件」一行：左侧标签宽度由 .drawer .field 的 CSS 统一管，这里只负责结构。 */
+function Field({
+  label,
+  children,
+  align
+}: {
+  label: string;
+  children: ReactNode;
+  /** 多行控件（文本框）让标签顶对齐 */
+  align?: 'top';
+}): ReactNode {
+  const top = align === 'top';
+  return (
+    <div className="field" style={top ? { alignItems: 'flex-start' } : undefined}>
+      <label style={top ? { paddingTop: 6 } : undefined}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+/** 「挂在目标」下拉用的目标列表（打开抽屉时拉一次就够）。 */
+function useGoalOptions(): GoalSummary[] {
+  const [goals, setGoals] = useState<GoalSummary[]>([]);
+  useEffect(() => {
+    void api.listGoals().then(setGoals);
+  }, []);
+  return goals;
+}
+
 function TaskDrawer(props: {
   task: Task;
   onPatch: (changes: Partial<Task>) => void;
@@ -530,11 +559,7 @@ function TaskDrawer(props: {
   const { task } = props;
   const [note, setNote] = useState(task.note);
   useEffect(() => setNote(task.note), [task.id, task.note]);
-
-  const [goals, setGoals] = useState<GoalSummary[]>([]);
-  useEffect(() => {
-    void api.listGoals().then(setGoals);
-  }, []);
+  const goals = useGoalOptions();
 
   // 优化项 8：手动保存——把备注（唯一「改了还没写」的字段）立刻写进去，并报时间/分诊报错
   const { saving, run } = useManualSave();
@@ -554,8 +579,7 @@ function TaskDrawer(props: {
         </button>
       </div>
 
-      <div className="field">
-        <label>优先级</label>
+      <Field label="优先级">
         <select
           value={task.priority}
           onChange={(e) => props.onPatch({ priority: e.target.value as TaskPriority })}
@@ -566,17 +590,15 @@ function TaskDrawer(props: {
             </option>
           ))}
         </select>
-      </div>
-      <div className="field">
-        <label>截止日</label>
+      </Field>
+      <Field label="截止日">
         <input
           type="date"
           value={task.due_at ? task.due_at.slice(0, 10) : ''}
           onChange={(e) => props.onPatch({ due_at: e.target.value || null })}
         />
-      </div>
-      <div className="field">
-        <label>提醒时间</label>
+      </Field>
+      <Field label="提醒时间">
         <input
           type="datetime-local"
           value={task.remind_at ? task.remind_at.replace(' ', 'T').slice(0, 16) : ''}
@@ -585,9 +607,8 @@ function TaskDrawer(props: {
         <span className="muted">
           {task.remind_at ? `到 ${fmtDateTime(task.remind_at)} 会进首页提醒` : '留空就按截止日提醒'}
         </span>
-      </div>
-      <div className="field">
-        <label>挂在目标</label>
+      </Field>
+      <Field label="挂在目标">
         <select
           value={task.goal_id ?? ''}
           onChange={(e) => props.onPatch({ goal_id: e.target.value ? Number(e.target.value) : null })}
@@ -599,9 +620,8 @@ function TaskDrawer(props: {
             </option>
           ))}
         </select>
-      </div>
-      <div className="field">
-        <label>重复</label>
+      </Field>
+      <Field label="重复">
         <select
           value={task.repeat_rule}
           onChange={(e) => props.onPatch({ repeat_rule: e.target.value as Task['repeat_rule'] })}
@@ -613,9 +633,8 @@ function TaskDrawer(props: {
           ))}
         </select>
         <span className="muted">勾完之后按这个规则生成下一次</span>
-      </div>
-      <div className="field" style={{ alignItems: 'flex-start' }}>
-        <label style={{ paddingTop: 6 }}>备注</label>
+      </Field>
+      <Field label="备注" align="top">
         <textarea
           rows={3}
           value={note}
@@ -625,7 +644,7 @@ function TaskDrawer(props: {
             if (note !== task.note) props.onPatch({ note });
           }}
         />
-      </div>
+      </Field>
       <div className="row" style={{ marginTop: 4 }}>
         <span className="muted" style={{ flex: 1 }}>
           改完点一下保存，立刻写进数据文件
