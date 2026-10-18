@@ -5062,3 +5062,12 @@ blockquote.ai-summary b {
   line-height: 1.6;
 }
 
+
+/* 0.8.2：AI 配置格式错误时，把出问题的那一格标红（模型名 / 接口地址） */
+.ai-input-bad {
+  border-color: var(--danger) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 16%, transparent);
+}
+.ai-input-bad:focus {
+  border-color: var(--danger) !important;
+}

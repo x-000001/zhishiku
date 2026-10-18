@@ -169,6 +169,16 @@ describe('streamChat', () => {
     ).rejects.toThrow(/Key 不对或已失效（HTTP 401）/);
   });
 
+  it('HTTP 429 翻成「限流」，并给等一会儿再试的建议', async () => {
+    await expect(
+      streamChat({
+        fetcher: jsonFetcher('{"error":{"message":"rate limited (stub)"}}', 429),
+        config: CONFIG,
+        messages: [{ role: 'user', content: 'hi' }]
+      })
+    ).rejects.toThrow(/429|限流/);
+  });
+
   it('等响应头超时：说清几秒没响应', async () => {
     const neverFetcher: AiFetcher = (_url, init) =>
       new Promise((_resolve, reject) => {

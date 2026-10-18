@@ -4,6 +4,25 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 `主.次.修订`。
 
+## [0.8.2] - 2026-10-19
+
+### 修复
+
+- **模型名带连字符被误判成「格式错误」**：`deepseek-v4-pro`、`gpt-4o-mini`、`claude-3-5-sonnet-20241022`、`Qwen/Qwen2.5-7B-Instruct`、`deepseek-r1:7b` 这类正常写法统一放行；规则明确为「字母、数字、连字符(-)、下划线(_)、点(.)、冒号(:)、斜杠(/)」，并补 11 个真实模型名的回归用例。
+- **配置写错却被报成「连接失败」**：设置页「测试连接」现在分两类 —— 模型名/接口地址/没填全 → 显示「配置有误：模型名格式错误…」并把出问题的那一格标红（`.ai-input-bad`）；断网/超时/401/429 才显示「连接失败：…」。
+- **报错说不清哪里错**：模型名里带空格、全角空格、中文逗号、换行时，提示直接点出「问题出在一个空格上」「问题出在「，」这个字符上」，方便删掉复制粘贴带进来的隐形字符；保存配置时也先校验，不用等点「测试连接」。
+
+### 变更
+
+- 版本 0.8.1 → 0.8.2；`package-lock.json` 同步。
+- `src/main/ai.ts` 新增导出 `normalizeModelName` 和三个文案常量（`MODEL_NAME_ERROR_PREFIX` / `BASE_URL_ERROR_PREFIX` / `AI_CONFIG_MISSING_PREFIX`）；`src/shared/ai.ts` 新增 `classifyAiConfigError`（渲染层归类）。
+- `ai:config:set` 保存模型名时先校验；`styles.css` 新增 `.ai-input-bad`。
+- 数据库、IPC 协议、AI 请求/流式/超时逻辑、番茄钟与其它页面一行没动。
+
+### 验证
+
+- typecheck 0 错、单测 **318**（23 个文件；新增 `tests/unit/ai-model-name.test.ts` 14 条，另补 1 条 429 用例）、e2e **284/284**（新增 3 条：连字符模型名能保存并测试连接、模型名写错时提示格式错误+标红输入框、改回后恢复；原有 281 条原样全过）、强杀 **6/6**、打包自检 **23/23**。
+
 ## [0.8.1] - 2026-10-18
 
 发布：[GitHub Release v0.8.1](https://github.com/x-000001/zhishiku/releases/tag/v0.8.1)（附件 JwKB-Setup-0.8.1.exe，112,538,444 字节）

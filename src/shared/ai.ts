@@ -210,3 +210,19 @@ export function parseRelatedItems(text: string): AiRelatedItem[] {
   return items;
 }
 
+/** 配置类错误的分类结果：渲染层据此高亮对应输入框，而不是报「连接失败」。 */
+export type AiConfigField = 'model' | 'baseUrl' | 'config';
+
+/**
+ * 把主进程抛回来的配置类错误文案归类。
+ * 文案前缀定义在 src/main/ai.ts（MODEL_NAME_ERROR_PREFIX / BASE_URL_ERROR_PREFIX / AI_CONFIG_MISSING_PREFIX），
+ * 两边靠字符串对齐；只要前缀没变，这套分类就稳定。
+ */
+export function classifyAiConfigError(message: string): AiConfigField | null {
+  const text = String(message ?? '');
+  if (text.includes('模型名格式错误')) return 'model';
+  if (text.includes('接口地址格式错误')) return 'baseUrl';
+  if (text.includes('AI 设置不完整')) return 'config';
+  return null;
+}
+

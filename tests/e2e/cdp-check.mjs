@@ -5026,6 +5026,45 @@ try {
     if (card) clickText('.ai-test-btn', '测试连接');
     const tested = await waitFor(() => /连通了/.test(txt('.ai-test-result')), 8000);
     rec('AI：设置页「测试连接」能连通（stub 回「可用」）', !!tested, txt('.ai-test-result').slice(0, 80));
+
+    // 0.8.2：模型名带连字符（deepseek-v4-pro）必须放行，不能报「模型名格式错误」
+    const setInputValue = (sel, val) => {
+      const el = q(sel);
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, val);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    setInputValue('.ai-model', 'deepseek-v4-pro');
+    clickText('.ai-save-btn', '保存 AI 设置');
+    await sleep(500);
+    clickText('.ai-test-btn', '测试连接');
+    const okHyphen = await waitFor(() => /连通了：deepseek-v4-pro/.test(txt('.ai-test-result')), 8000);
+    rec(
+      'AI：模型名带连字符（deepseek-v4-pro）能保存并测试连接成功',
+      !!okHyphen && !/格式错误/.test(txt('.ai-test-result')) && !q('.ai-model.ai-input-bad'),
+      txt('.ai-test-result').slice(0, 90)
+    );
+
+    // 模型名写错（中间有空格）→ 明确提示「模型名格式错误」并高亮输入框，不能混成「连接失败」
+    setInputValue('.ai-model', 'deepseek v4');
+    clickText('.ai-save-btn', '保存 AI 设置');
+    const badToast = await waitFor(
+      () => [...document.querySelectorAll('.toast-wrap .toast')].map((e) => e.innerText).join(' | ').match(/模型名格式错误/),
+      5000
+    );
+    const badField = await waitFor(() => q('.ai-model.ai-input-bad'), 3000);
+    rec(
+      'AI：模型名写错时提示「模型名格式错误」+ 标红输入框（不是「连接失败」）',
+      !!badToast && !!badField && !/连接失败/.test(txt('.ai-test-result')),
+      'toast=' + String(badToast).slice(0, 80) + ' 标红=' + !!badField
+    );
+
+    // 改回正常名字，后面几条断言还要用
+    setInputValue('.ai-model', 'stub-model');
+    clickText('.ai-save-btn', '保存 AI 设置');
+    await sleep(400);
+    const restored = await window.api.invoke('ai:config:get');
+    rec('AI：改回正确模型名后配置恢复正常', restored.model === 'stub-model' && !q('.ai-model.ai-input-bad'), 'model=' + restored.model);
     return JSON.stringify(out);
   })()`)
     )

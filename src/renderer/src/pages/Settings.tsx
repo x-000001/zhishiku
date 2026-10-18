@@ -12,6 +12,7 @@ import type {
   UpdateProgress
 } from '../../../shared/types';
 import type { AiConfigInput, AiConfigPublic } from '../../../shared/ai';
+import { classifyAiConfigError } from '../../../shared/ai';
 import { errText, toastError } from '../errors';
 
 /** 把字节数说成人话：安装包几十 MB，进度里只显示 MB 就够了。 */
@@ -46,6 +47,8 @@ export default function Settings(props: {
   const [aiForm, setAiForm] = useState({ baseUrl: '', model: '', apiKey: '' });
   const [aiBusy, setAiBusy] = useState<'save' | 'test' | ''>('');
   const [aiTestText, setAiTestText] = useState('');
+  /** 配置格式错误时高亮对应输入框：模型名 / 接口地址；'' = 没错 */
+  const [aiBad, setAiBad] = useState<'model' | 'baseUrl' | ''>('');
 
   /* 第八版：导出全库为 Markdown */
   const [exporting, setExporting] = useState(false);
@@ -246,9 +249,14 @@ export default function Settings(props: {
       const next = await api.aiSetConfig(patch);
       setAi(next);
       setAiForm((prev) => ({ ...prev, apiKey: '' }));
+      setAiBad('');
       toast(next.hasKey ? '已保存 AI 设置，Key 只存在本机' : '已保存，但还没填 Key，AI 还不能用');
     } catch (err) {
-      toastError('保存 AI 设置失败：', err);
+      // 配置格式错（模型名/接口地址）不是「保存失败」，要说清是哪个字段要改
+      const message = errText(err);
+      const field = classifyAiConfigError(message);
+      if (field && field !== 'config') setAiBad(field);
+      toastError(field ? 'AI 设置有误：' : '保存 AI 设置失败：', err);
     } finally {
       setAiBusy('');
     }
@@ -258,13 +266,23 @@ export default function Settings(props: {
   const testAi = async (): Promise<void> => {
     setAiBusy('test');
     setAiTestText('');
+    setAiBad('');
     try {
       const res = await api.aiTestConfig();
       setAiTestText(`连通了：${res.model} 回了「${res.reply}」`);
       toast('AI 连接正常');
     } catch (err) {
-      setAiTestText('连接失败：' + errText(err));
-      toastError('测试失败：', err);
+      const message = errText(err);
+      const field = classifyAiConfigError(message);
+      if (field) {
+        // 配置类错误：提示「模型名格式错误 / 接口地址格式错误」，并高亮那一格，别误导成网络问题
+        if (field !== 'config') setAiBad(field);
+        setAiTestText('配置有误：' + message);
+        toastError('配置有误：', err);
+      } else {
+        setAiTestText('连接失败：' + message);
+        toastError('测试失败：', err);
+      }
     } finally {
       setAiBusy('');
     }
@@ -553,12 +571,15 @@ export default function Settings(props: {
             <p>OpenAI 兼容的接口地址，例如 https://api.deepseek.com/v1 或 https://api.openai.com/v1 。</p>
           </div>
           <input
-            className="input ai-base-url"
+            className={aiBad === 'baseUrl' ? 'input ai-base-url ai-input-bad' : 'input ai-base-url'}
             style={{ width: 300 }}
             placeholder="https://api.deepseek.com/v1"
             spellCheck={false}
             value={aiForm.baseUrl}
-            onChange={(e) => setAiForm({ ...aiForm, baseUrl: e.target.value })}
+            onChange={(e) => {
+              setAiBad('');
+              setAiForm({ ...aiForm, baseUrl: e.target.value });
+            }}
           />
         </div>
         <div className="set-row">
@@ -567,12 +588,15 @@ export default function Settings(props: {
             <p>接口里要填的模型 id，例如 deepseek-chat、gpt-4o-mini。</p>
           </div>
           <input
-            className="input ai-model"
+            className={aiBad === 'model' ? 'input ai-model ai-input-bad' : 'input ai-model'}
             style={{ width: 200 }}
             placeholder="deepseek-chat"
             spellCheck={false}
             value={aiForm.model}
-            onChange={(e) => setAiForm({ ...aiForm, model: e.target.value })}
+            onChange={(e) => {
+              setAiBad('');
+              setAiForm({ ...aiForm, model: e.target.value });
+            }}
           />
         </div>
         <div className="set-row">

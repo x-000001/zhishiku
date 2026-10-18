@@ -54,11 +54,20 @@ export interface AiMessage {
   content: string;
 }
 
+/**
+ * 配置类错误的文案前缀。
+ * 渲染层靠这几个前缀区分「要去改设置」和「网络/服务出问题」，
+ * 不能把所有错误都塞进「连接失败」里（那会让人以为是网络断）。
+ */
+export const MODEL_NAME_ERROR_PREFIX = '模型名格式错误：';
+export const BASE_URL_ERROR_PREFIX = '接口地址格式错误：';
+export const AI_CONFIG_MISSING_PREFIX = 'AI 设置不完整：';
+
 /** 配置不全时给一句能照着做的提示，而不是 TypeError。 */
 export function assertAiConfig(config: AiConfig): AiConfig {
-  if (!config.apiKey) throw new Error('还没填 API Key，请先到「设置 → AI 模型」里配置');
-  if (!config.model) throw new Error('还没填模型名，请先到「设置 → AI 模型」里配置');
-  if (!config.baseUrl) throw new Error('还没填接口地址，请先到「设置 → AI 模型」里配置');
+  if (!config.apiKey) throw new Error(AI_CONFIG_MISSING_PREFIX + '还没填 API Key，请先到「设置 → AI 模型」里配置');
+  if (!config.model) throw new Error(AI_CONFIG_MISSING_PREFIX + '还没填模型名，请先到「设置 → AI 模型」里配置');
+  if (!config.baseUrl) throw new Error(AI_CONFIG_MISSING_PREFIX + '还没填接口地址，请先到「设置 → AI 模型」里配置');
   return config;
 }
 
@@ -68,15 +77,15 @@ export function assertAiConfig(config: AiConfig): AiConfig {
  */
 export function normalizeBaseUrl(raw: string): string {
   const value = String(raw ?? '').trim();
-  if (!value) throw new Error('接口地址不能为空');
+  if (!value) throw new Error(BASE_URL_ERROR_PREFIX + '不能为空');
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new Error('接口地址不像一个网址，应以 https:// 开头（例如 https://api.openai.com/v1）');
+    throw new Error(BASE_URL_ERROR_PREFIX + '不像一个网址，应以 https:// 开头（例如 https://api.openai.com/v1）');
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('接口地址只支持 http/https');
+    throw new Error(BASE_URL_ERROR_PREFIX + '只支持 http/https');
   }
   let path = url.pathname.replace(/\/+$/, '');
   path = path.replace(/\/chat\/completions$/i, '');
@@ -90,11 +99,33 @@ export function chatEndpoint(baseUrl: string): string {
   return base + '/chat/completions';
 }
 
-/** 模型名只允许常见字符，避免被拼进 header/URL 里搞出花样。 */
-function safeModel(model: string): string {
-  const value = String(model ?? '').trim();
-  if (!value) throw new Error('模型名不能为空');
-  if (!/^[A-Za-z0-9._:\-/]+$/.test(value)) throw new Error('模型名里只能有字母、数字和 . _ : - /');
+/**
+ * 模型名规范化 + 校验。
+ * 只允许：字母、数字、连字符(-)、下划线(_)、点(.)、冒号(:)、斜杠(/)。
+ * 常见写法 `deepseek-v4-pro`、`gpt-4o-mini`、`Qwen/Qwen2.5-7B-Instruct`、`deepseek-r1:7b` 都要放行，
+ * 拒绝空格/中文/引号/分号等会被拼进请求体搞出花样的字符。
+ */
+export function normalizeModelName(raw: string): string {
+  const value = String(raw ?? '').trim();
+  if (!value) {
+    throw new Error(MODEL_NAME_ERROR_PREFIX + '不能为空，请填服务商给的模型名（例如 deepseek-chat、gpt-4o-mini）');
+  }
+  if (!/^[A-Za-z0-9._:\-/]+$/.test(value)) {
+    // 把第一个不认识的字符点出来：多半是复制粘贴带进来的全角空格/中文逗号，用户自己看不出来
+    const offending = value.match(/[^A-Za-z0-9._:\-/]/)?.[0];
+    let where = '';
+    if (offending !== undefined) {
+      where =
+        offending === ' '
+          ? '，问题出在一个空格上'
+          : offending === '\t' || offending === '\n'
+            ? '，问题出在换行或制表符上'
+            : '，问题出在「' + offending + '」这个字符上';
+    }
+    throw new Error(
+      MODEL_NAME_ERROR_PREFIX + '只能包含字母、数字、连字符（-）、下划线（_）、点（.）、冒号（:）和斜杠（/）' + where
+    );
+  }
   return value;
 }
 
@@ -233,7 +264,7 @@ export interface BuildChatOptions {
 export function buildChatRequest(config: AiConfig, messages: AiMessage[], options: BuildChatOptions): BuiltRequest {
   assertAiConfig(config);
   const body = {
-    model: safeModel(config.model),
+    model: normalizeModelName(config.model),
     messages,
     stream: options.stream,
     temperature: options.temperature ?? 0.3,

@@ -14,6 +14,7 @@ import {
   chatOnce,
   maskAiKey,
   normalizeBaseUrl,
+  normalizeModelName,
   streamChat,
   type AiConfig,
   type AiFetcher
@@ -129,7 +130,11 @@ export function registerAi(handle: Handle): void {
       // 空串 = 清空；非空必须先过规范化，避免存进一个拼不出 URL 的字符串
       db.setSetting(KEY_BASE_URL, next ? normalizeBaseUrl(next) : '');
     }
-    if (typeof input.model === 'string') db.setSetting(KEY_MODEL, input.model.trim());
+    if (typeof input.model === 'string') {
+      const next = input.model.trim();
+      // 空串 = 清空；非空同样先校验，模型名格式错误别等到点「测试连接」才报
+      db.setSetting(KEY_MODEL, next ? normalizeModelName(next) : '');
+    }
     if (typeof input.apiKey === 'string') writeApiKey(input.apiKey);
     if (typeof input.privacyAck === 'boolean') db.setSetting(KEY_PRIVACY_ACK, input.privacyAck ? '1' : '0');
     return publicConfig();
