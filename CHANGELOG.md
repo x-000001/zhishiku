@@ -6,6 +6,8 @@
 
 ## [0.9.2] - 2026-10-19
 
+发布：[GitHub Release v0.9.2](https://github.com/x-000001/zhishiku/releases/tag/v0.9.2)（附件 JwKB-Setup-0.9.2.exe，112,578,774 字节）
+
 ### 修复
 
 - **「库」被截断**：品牌行可用宽度只有 167px，而「三色点 58 + gap 10 + 图标 28 + gap 10 + 亮青 `Jw` 18.4 + gap 10 + 正文 47 = 181px」，文字被 flex 压到 33px 宽却仍 `nowrap`，于是尾字被裁。改为单行 **`Jw 知识库`**（统一 `var(--text)`、删掉第二个亮色字标）、图标 **28→24px**、行容器 `overflow:hidden`、右侧留白 20→10px，文字加 `flex:1 1 auto` + `min-width:0` + `text-overflow: ellipsis`；实测文字内容宽/可见宽 **81/81**，`scrollWidth ≤ clientWidth`。
