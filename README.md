@@ -2,7 +2,7 @@
 
 一个只在你电脑上运行的私人工作学习知识库：收集箱、知识库、任务待办、当前目标、下一阶段目标、学习计划、复习与复盘，加首页总览和数据备份——全部本地，不需要账号。除了设置页那个「检查更新」按钮，它不联网。
 
-- 当前版本 **0.9.1**；代码与安装包在 [GitHub: x-000001/zhishiku](https://github.com/x-000001/zhishiku)，最新版在 [Releases](https://github.com/x-000001/zhishiku/releases)
+- 当前版本 **0.9.2**；代码与安装包在 [GitHub: x-000001/zhishiku](https://github.com/x-000001/zhishiku)，最新版在 [Releases](https://github.com/x-000001/zhishiku/releases)
 - 装好以后能自己升级：设置页点「检查更新」→ 有新版本就点「下载并安装」，自动下载、校验、静默安装并重开新版（详见下面「怎么更新到新版本」）
 - 技术：Electron + React + TypeScript + CodeMirror 6 + SQLite（WAL）+ FTS5
 - 数据：一个 SQLite 文件 + 一个附件文件夹 + 一个备份文件夹，都在 D 盘
@@ -37,7 +37,7 @@ C:\JwKB\portable\Jw知识库.exe
 
 ### 办法二：安装版（会让桌面出现正式图标、可从控制面板卸载）
 
-安装包：`C:\JwKB\setup\Jw知识库-安装包-0.9.1.exe`（约 107 MB）。
+安装包：`C:\JwKB\setup\Jw知识库-安装包-0.9.2.exe`（约 107 MB）。
 
 1. 双击 → 可能先被 Windows SmartScreen 拦一下，显示「Windows 已保护你的电脑」：
    因为安装包没买代码签名证书，显示「发布者未知」是正常的。点 **「更多信息」→「仍要运行」**。
@@ -436,7 +436,7 @@ C:\JwKB\使用说明.txt
 |---|---|
 | ![AI 设置](docs/screenshots/11-ai-settings.png) |  |
 
-| 应用图标（0.9.1 重绘，从左到右 16 / 24 / 32 / 48 / 128 / 256 / 320，浅色与深色两行） | 侧栏折叠成 60px 图标条（Jw 居中） |
+| 应用图标（0.9.1 重绘，从左到右 16 / 24 / 32 / 48 / 128 / 256 / 320，浅色与深色两行） | 侧栏折叠成 60px 图标条（24px 图标居中，0.9.2） |
 |---|---|
 | ![应用图标](docs/screenshots/16-app-icon.png) | ![折叠侧栏](docs/screenshots/17-sidebar-collapsed.png) |
 | ![品牌区](docs/screenshots/18-brand.png) | 侧栏左上角品牌区（0.9.2：24px 图标 + 单行「Jw 知识库」，不再被截断） |
