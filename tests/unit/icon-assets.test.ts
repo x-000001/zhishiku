@@ -1,12 +1,14 @@
 /**
- * 0.9.0 视觉门面：应用图标资源自检。
+ * 0.9.1 视觉门面：应用图标资源自检。
  *
  * 图标不是手点出来的，是 `.tools/gen-icon.mjs` 用软件光栅器画出来的（纯 Node、零依赖）。
  * 这里守住三件事，防止以后改生成脚本时把交付物改坏：
- *   ① `resources/icon.png` 是 512 的方图，四角透明（底板是圆角矩形），底板不是纯色平涂；
- *   ② `resources/icon.ico` 里真的打包了 16 / 24 / 32 / 48 / 64 / 128 / 256 七档
- *      （Windows 任务栏、开始菜单、文件属性、Alt+Tab 各取各的，少一档就会糊）；
- *   ③ `resources/tray.png` 是 32 的小图标，托盘缩到 16 也还有足够的不透明像素。
+ *   ① `resources/icon.png` 是 512 的方图，四角透明（底板是圆角矩形），
+ *      底板是近黑 #0A0B10 + 顶部一条 1px 白内发光；
+ *   ② 主体图形是「白色双环 ∞ + 中心一粒极光蓝 #5EE7E6」，不是纯色平涂；
+ *   ③ `resources/icon.ico` 里真的打包了 16 / 24 / 32 / 48 / 64 / 128 / 256 七档
+ *      （Windows 任务栏、开始菜单、文件属性、Alt+Tab 各取各的，少一档就会糊），
+ *      16px 那档里白色环仍占一块明显面积、又不至于糊成整块白。
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -30,7 +32,7 @@ function paeth(a: number, b: number, c: number): number {
   return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
 }
 
-/** 只解我们自己生成的 PNG：8 bit RGBA、非交错、filter 0；顺带兼容其它 filter 以便将来换编码器 */
+/** 只解我们自己生成的 PNG：8 bit RGBA、非交错；filter 0 为主，顺带兼容 1–4 以便将来换编码器 */
 function decodePng(buf: Buffer): Png {
   const sig = [137, 80, 78, 71, 13, 10, 26, 10];
   sig.forEach((value, index) => expect(buf[index]).toBe(value));
@@ -95,10 +97,26 @@ function px(png: Png, x: number, y: number): [number, number, number, number] {
   return [png.pixels[i], png.pixels[i + 1], png.pixels[i + 2], png.pixels[i + 3]];
 }
 
+/** 数一类颜色的像素（按步长抽样，512 画布步长 2 足够稳定） */
+function countPixels(
+  png: Png,
+  match: (r: number, g: number, b: number, a: number) => boolean,
+  step = 2
+): number {
+  let hit = 0;
+  for (let y = 0; y < png.height; y += step) {
+    for (let x = 0; x < png.width; x += step) {
+      const [r, g, b, a] = px(png, x, y);
+      if (match(r, g, b, a)) hit++;
+    }
+  }
+  return hit;
+}
+
 const iconPng = decodePng(fs.readFileSync(path.join(resources, 'icon.png')));
 const trayPng = decodePng(fs.readFileSync(path.join(resources, 'tray.png')));
 
-describe('应用图标（0.9.0 视觉门面）', () => {
+describe('应用图标（0.9.1 无尽折叠）', () => {
   it('icon.png 是 512×512 的方图', () => {
     expect(iconPng.width).toBe(512);
     expect(iconPng.height).toBe(512);
@@ -113,36 +131,45 @@ describe('应用图标（0.9.0 视觉门面）', () => {
     ]) {
       expect(px(iconPng, x, y)[3]).toBe(0);
     }
-    // 左右中线靠上的位置必须是不透明底板（说明圆角没把整块吃掉）
+    // 中心必须是不透明底板（说明圆角没把整块吃掉）
     expect(px(iconPng, 256, 256)[3]).toBe(255);
   });
 
-  it('底板是品牌蓝，中心图形是白色（不是纯色平涂）', () => {
+  it('底板是近黑 #0A0B10，不是蓝底也不是浅色平涂', () => {
     const plate = px(iconPng, 120, 380); // 左下角：底板
-    expect(plate[2]).toBeGreaterThan(plate[0]); // 蓝 > 红
     expect(plate[3]).toBeGreaterThan(240);
-    const white = px(iconPng, 256, 250);
-    expect(white[0]).toBeGreaterThan(235);
-    expect(white[1]).toBeGreaterThan(235);
-    expect(white[2]).toBeGreaterThan(235);
+    expect(plate[0]).toBeLessThan(40);
+    expect(plate[1]).toBeLessThan(45);
+    expect(plate[2]).toBeLessThan(55);
   });
 
-  it('底板有自上而下的渐变（顶部比底部亮）', () => {
-    const top = px(iconPng, 256, 70);
-    const bottom = px(iconPng, 256, 442);
-    expect(top[2]).toBeGreaterThan(bottom[2] + 20);
-  });
-
-  it('图标里能看见品牌点缀色（米黄/亮黄的小节点）', () => {
-    let amber = 0;
-    for (let y = 0; y < iconPng.height; y += 2) {
-      for (let x = 0; x < iconPng.width; x += 2) {
-        const [r, g, b, a] = px(iconPng, x, y);
-        if (a > 200 && r > 225 && g > 150 && g < 215 && b < 130) amber++;
-      }
+  it('底板顶部有一条 1px 白色内发光（顶边比板内亮）', () => {
+    // 底板从 y≈31 开始（margin 6%），内发光只占最上面约 1px：
+    // 取最上面 4 行里最亮的一颗，和板内深处比，必须更亮（说明有内高光，不是平涂）
+    let topMax = 0;
+    for (let y = 30; y <= 34; y++) {
+      const [r, g, b, a] = px(iconPng, 256, y);
+      if (a < 200) continue;
+      topMax = Math.max(topMax, r, g, b);
     }
-    // 节点在 512 画布里大约 40px 直径 → 抽样步长 2，几百个点是下限
-    expect(amber).toBeGreaterThan(200);
+    const [ir, ig, ib] = px(iconPng, 256, 80);
+    expect(topMax).toBeGreaterThan(Math.max(ir, ig, ib) + 5);
+    expect(px(iconPng, 256, 31)[3]).toBeGreaterThan(240);
+  });
+
+  it('主体是白色双环 ∞（白色像素面积够大，不是细线）', () => {
+    const white = countPixels(iconPng, (r, g, b, a) => a > 200 && r > 235 && g > 235 && b > 235);
+    // 两环环壁面积在 512 画布上约 5 万像素 → 步长 2 抽样约 1.2 万
+    expect(white).toBeGreaterThan(4000);
+  });
+
+  it('中心有一粒极光蓝 #5EE7E6（近青、非白、非蓝底撞色）', () => {
+    const aurora = countPixels(iconPng, (r, g, b, a) => a > 200 && r > 60 && r < 140 && g > 200 && b > 200);
+    expect(aurora).toBeGreaterThan(40);
+    const center = px(iconPng, 256, 256);
+    expect(center[0]).toBeLessThan(150);
+    expect(center[1]).toBeGreaterThan(190);
+    expect(center[2]).toBeGreaterThan(190);
   });
 });
 
@@ -178,7 +205,7 @@ describe('Windows 多尺寸 ico', () => {
     for (const size of [16, 24, 32, 48, 64, 128, 256]) expect(sizes.has(size)).toBe(true);
   });
 
-  it('小尺寸不是把 256 那张硬缩（16px 里仍有一块明显的浅色图形）', () => {
+  it('16px 那档不是把 256 硬缩（白色环仍占一块明显面积，又不糊成整块白）', () => {
     const count = ico.readUInt16LE(4);
     let entry16 = -1;
     for (let i = 0; i < count; i++) {
@@ -196,9 +223,30 @@ describe('Windows 多尺寸 ico', () => {
         if (a > 180 && r > 200 && g > 200 && b > 200) light++;
       }
     }
-    // 20 个点 ≈ 8% 面积：足够看清「两张卡片」的轮廓，又不至于糊成整块白
-    expect(light).toBeGreaterThan(20);
-    expect(light).toBeLessThan(160);
+    // 16px 里白色环约 30~70 个点：看得见双环轮廓，又不至于糊成整块白
+    expect(light).toBeGreaterThan(18);
+    expect(light).toBeLessThan(150);
+  });
+
+  it('16px 那档中心还留着一粒青色点（小了也认得出）', () => {
+    const count = ico.readUInt16LE(4);
+    let entry16 = -1;
+    for (let i = 0; i < count; i++) {
+      const entry = 6 + i * 16;
+      if (ico[entry] === 16) entry16 = entry;
+    }
+    const size = ico.readUInt32LE(entry16 + 8);
+    const offset = ico.readUInt32LE(entry16 + 12);
+    const small = decodePng(ico.subarray(offset, offset + size));
+    let cyan = 0;
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        const [r, g, b, a] = px(small, x, y);
+        // 1px 的点会和白色环发生混色，所以判据是「青绿明显压过红」而不是纯色相等
+        if (a > 160 && g > 200 && b > 200 && r < g - 18) cyan++;
+      }
+    }
+    expect(cyan).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -222,6 +270,6 @@ describe('托盘图标', () => {
         if (a > 120) visible++;
       }
     }
-    expect(visible).toBeGreaterThan(90);
+    expect(visible).toBeGreaterThan(80);
   });
 });

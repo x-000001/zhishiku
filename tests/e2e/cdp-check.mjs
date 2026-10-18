@@ -1851,15 +1851,22 @@ try {
     detail: `侧栏[${wiring.side}] 文字[${wiring.label}] 三点容器[${wiring.lights}] 每个点[${wiring.dot}] 右边缘轨迹 ${midFrames.slice(0, 8).join('→')} 回到 ${backState.visW}px / 文字 ${backState.labelW}px / 三点坐标 ${dotsText(backState)}（一排）`
   });
 
-  // ---- 0.9.0 视觉门面：图标 + 品牌区的质感（只看样式，不动 DOM/类名） ----
+  // ---- 0.9.1 视觉门面：无尽折叠图标 + 品牌区（只看样式，不动 DOM/类名） ----
   const brandRaw = await cdp.eval(`(() => {
     const cs = (sel) => { const el = document.querySelector(sel); return el ? getComputedStyle(el) : null; };
     const rect = (sel) => { const el = document.querySelector(sel); return el ? el.getBoundingClientRect() : null; };
     const brand = cs('.brand');
     const mark = cs('.brand-mark');
     const text = cs('.brand-text');
+    const jw = cs('.brand-jw');
     const markRect = rect('.brand-mark');
     const textRect = rect('.brand-text');
+    const jwRect = rect('.brand-jw');
+    const svg = document.querySelector('.brand-mark svg');
+    const circles = svg ? Array.from(svg.querySelectorAll('circle')).map((c) => {
+      const s = getComputedStyle(c);
+      return { fill: s.fill, stroke: s.stroke, strokeWidth: s.strokeWidth };
+    }) : [];
     return JSON.stringify({
       gap: brand.gap,
       padding: [brand.paddingTop, brand.paddingRight, brand.paddingBottom, brand.paddingLeft].join(' '),
@@ -1868,10 +1875,13 @@ try {
         h: Math.round(markRect.height),
         radius: mark.borderTopLeftRadius,
         bg: mark.backgroundImage,
+        bgColor: mark.backgroundColor,
         shadow: mark.boxShadow,
-        weight: mark.fontWeight,
+        overflow: mark.overflow,
         textShadow: mark.textShadow
       },
+      svg: { present: !!svg, width: svg ? Math.round(svg.getBoundingClientRect().width) : 0, circles },
+      jw: { color: jw.color, weight: jw.fontWeight, textShadow: jw.textShadow, w: Math.round(jwRect.width) },
       text: {
         size: text.fontSize,
         weight: text.fontWeight,
@@ -1879,42 +1889,66 @@ try {
         bg: text.backgroundImage,
         color: text.color,
         fill: text.webkitTextFillColor,
-        w: Math.round(textRect.width)
+        textShadow: text.textShadow,
+        w: Math.round(textRect.width),
+        scrollW: Math.round(document.querySelector('.brand-text').scrollWidth)
       },
-      gapPx: Math.round(textRect.left - markRect.right)
+      gapPx: Math.round(textRect.left - markRect.right),
+      markJwGap: Math.round(jwRect.left - markRect.right),
+      jwTextGap: Math.round(textRect.left - jwRect.right)
     });
   })()`);
   const brand = JSON.parse(String(brandRaw));
-  const gradientIn = (value) => /linear-gradient/.test(value || '');
+  const sum = (list, pick) => list.reduce((n, item) => n + (pick(item) ? 1 : 0), 0);
+  const whiteStrokes = sum(brand.svg.circles, (c) => c.stroke === 'rgb(255, 255, 255)' && c.strokeWidth !== '0px');
+  const auroraDots = sum(brand.svg.circles, (c) => c.fill === 'rgb(94, 231, 230)');
   results.push({
-    name: '0.9.0：侧栏「Jw」图标有品牌蓝渐变、内高光+微投影、800 字重和 8px 圆角',
+    name: '0.9.1：侧栏图标是近黑底板 + 白色双环 ∞ + 极光蓝中心点（无渐变、只留 1px 内高光）',
     ok:
       brand.mark.w === 28 &&
       brand.mark.h === 28 &&
       brand.mark.radius === '8px' &&
-      brand.mark.weight === '800' &&
-      gradientIn(brand.mark.bg) &&
+      brand.mark.bg === 'none' &&
+      brand.mark.bgColor === 'rgb(10, 11, 16)' &&
       /inset/.test(brand.mark.shadow) &&
-      /rgba\(37, 99, 235, 0\.2\)/.test(brand.mark.shadow) &&
-      brand.mark.textShadow !== 'none',
-    detail: `${brand.mark.w}×${brand.mark.h} 圆角 ${brand.mark.radius} 字重 ${brand.mark.weight} 渐变=${gradientIn(brand.mark.bg)} 投影=${brand.mark.shadow} 文字阴影=${brand.mark.textShadow}`
+      /rgba\(255, 255, 255, 0\.15\)/.test(brand.mark.shadow) &&
+      brand.mark.overflow === 'hidden' &&
+      brand.svg.present &&
+      brand.svg.width === 28 &&
+      whiteStrokes === 2 &&
+      auroraDots === 1,
+    detail: `${brand.mark.w}×${brand.mark.h} 圆角 ${brand.mark.radius} 底色 ${brand.mark.bgColor} 渐变=${brand.mark.bg} 阴影=${brand.mark.shadow} SVG ${brand.svg.width}px 白环=${whiteStrokes} 极光点=${auroraDots}`
   });
   results.push({
-    name: '0.9.0：「知识库」标题 15px/600 字重/0.5px 字距，末尾渐到品牌色，不是纯黑',
+    name: '0.9.1：品牌区是「Jw（品牌色粗）+ 知识库（正文字色细）」粗细对比，标题 15px/500/0.5px 单色无渐变',
     ok:
+      brand.jw.weight === '700' &&
+      brand.jw.color === 'rgb(94, 231, 230)' &&
+      brand.jw.w > 12 &&
       brand.text.size === '15px' &&
-      brand.text.weight === '600' &&
+      brand.text.weight === '500' &&
       brand.text.spacing === '0.5px' &&
-      gradientIn(brand.text.bg) &&
-      brand.text.fill === 'rgba(0, 0, 0, 0)' &&
+      brand.text.bg === 'none' &&
+      brand.text.fill !== 'rgba(0, 0, 0, 0)' &&
       brand.text.color !== 'rgb(0, 0, 0)' &&
-      brand.text.w > 40,
-    detail: `${brand.text.size} / ${brand.text.weight} / 字距 ${brand.text.spacing} 宽度 ${brand.text.w}px 文字色 ${brand.text.color} 渐变文字填充=${brand.text.fill}`
+      brand.text.scrollW > 40,
+    detail: `Jw ${brand.jw.weight} ${brand.jw.color} 宽 ${brand.jw.w}px；知识库 ${brand.text.size}/${brand.text.weight}/字距 ${brand.text.spacing} 宽 ${brand.text.w}px（自然宽 ${brand.text.scrollW}px）色 ${brand.text.color} 渐变=${brand.text.bg}`
   });
   results.push({
-    name: '0.9.0：图标与文字间距 10px、品牌区留白 16px 20px（不贴边）',
-    ok: brand.gap === '10px' && brand.padding === '16px 20px 16px 20px' && brand.gapPx >= 8 && brand.gapPx <= 12,
-    detail: `gap ${brand.gap}（实际间距 ${brand.gapPx}px） padding ${brand.padding}`
+    name: '0.9.1：品牌区文字没有描边/阴影（text-shadow 全是 none，不再有重影）',
+    ok: brand.text.textShadow === 'none' && brand.jw.textShadow === 'none' && brand.mark.textShadow === 'none',
+    detail: `标题 ${brand.text.textShadow} / Jw ${brand.jw.textShadow} / 图标 ${brand.mark.textShadow}`
+  });
+  results.push({
+    name: '0.9.1：图标与文字间距 10px、品牌区留白 16px 20px（不贴边）',
+    ok:
+      brand.gap === '10px' &&
+      brand.padding === '16px 20px 16px 20px' &&
+      brand.markJwGap >= 8 &&
+      brand.markJwGap <= 12 &&
+      brand.jwTextGap >= 8 &&
+      brand.jwTextGap <= 12,
+    detail: `gap ${brand.gap}（图标→Jw ${brand.markJwGap}px、Jw→标题 ${brand.jwTextGap}px） padding ${brand.padding}`
   });
 
   // 折叠成 60px 图标条时：小图标必须水平居中、不裁切（文字收 0 由上面第五版断言守）
@@ -1926,6 +1960,8 @@ try {
         const mark = document.querySelector('.brand-mark').getBoundingClientRect();
         const sidebar = document.querySelector('.sidebar').getBoundingClientRect();
         const rail = Math.min(60, Math.round(sidebar.right));
+        const jwEl = document.querySelector('.brand-jw');
+        const jwRect = jwEl.getBoundingClientRect();
         return JSON.stringify({
           rail,
           center: Math.round((mark.left + mark.width / 2) * 10) / 10,
@@ -1933,13 +1969,15 @@ try {
           width: Math.round(mark.width),
           right: Math.round(mark.right),
           brandW: Math.round(document.querySelector('.brand').getBoundingClientRect().width),
-          brandOverflow: getComputedStyle(document.querySelector('.brand')).overflow
+          brandOverflow: getComputedStyle(document.querySelector('.brand')).overflow,
+          jwDisplay: getComputedStyle(jwEl).display,
+          jwW: Math.round(jwRect.width)
         });
       })()`)
     )
   );
   results.push({
-    name: '0.9.0：侧栏折叠成 60px 图标条时，「Jw」图标水平居中、不裁切',
+    name: '0.9.1：侧栏折叠成 60px 图标条时，图标水平居中、不裁切',
     ok:
       collapsedBrand.width === 28 &&
       Math.abs(collapsedBrand.center - collapsedBrand.want) <= 1.5 &&
@@ -1947,6 +1985,11 @@ try {
       collapsedBrand.brandW <= 40 &&
       collapsedBrand.brandOverflow === 'hidden',
     detail: `图标 28px，中心 ${collapsedBrand.center}px / 图标条中点 ${collapsedBrand.want}px（偏差 ${Math.round((collapsedBrand.center - collapsedBrand.want) * 10) / 10}px） 右边缘 ${collapsedBrand.right}px / 条宽 ${collapsedBrand.rail}px 品牌行宽 ${collapsedBrand.brandW}px（overflow=${collapsedBrand.brandOverflow}，文字宽度被裁到 0 后由原规则接管）`
+  });
+  results.push({
+    name: '0.9.1：折叠态「Jw」文字标让位（只剩这枚图标），不会挤变形',
+    ok: collapsedBrand.jwDisplay === 'none' && collapsedBrand.jwW === 0,
+    detail: `Jw 文字标 display=${collapsedBrand.jwDisplay} 宽度 ${collapsedBrand.jwW}px`
   });
   await toggleSidebar(false);
   await sleep(260);

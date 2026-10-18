@@ -1,4 +1,4 @@
-﻿/* ============================================================
+/* ============================================================
    设计令牌（第四版界面重构）
    所有组件都只吃这些变量，改这里就能整体换肤。
    ============================================================ */
@@ -5072,61 +5072,76 @@ blockquote.ai-summary b {
   border-color: var(--danger) !important;
 }
 
-/* ================= 0.9.0：视觉门面（应用图标 + 侧栏品牌区） =================
-   只改外观：DOM、类名、组件逻辑和快捷键一个没动。
-   - 「Jw」小图标：品牌蓝竖向微渐变 + 内侧顶部高光 + 柔和投影，字重 800
-   - 「知识库」标题：15px / 600 字重 / 字距 0.5px，末尾渐到品牌色做视觉焦点
-   - 布局：图标与文字间距 10px、容器留白 16px 20px（折叠态仍由原有规则接管） */
+/* ================= 0.9.1：视觉门面（无尽折叠图标 + 侧栏品牌区） =================
+   图标：近黑 squircle 底板 + 白色双环 ∞ + 中心极光蓝实心点（生成器见 .tools/gen-icon.mjs）。
+   这里只做「把同一枚图形搬进侧栏」：DOM 类名、组件逻辑、快捷键一律没动，
+   只是把 .brand-mark 里的旧文字换成了内联 SVG（aria-hidden），标题改成单色细字重。 */
 
 .brand {
   gap: 10px;
   padding: 16px 20px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.5px;
 }
 
+/* 图标底板：与桌面图标同款近黑；内高光只留 1px，不投影（侧栏本来就贴在浅底上） */
 .brand-mark {
   width: 28px;
   height: 28px;
   flex: 0 0 28px;
   border-radius: 8px;
-  background: linear-gradient(180deg, #4d8dff 0%, #2952cc 100%);
-  box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.4),
-    0 2px 4px rgba(37, 99, 235, 0.2);
-  color: #fff;
-  font-size: 12.5px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  background: #0a0b10;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.15);
+  color: transparent;
+  text-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.brand-mark svg {
+  display: block;
+  width: 28px;
+  height: 28px;
+}
+
+/* 文字标：Jw 抬成品牌色粗体，知识库用正文字色细字重（粗细对比 = 层级） */
+.brand-jw {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #5ee7e6;
+  text-shadow: none;
 }
 
 .brand-text {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.5px;
   color: var(--text);
-  background: linear-gradient(90deg, var(--text) 0%, var(--text) 64%, var(--brand) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  background: none;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  -webkit-text-fill-color: currentColor;
+  text-shadow: none;
 }
 
-/* 深色主题：标题本来就亮，焦点色跟着亮一档，别让渐变把字压暗 */
 [data-theme='dark'] .brand-text {
-  background: linear-gradient(90deg, var(--text) 0%, var(--text) 64%, #7fb0ff 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--text);
+  background: none;
+  -webkit-text-fill-color: currentColor;
 }
 
-/* 折叠态：文字收成 0 宽（原有规则），字距也归零；图标在 60px 图标条里保持居中 */
+/* 折叠态：文字收成 0 宽（原有规则），字距归零、Jw 文字标先让位，只留这枚图标居中 */
 .sidebar.collapsed .brand-text {
   letter-spacing: 0;
 }
 
+.sidebar.collapsed .brand-jw {
+  display: none;
+}
+
 .sidebar.collapsed .brand-mark {
-  box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.36),
-    0 2px 4px rgba(37, 99, 235, 0.16);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.15);
 }
