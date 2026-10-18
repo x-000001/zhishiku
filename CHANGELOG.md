@@ -6,6 +6,8 @@
 
 ## [0.8.2] - 2026-10-19
 
+发布：[GitHub Release v0.8.2](https://github.com/x-000001/zhishiku/releases/tag/v0.8.2)（附件 JwKB-Setup-0.8.2.exe，112,539,308 字节）
+
 ### 修复
 
 - **模型名带连字符被误判成「格式错误」**：`deepseek-v4-pro`、`gpt-4o-mini`、`claude-3-5-sonnet-20241022`、`Qwen/Qwen2.5-7B-Instruct`、`deepseek-r1:7b` 这类正常写法统一放行；规则明确为「字母、数字、连字符(-)、下划线(_)、点(.)、冒号(:)、斜杠(/)」，并补 11 个真实模型名的回归用例。
