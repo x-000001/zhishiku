@@ -223,6 +223,8 @@ export function classifyAiConfigError(message: string): AiConfigField | null {
   if (text.includes('模型名格式错误')) return 'model';
   if (text.includes('接口地址格式错误')) return 'baseUrl';
   if (text.includes('AI 设置不完整')) return 'config';
+  // 0.8.3：200 但正文为空时，「检查模型名」也算配置类 —— 高亮模型名那一格比说「连接失败」有用
+  if (text.includes('返回了空内容')) return 'model';
   return null;
 }
 

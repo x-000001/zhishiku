@@ -82,6 +82,23 @@ const stubServer = http.createServer((req, res) => {
         payload = {};
       }
       const reply = aiReplyFor(payload.messages);
+      /* 0.8.3：各种真实接口的返回结构，专门喂给「测试连接」的解析层 */
+      if (url.startsWith('/ai-empty/')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'stop' }] }));
+        return;
+      }
+      if (url.startsWith('/ai-reasoning/')) {
+        // 推理模型：正文为空，内容在 reasoning_content 里
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ choices: [{ message: { content: '', reasoning_content: reply }, finish_reason: 'stop' }] }));
+        return;
+      }
+      if (url.startsWith('/ai-404/')) {
+        res.writeHead(404, { 'content-type': 'text/plain' });
+        res.end('404 page not found (stub)');
+        return;
+      }
       if (!payload.stream) {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ choices: [{ message: { content: reply } }] }));
@@ -5065,6 +5082,44 @@ try {
     await sleep(400);
     const restored = await window.api.invoke('ai:config:get');
     rec('AI：改回正确模型名后配置恢复正常', restored.model === 'stub-model' && !q('.ai-model.ai-input-bad'), 'model=' + restored.model);
+
+    /* ---------------- 0.8.3：测试连接的解析兼容层 ---------------- */
+    const setBaseUrl = async (url) => {
+      await window.api.invoke('ai:config:set', { baseUrl: url });
+      clickText('.ai-test-btn', '测试连接');
+    };
+
+    // (1) 推理模型：content 为空、内容在 reasoning_content 里 → 也算连通
+    await setBaseUrl('http://127.0.0.1:${stubPort}/ai-reasoning/v1');
+    const reasoningOk = await waitFor(() => /连通了/.test(txt('.ai-test-result')), 8000);
+    rec(
+      'AI：推理模型（内容在 reasoning_content 里）测试连接也能显示「连通了」',
+      !!reasoningOk && !/连接失败|没有文字|不兼容/.test(txt('.ai-test-result')),
+      txt('.ai-test-result').slice(0, 90)
+    );
+
+    // (2) 真的返回空内容 → 「已连通，但返回了空内容」，不是「接口不兼容」
+    await setBaseUrl('http://127.0.0.1:${stubPort}/ai-empty/v1');
+    const emptyMsg = await waitFor(() => /已连通，但返回了空内容/.test(txt('.ai-test-result')), 8000);
+    rec(
+      'AI：接口返回空内容时提示「已连通，但返回了空内容（检查模型名）」',
+      !!emptyMsg && !/接口不兼容|没有文字/.test(txt('.ai-test-result')),
+      txt('.ai-test-result').slice(0, 90)
+    );
+
+    // (3) 404 → 精准说「接口地址不对」，而不是笼统的「没有文字」
+    await setBaseUrl('http://127.0.0.1:${stubPort}/ai-404/v1');
+    const notFound = await waitFor(() => /接口地址不对（HTTP 404）/.test(txt('.ai-test-result')), 8000);
+    rec(
+      'AI：Base URL 写错（404）时精准提示「接口地址不对」',
+      !!notFound && !/没有文字|接口不兼容/.test(txt('.ai-test-result')),
+      txt('.ai-test-result').slice(0, 90)
+    );
+
+    // 恢复成正常地址，后面的摘要/划词还要用
+    await window.api.invoke('ai:config:set', { baseUrl: 'http://127.0.0.1:${stubPort}/ai/v1' });
+    clickText('.ai-test-btn', '测试连接');
+    await waitFor(() => /连通了/.test(txt('.ai-test-result')), 8000);
     return JSON.stringify(out);
   })()`)
     )

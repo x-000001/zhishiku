@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  AI_EMPTY_REPLY_MESSAGE,
   AI_TIMEOUTS,
   buildChatRequest,
   buildMessages,
@@ -229,7 +230,142 @@ describe('chatOnce', () => {
     ).rejects.toThrow(/AI 返回的内容/);
     await expect(
       chatOnce({ fetcher: jsonFetcher('{"choices":[]}'), config: CONFIG, messages: [] })
-    ).rejects.toThrow(/没有文字/);
+    ).rejects.toThrow(/已连通，但返回了空内容/);
+  });
+
+  /* ---------------- 0.8.3：测试连接解析兼容层 ---------------- */
+
+  it('测试连接用非流式请求：stream=false，不会去读 SSE', async () => {
+    let sent: Record<string, unknown> = {};
+    const fetcher: AiFetcher = async (_url, init) => {
+      sent = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return { status: 200, ok: true, body: null, text: async () => '{"choices":[{"message":{"content":"可用"}}]}' };
+    };
+    const text = await chatOnce({ fetcher, config: CONFIG, messages: [{ role: 'user', content: 'hi' }] });
+    expect(text).toBe('可用');
+    expect(sent.stream).toBe(false);
+    expect(JSON.stringify(sent)).not.toContain('data:');
+  });
+
+  it('标准 OpenAI / DeepSeek：取 choices[0].message.content', async () => {
+    const text = await chatOnce({
+      fetcher: jsonFetcher(JSON.stringify({ choices: [{ message: { content: '可用' } }] })),
+      config: CONFIG,
+      messages: []
+    });
+    expect(text).toBe('可用');
+  });
+
+  it('content 是分段数组（部分网关 / 新版接口）时拼起来', async () => {
+    const text = await chatOnce({
+      fetcher: jsonFetcher(
+        JSON.stringify({
+          choices: [{ message: { content: [{ type: 'text', text: '可' }, { type: 'text', text: '用' }] } }]
+        })
+      ),
+      config: CONFIG,
+      messages: []
+    });
+    expect(text).toBe('可用');
+  });
+
+  it('推理模型：content 为空时退到 message.reasoning_content', async () => {
+    const text = await chatOnce({
+      fetcher: jsonFetcher(
+        JSON.stringify({ choices: [{ message: { content: '', reasoning_content: '可用' }, finish_reason: 'stop' }] })
+      ),
+      config: CONFIG,
+      messages: []
+    });
+    expect(text).toBe('可用');
+  });
+
+  it('reasoning 字段名不同（reasoning）也能认', async () => {
+    const text = await chatOnce({
+      fetcher: jsonFetcher(JSON.stringify({ choices: [{ message: { content: null, reasoning: '可用' } }] })),
+      config: CONFIG,
+      messages: []
+    });
+    expect(text).toBe('可用');
+  });
+
+  it('补全接口的老写法 choices[0].text 也能读', async () => {
+    const text = await chatOnce({
+      fetcher: jsonFetcher(JSON.stringify({ choices: [{ text: '可用' }] })),
+      config: CONFIG,
+      messages: []
+    });
+    expect(text).toBe('可用');
+  });
+
+  it('真的空内容 → 说「已连通但返回了空内容」，而不是「接口不兼容」', async () => {
+    await expect(
+      chatOnce({
+        fetcher: jsonFetcher(JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'stop' }] })),
+        config: CONFIG,
+        messages: []
+      })
+    ).rejects.toThrow(AI_EMPTY_REPLY_MESSAGE);
+  });
+
+  it('被 max_tokens 截断（finish_reason=length）时多给一句提示', async () => {
+    await expect(
+      chatOnce({
+        fetcher: jsonFetcher(JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'length' }] })),
+        config: CONFIG,
+        messages: []
+      })
+    ).rejects.toThrow(/截断/);
+  });
+
+  it('HTTP 200 里带 error 对象 → 「AI 服务返回错误：…」', async () => {
+    await expect(
+      chatOnce({
+        fetcher: jsonFetcher(JSON.stringify({ error: { message: 'model not exist' } })),
+        config: CONFIG,
+        messages: []
+      })
+    ).rejects.toThrow(/AI 服务返回错误：model not exist/);
+  });
+
+  it('正文是空字符串（连 JSON 都没有）也不会崩', async () => {
+    await expect(chatOnce({ fetcher: jsonFetcher(''), config: CONFIG, messages: [] })).rejects.toThrow(
+      AI_EMPTY_REPLY_MESSAGE
+    );
+  });
+
+  it('网关无视 stream:false 仍回 SSE 时，把 data 行拼成正文', async () => {
+    const body = sse('可') + sse('用') + 'data: [DONE]\n\n';
+    const text = await chatOnce({ fetcher: jsonFetcher(body), config: CONFIG, messages: [] });
+    expect(text).toBe('可用');
+  });
+
+  it('404 / 401 直接给精准文案（不会笼统说「没有文字」）', async () => {
+    await expect(
+      chatOnce({ fetcher: jsonFetcher('not found', 404), config: CONFIG, messages: [] })
+    ).rejects.toThrow(/接口地址不对（HTTP 404）/);
+    await expect(
+      chatOnce({ fetcher: jsonFetcher('{"error":{"message":"bad key"}}', 401), config: CONFIG, messages: [] })
+    ).rejects.toThrow(/API Key 不对或已失效（HTTP 401）/);
+  });
+
+  it('解析失败时把原始响应打到控制台，且 Key 被打码', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(
+        chatOnce({
+          fetcher: jsonFetcher(JSON.stringify({ choices: [], echo: 'sk-test-1234567890' })),
+          config: CONFIG,
+          messages: []
+        })
+      ).rejects.toThrow(AI_EMPTY_REPLY_MESSAGE);
+      const logged = warn.mock.calls.map((args) => args.join(' ')).join('\n');
+      expect(logged).toContain('原始响应');
+      expect(logged).toContain('choices');
+      expect(logged).not.toContain('sk-test-1234567890');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

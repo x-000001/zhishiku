@@ -63,11 +63,27 @@ export const MODEL_NAME_ERROR_PREFIX = '模型名格式错误：';
 export const BASE_URL_ERROR_PREFIX = '接口地址格式错误：';
 export const AI_CONFIG_MISSING_PREFIX = 'AI 设置不完整：';
 
+/**
+ * HTTP 200 但正文是空的时候用的提示。
+ * 能走到这里说明地址、Key、网络都通了，问题在模型名/接口结构，别让用户以为是断网。
+ */
+export const AI_EMPTY_REPLY_MESSAGE = 'AI 接口已连通，但返回了空内容，请检查模型名是否正确';
+
+/**
+ * 已经写成中文、能照着处理的错误（配置错 / 接口结构错），
+ * 打上标记后不再被 describeAiNetworkError 包一层「AI 请求失败：」，免得误导成网络问题。
+ */
+function userError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'AiUserError';
+  return error;
+}
+
 /** 配置不全时给一句能照着做的提示，而不是 TypeError。 */
 export function assertAiConfig(config: AiConfig): AiConfig {
-  if (!config.apiKey) throw new Error(AI_CONFIG_MISSING_PREFIX + '还没填 API Key，请先到「设置 → AI 模型」里配置');
-  if (!config.model) throw new Error(AI_CONFIG_MISSING_PREFIX + '还没填模型名，请先到「设置 → AI 模型」里配置');
-  if (!config.baseUrl) throw new Error(AI_CONFIG_MISSING_PREFIX + '还没填接口地址，请先到「设置 → AI 模型」里配置');
+  if (!config.apiKey) throw userError(AI_CONFIG_MISSING_PREFIX + '还没填 API Key，请先到「设置 → AI 模型」里配置');
+  if (!config.model) throw userError(AI_CONFIG_MISSING_PREFIX + '还没填模型名，请先到「设置 → AI 模型」里配置');
+  if (!config.baseUrl) throw userError(AI_CONFIG_MISSING_PREFIX + '还没填接口地址，请先到「设置 → AI 模型」里配置');
   return config;
 }
 
@@ -77,15 +93,15 @@ export function assertAiConfig(config: AiConfig): AiConfig {
  */
 export function normalizeBaseUrl(raw: string): string {
   const value = String(raw ?? '').trim();
-  if (!value) throw new Error(BASE_URL_ERROR_PREFIX + '不能为空');
+  if (!value) throw userError(BASE_URL_ERROR_PREFIX + '不能为空');
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new Error(BASE_URL_ERROR_PREFIX + '不像一个网址，应以 https:// 开头（例如 https://api.openai.com/v1）');
+    throw userError(BASE_URL_ERROR_PREFIX + '不像一个网址，应以 https:// 开头（例如 https://api.openai.com/v1）');
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error(BASE_URL_ERROR_PREFIX + '只支持 http/https');
+    throw userError(BASE_URL_ERROR_PREFIX + '只支持 http/https');
   }
   let path = url.pathname.replace(/\/+$/, '');
   path = path.replace(/\/chat\/completions$/i, '');
@@ -108,7 +124,7 @@ export function chatEndpoint(baseUrl: string): string {
 export function normalizeModelName(raw: string): string {
   const value = String(raw ?? '').trim();
   if (!value) {
-    throw new Error(MODEL_NAME_ERROR_PREFIX + '不能为空，请填服务商给的模型名（例如 deepseek-chat、gpt-4o-mini）');
+    throw userError(MODEL_NAME_ERROR_PREFIX + '不能为空，请填服务商给的模型名（例如 deepseek-chat、gpt-4o-mini）');
   }
   if (!/^[A-Za-z0-9._:\-/]+$/.test(value)) {
     // 把第一个不认识的字符点出来：多半是复制粘贴带进来的全角空格/中文逗号，用户自己看不出来
@@ -122,7 +138,7 @@ export function normalizeModelName(raw: string): string {
             ? '，问题出在换行或制表符上'
             : '，问题出在「' + offending + '」这个字符上';
     }
-    throw new Error(
+    throw userError(
       MODEL_NAME_ERROR_PREFIX + '只能包含字母、数字、连字符（-）、下划线（_）、点（.）、冒号（:）和斜杠（/）' + where
     );
   }
@@ -295,19 +311,108 @@ export function parseSseDataLine(line: string): { done: boolean; delta: string }
   }
 }
 
-/** 兼容 OpenAI 及其同构接口的几种返回形状。 */
-function pickDelta(parsed: Record<string, unknown>): string {
-  const error = parsed.error as Record<string, unknown> | undefined;
-  if (error && typeof error.message === 'string') throw new Error('AI 服务返回错误：' + error.message);
+/** 统一取「内容」字段：标准接口给字符串，个别网关给分段数组。 */
+function contentOf(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value)) return '';
+  const parts: string[] = [];
+  for (const part of value) {
+    if (typeof part === 'string') {
+      parts.push(part);
+      continue;
+    }
+    if (part && typeof part === 'object') {
+      const item = part as Record<string, unknown>;
+      const piece = contentOf(item.text) || contentOf(item.content) || contentOf(item.value);
+      if (piece) parts.push(piece);
+    }
+  }
+  return parts.join('');
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
+}
+
+function firstChoice(parsed: Record<string, unknown>): Record<string, unknown> | null {
   const choices = parsed.choices;
-  if (!Array.isArray(choices) || !choices.length) return '';
-  const first = choices[0] as Record<string, unknown>;
-  const delta = first.delta as Record<string, unknown> | undefined;
-  if (delta && typeof delta.content === 'string') return delta.content;
-  const message = first.message as Record<string, unknown> | undefined;
-  if (message && typeof message.content === 'string') return message.content;
-  if (typeof first.text === 'string') return first.text;
-  return '';
+  if (!Array.isArray(choices) || !choices.length) return null;
+  return asRecord(choices[0]) ?? null;
+}
+
+/**
+ * 流式增量：只认正文（content / text）。
+ * 推理模型的 reasoning_content 是「思考过程」，不能当正文塞进编辑器。
+ */
+function pickDelta(parsed: Record<string, unknown>): string {
+  const error = asRecord(parsed.error);
+  if (error && typeof error.message === 'string') throw new Error('AI 服务返回错误：' + error.message);
+  const first = firstChoice(parsed);
+  if (!first) return '';
+  const delta = asRecord(first.delta);
+  const fromDelta = delta ? contentOf(delta.content) : '';
+  if (fromDelta) return fromDelta;
+  const message = asRecord(first.message);
+  const fromMessage = message ? contentOf(message.content) : '';
+  if (fromMessage) return fromMessage;
+  return contentOf(first.text);
+}
+
+interface ParsedReply {
+  content: string;
+  reasoning: string;
+  finishReason: string;
+  errorMessage: string;
+}
+
+/**
+ * 非流式：不同厂商/网关的返回结构不完全一样，按优先级全部试一遍。
+ * 1. choices[0].message.content（OpenAI / DeepSeek 标准）
+ * 2. choices[0].delta.content（有的网关把非流式也包成 delta）
+ * 3. choices[0].text（补全接口的老写法）
+ * 4. content 为空时退到 reasoning_content / reasoning（推理模型只回思考过程）
+ */
+function pickReply(parsed: Record<string, unknown>): ParsedReply {
+  const reply: ParsedReply = { content: '', reasoning: '', finishReason: '', errorMessage: '' };
+  const first = firstChoice(parsed);
+  if (first) {
+    const message = asRecord(first.message);
+    const delta = asRecord(first.delta);
+    reply.content = message ? contentOf(message.content) : '';
+    if (!reply.content && delta) reply.content = contentOf(delta.content);
+    if (!reply.content) reply.content = contentOf(first.text);
+    const fromMessage = message ? contentOf(message.reasoning_content) || contentOf(message.reasoning) : '';
+    const fromDelta = delta ? contentOf(delta.reasoning_content) || contentOf(delta.reasoning) : '';
+    reply.reasoning = fromMessage || fromDelta;
+    const finish = first.finish_reason ?? first.finishReason;
+    reply.finishReason = typeof finish === 'string' ? finish : '';
+  }
+  const error = asRecord(parsed.error);
+  if (error && typeof error.message === 'string') reply.errorMessage = error.message;
+  return reply;
+}
+
+/**
+ * 排查用：把失败的原始响应打到主进程控制台（设置页测试连接失败时最有用）。
+ * Key 会被打码，正文截断到 2000 字，既能看清真实 JSON 结构又不至于刷爆日志。
+ */
+export function logRawAiResponse(label: string, bodyText: string, apiKey = ''): void {
+  const safe = redactSecret(String(bodyText ?? ''), apiKey);
+  const clipped =
+    safe.length > 2000 ? safe.slice(0, 2000) + '…（已截断，原文共 ' + safe.length + ' 字）' : safe;
+  console.warn('[AI] ' + label + ' 原始响应（已隐藏 Key）：' + clipped);
+}
+
+/** 网关无视 stream:false 仍回 SSE 时，把 data 行里的增量拼成完整正文。 */
+function collectSseText(raw: string): string {
+  let text = '';
+  for (const line of raw.split(/\r?\n/)) {
+    const parsed = parseSseDataLine(line);
+    if (!parsed) continue;
+    if (parsed.done) break;
+    text += parsed.delta;
+  }
+  return text;
 }
 
 /** 把 HTTP 状态码翻成用户能照着处理的中文。 */
@@ -316,29 +421,29 @@ export function describeAiHttpError(status: number, bodyText = '', apiKey = ''):
   const tail = snippet ? '（' + snippet + '）' : '';
   switch (status) {
     case 401:
-      return new Error('API Key 不对或已失效（HTTP 401），请到设置里重新填');
+      return userError('API Key 不对或已失效（HTTP 401），请到设置里重新填');
     case 402:
-      return new Error('账号余额不足（HTTP 402），请先充值或换个 Key');
+      return userError('账号余额不足（HTTP 402），请先充值或换个 Key');
     case 403:
-      return new Error('这个 Key 没有调用权限（HTTP 403），请检查 Key 的权限设置');
+      return userError('这个 Key 没有调用权限（HTTP 403），请检查 Key 的权限设置');
     case 404:
-      return new Error('接口地址不对（HTTP 404），Base URL 一般是 https://…/v1 这种结尾');
+      return userError('接口地址不对（HTTP 404），Base URL 一般是 https://…/v1 这种结尾');
     case 400:
-      return new Error('请求被 AI 服务拒绝了（HTTP 400），多半是模型名不对' + tail);
+      return userError('请求被 AI 服务拒绝了（HTTP 400），多半是模型名不对' + tail);
     case 413:
-      return new Error('发给 AI 的内容太长了（HTTP 413），换一段短的试试');
+      return userError('发给 AI 的内容太长了（HTTP 413），换一段短的试试');
     case 429:
-      return new Error('请求太频繁，被 AI 服务限流了（HTTP 429），过一会儿再试');
+      return userError('请求太频繁，被 AI 服务限流了（HTTP 429），过一会儿再试');
     default:
-      if (status >= 500) return new Error('AI 服务端出错了（HTTP ' + status + '），稍后再试' + tail);
-      return new Error('AI 请求失败（HTTP ' + status + '）' + tail);
+      if (status >= 500) return userError('AI 服务端出错了（HTTP ' + status + '），稍后再试' + tail);
+      return userError('AI 请求失败（HTTP ' + status + '）' + tail);
   }
 }
 
 /** 把网络异常翻成中文；超时在调用方按三道闸分别处理。 */
 export function describeAiNetworkError(err: unknown): Error {
   const e = err instanceof Error ? err : new Error(String(err));
-  if (e.name === 'AiTimeout') return e;
+  if (e.name === 'AiTimeout' || e.name === 'AiUserError') return e;
   const lower = e.message.toLowerCase();
   if (e.name === 'AbortError' || lower.includes('aborted') || lower.includes('abort')) {
     return new Error('这次请求已经取消');
@@ -472,13 +577,14 @@ export async function streamChat(options: StreamOptions): Promise<string> {
     }
     if (!response.ok) {
       const bodyText = await safeReadText(response);
+      logRawAiResponse('HTTP ' + response.status, bodyText, options.config.apiKey);
       throw describeAiHttpError(response.status, bodyText, options.config.apiKey);
     }
     resetIdle();
 
     if (!response.body) {
       const bodyText = await safeReadText(response);
-      const fromJson = readNonStreamBody(bodyText);
+      const fromJson = readNonStreamBody(bodyText, options.config.apiKey);
       if (fromJson) options.onDelta?.(fromJson);
       return fromJson;
     }
@@ -559,7 +665,7 @@ export async function chatOnce(options: StreamOptions): Promise<string> {
       throw describeAiHttpError(response.status, bodyText, options.config.apiKey);
     }
     const bodyText = await safeReadText(response);
-    return readNonStreamBody(bodyText);
+    return readNonStreamBody(bodyText, options.config.apiKey);
   } catch (err) {
     if (abortKind) throw timeoutError(abortKind, timeouts);
     if (options.signal?.aborted) throw new Error('已取消');
@@ -579,26 +685,47 @@ async function safeReadText(response: AiHttpResponse): Promise<string> {
   }
 }
 
-/** 从一整段 JSON 里取 choices[0].message.content。 */
-function readNonStreamBody(bodyText: string): string {
+/**
+ * 非流式响应体 → 正文。
+ * 解析失败/空内容都会把原始响应打到控制台（隐去 Key），方便直接看出接口真实结构。
+ */
+function readNonStreamBody(bodyText: string, apiKey = ''): string {
   const trimmed = String(bodyText ?? '').trim();
-  if (!trimmed) throw new Error('AI 返回了空内容，再试一次吧');
+  if (!trimmed) {
+    logRawAiResponse('非流式（正文为空）', bodyText, apiKey);
+    throw userError(AI_EMPTY_REPLY_MESSAGE);
+  }
+  // 有的网关无视 stream:false，仍然回 data: {...} 的流式格式；拼起来比报「接口不兼容」有用
+  if (/^data:/m.test(trimmed)) {
+    const joined = collectSseText(trimmed);
+    if (joined) return joined;
+    logRawAiResponse('非流式（SSE 兜底后仍为空）', bodyText, apiKey);
+    throw userError(AI_EMPTY_REPLY_MESSAGE);
+  }
   if (!trimmed.startsWith('{')) {
-    throw new Error('AI 返回的内容不是 JSON，可能接口地址不对（也要确认这个接口支持 OpenAI 兼容格式）');
+    logRawAiResponse('非流式（不是 JSON）', bodyText, apiKey);
+    throw userError('AI 返回的内容不是 JSON，可能接口地址不对（也要确认这个接口支持 OpenAI 兼容格式）');
   }
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(trimmed) as Record<string, unknown>;
   } catch {
-    throw new Error('AI 返回的内容不是有效 JSON，可能接口地址不对');
+    logRawAiResponse('非流式（JSON 解析失败）', bodyText, apiKey);
+    throw userError('AI 返回的内容不是有效 JSON，可能接口地址不对');
   }
-  const content = pickDelta(parsed);
-  if (!content) {
-    const error = parsed.error as Record<string, unknown> | undefined;
-    if (error && typeof error.message === 'string') throw new Error('AI 服务返回错误：' + error.message);
-    throw new Error('AI 返回的内容里没有文字，可能模型名不对或接口不兼容');
+  const reply = pickReply(parsed);
+  if (reply.errorMessage && !reply.content) throw userError('AI 服务返回错误：' + reply.errorMessage);
+  const text = reply.content || reply.reasoning;
+  if (!text) {
+    logRawAiResponse('非流式（解析出来没有文字）', bodyText, apiKey);
+    const lengthHint =
+      reply.finishReason === 'length' ? '（这一次被长度上限截断了，可以再点一次试试）' : '';
+    throw userError(AI_EMPTY_REPLY_MESSAGE + lengthHint);
   }
-  return content;
+  if (!reply.content && reply.reasoning) {
+    console.warn('[AI] 模型只返回了推理过程（reasoning_content），已当作正文使用');
+  }
+  return text;
 }
 
 /** 动作名给人看的中文（日志/提示用）。 */

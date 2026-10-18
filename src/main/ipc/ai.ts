@@ -142,14 +142,17 @@ export function registerAi(handle: Handle): void {
 
   handle('ai:config:test', async () => {
     const config = assertAiConfig(readConfig());
+    // 非流式（stream:false）+ 够用的 max_tokens：
+    // 推理模型（如 deepseek-v4-pro / deepseek-reasoner）先产 reasoning 再产 content，
+    // 16 个 token 会被推理过程吃光、正文为空，看起来就像「接口不兼容」。
     const text = await chatOnce({
       fetcher: netFetcher,
       config,
       messages: [{ role: 'user', content: '请只回复两个字：可用' }],
-      maxTokens: 16,
+      maxTokens: 200,
       timeouts: { headersMs: 10_000, idleMs: 20_000, totalMs: 40_000 }
     });
-    return { ok: true as const, model: config.model, reply: text.slice(0, 60) };
+    return { ok: true as const, model: config.model, reply: text.trim().slice(0, 60) };
   });
 
   handle('ai:run', async (payload: AiRunPayload) => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AI_CONFIG_MISSING_PREFIX,
+  AI_EMPTY_REPLY_MESSAGE,
   BASE_URL_ERROR_PREFIX,
   MODEL_NAME_ERROR_PREFIX,
   assertAiConfig,
@@ -134,5 +135,12 @@ describe('错误类型可区分：配置错 ≠ 连接失败', () => {
     for (const message of networkLike) {
       expect(classifyAiConfigError(message), message).toBeNull();
     }
+  });
+
+  it('0.8.3：返回空内容（多半是模型名不对）归到「模型名」那一格', () => {
+    expect(classifyAiConfigError(AI_EMPTY_REPLY_MESSAGE)).toBe('model');
+    expect(classifyAiConfigError(AI_EMPTY_REPLY_MESSAGE + '（这一次被长度上限截断了，可以再点一次试试）')).toBe(
+      'model'
+    );
   });
 });
