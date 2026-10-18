@@ -6,6 +6,8 @@
 
 ## [0.9.0] - 2026-10-19
 
+发布：[GitHub Release v0.9.0](https://github.com/x-000001/zhishiku/releases/tag/v0.9.0)（附件 JwKB-Setup-0.9.0.exe，112,734,855 字节）
+
 ### 变更（视觉门面）
 
 - **应用图标重绘**：`resources/icon.png` 512×512 母版、`resources/icon.ico` 16/24/32/48/64/128/256 七档、`resources/tray.png` 32px，全部由新脚本 `.tools/gen-icon.mjs`（纯 Node 软件光栅器 + 自写 PNG/ICO 编码，**零依赖**）生成 —— 22% 圆角矩形底板 + 浅蓝到深品牌蓝竖向渐变（`#4D8DFF → #2952CC`）+ 内侧顶部高光 + 柔和外投影；中心图形是两张错落倾斜的白色卡片 + 右下角琥珀色小节点，替换原来的「三横线 + 黄点」。
