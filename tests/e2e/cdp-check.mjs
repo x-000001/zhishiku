@@ -292,7 +292,17 @@ class Cdp {
 
   async shot(name) {
     const res = await this.send('Page.captureScreenshot', { format: 'png' });
-    fs.writeFileSync(path.join(shotDir, `${name}.png`), Buffer.from(res.data, 'base64'));
+    const file = path.join(shotDir, `${name}.png`);
+    // Windows 上偶发「文件被占用 / 杀毒扫描」导致的 UNKNOWN open 错误：重试几次，别让截图失败拖挂整轮自检
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.writeFileSync(file, Buffer.from(res.data, 'base64'));
+        return;
+      } catch (err) {
+        if (attempt >= 4) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+      }
+    }
   }
 }
 
@@ -1123,40 +1133,47 @@ try {
   await cdp.eval("location.hash = '/'; true");
   await sleep(1200);
 
-  const homeViz = await cdp.eval(`(() => {
-    const ring = document.querySelector('.goal-ring');
-    const ringCS = ring ? getComputedStyle(ring) : null;
-    const ringText = ring ? ((ring.querySelector('span') || {}).textContent || '').trim() : '';
-    const overdue = document.querySelector('.list-row.overdue');
-    const done = document.querySelector('.list-row.done');
-    const doneCheck = done ? done.querySelector('.check') : null;
-    const doneTitle = done ? done.querySelector('.title') : null;
-    const bar = document.querySelector('.goal-row .progress > i');
-    const alarmEl = document.querySelector('.stat.alarm');
-    return JSON.stringify({
-      ringBg: ringCS ? ringCS.backgroundImage : 'none',
-      ringText: ringText,
-      ringVar: ring ? (ring.style.getPropertyValue('--p') || '').trim() : 'none',
-      overdueRow: !!overdue,
-      overdueSub: overdue ? ((overdue.querySelector('.sub') || {}).textContent || '') : '',
-      overdueMark: overdue ? getComputedStyle(overdue, '::before').backgroundColor : 'none',
-      alarm: document.querySelectorAll('.stat.alarm').length,
-      alarmAnim: alarmEl ? getComputedStyle(alarmEl).animationName : 'none',
-      good: document.querySelectorAll('.stat.good').length,
-      doneRow: !!done,
-      doneCheckAnim: doneCheck ? getComputedStyle(doneCheck).animationName : 'none',
-      doneTitleLine: doneTitle ? getComputedStyle(doneTitle).textDecorationLine : 'none',
-      barGrad: bar ? getComputedStyle(bar).backgroundImage : 'none',
-      barAnim: bar ? getComputedStyle(bar).animationName : 'none'
-    });
-  })()`);
-  const viz = (() => {
+  // 首页数据是异步读库的：软件渲染下偶尔会读到「还没渲染完」的一帧，
+  // 量到 doneRow=false 就等一会儿重测（最多 4 次）。断言标准不变，只是别被一帧抖动判死。
+  const readHomeViz = async () => {
+    const raw = await cdp.eval(`(() => {
+      const ring = document.querySelector('.goal-ring');
+      const ringCS = ring ? getComputedStyle(ring) : null;
+      const ringText = ring ? ((ring.querySelector('span') || {}).textContent || '').trim() : '';
+      const overdue = document.querySelector('.list-row.overdue');
+      const done = document.querySelector('.list-row.done');
+      const doneCheck = done ? done.querySelector('.check') : null;
+      const doneTitle = done ? done.querySelector('.title') : null;
+      const bar = document.querySelector('.goal-row .progress > i');
+      const alarmEl = document.querySelector('.stat.alarm');
+      return JSON.stringify({
+        ringBg: ringCS ? ringCS.backgroundImage : 'none',
+        ringText: ringText,
+        ringVar: ring ? (ring.style.getPropertyValue('--p') || '').trim() : 'none',
+        overdueRow: !!overdue,
+        overdueSub: overdue ? ((overdue.querySelector('.sub') || {}).textContent || '') : '',
+        overdueMark: overdue ? getComputedStyle(overdue, '::before').backgroundColor : 'none',
+        alarm: document.querySelectorAll('.stat.alarm').length,
+        alarmAnim: alarmEl ? getComputedStyle(alarmEl).animationName : 'none',
+        good: document.querySelectorAll('.stat.good').length,
+        doneRow: !!done,
+        doneCheckAnim: doneCheck ? getComputedStyle(doneCheck).animationName : 'none',
+        doneTitleLine: doneTitle ? getComputedStyle(doneTitle).textDecorationLine : 'none',
+        barGrad: bar ? getComputedStyle(bar).backgroundImage : 'none',
+        barAnim: bar ? getComputedStyle(bar).animationName : 'none'
+      });
+    })()`);
     try {
-      return JSON.parse(String(homeViz));
+      return JSON.parse(String(raw));
     } catch {
-      return { err: String(homeViz) };
+      return { err: String(raw) };
     }
-  })();
+  };
+  let viz = await readHomeViz();
+  for (let attempt = 0; attempt < 3 && !(viz.doneRow === true && viz.overdueRow === true); attempt++) {
+    await sleep(600);
+    viz = await readHomeViz();
+  }
   results.push({
     name: '第五版：首页目标进度是环形（conic-gradient + 环里带百分比）',
     ok:
@@ -1833,6 +1850,106 @@ try {
       dotsRow(backState),
     detail: `侧栏[${wiring.side}] 文字[${wiring.label}] 三点容器[${wiring.lights}] 每个点[${wiring.dot}] 右边缘轨迹 ${midFrames.slice(0, 8).join('→')} 回到 ${backState.visW}px / 文字 ${backState.labelW}px / 三点坐标 ${dotsText(backState)}（一排）`
   });
+
+  // ---- 0.9.0 视觉门面：图标 + 品牌区的质感（只看样式，不动 DOM/类名） ----
+  const brandRaw = await cdp.eval(`(() => {
+    const cs = (sel) => { const el = document.querySelector(sel); return el ? getComputedStyle(el) : null; };
+    const rect = (sel) => { const el = document.querySelector(sel); return el ? el.getBoundingClientRect() : null; };
+    const brand = cs('.brand');
+    const mark = cs('.brand-mark');
+    const text = cs('.brand-text');
+    const markRect = rect('.brand-mark');
+    const textRect = rect('.brand-text');
+    return JSON.stringify({
+      gap: brand.gap,
+      padding: [brand.paddingTop, brand.paddingRight, brand.paddingBottom, brand.paddingLeft].join(' '),
+      mark: {
+        w: Math.round(markRect.width),
+        h: Math.round(markRect.height),
+        radius: mark.borderTopLeftRadius,
+        bg: mark.backgroundImage,
+        shadow: mark.boxShadow,
+        weight: mark.fontWeight,
+        textShadow: mark.textShadow
+      },
+      text: {
+        size: text.fontSize,
+        weight: text.fontWeight,
+        spacing: text.letterSpacing,
+        bg: text.backgroundImage,
+        color: text.color,
+        fill: text.webkitTextFillColor,
+        w: Math.round(textRect.width)
+      },
+      gapPx: Math.round(textRect.left - markRect.right)
+    });
+  })()`);
+  const brand = JSON.parse(String(brandRaw));
+  const gradientIn = (value) => /linear-gradient/.test(value || '');
+  results.push({
+    name: '0.9.0：侧栏「Jw」图标有品牌蓝渐变、内高光+微投影、800 字重和 8px 圆角',
+    ok:
+      brand.mark.w === 28 &&
+      brand.mark.h === 28 &&
+      brand.mark.radius === '8px' &&
+      brand.mark.weight === '800' &&
+      gradientIn(brand.mark.bg) &&
+      /inset/.test(brand.mark.shadow) &&
+      /rgba\(37, 99, 235, 0\.2\)/.test(brand.mark.shadow) &&
+      brand.mark.textShadow !== 'none',
+    detail: `${brand.mark.w}×${brand.mark.h} 圆角 ${brand.mark.radius} 字重 ${brand.mark.weight} 渐变=${gradientIn(brand.mark.bg)} 投影=${brand.mark.shadow} 文字阴影=${brand.mark.textShadow}`
+  });
+  results.push({
+    name: '0.9.0：「知识库」标题 15px/600 字重/0.5px 字距，末尾渐到品牌色，不是纯黑',
+    ok:
+      brand.text.size === '15px' &&
+      brand.text.weight === '600' &&
+      brand.text.spacing === '0.5px' &&
+      gradientIn(brand.text.bg) &&
+      brand.text.fill === 'rgba(0, 0, 0, 0)' &&
+      brand.text.color !== 'rgb(0, 0, 0)' &&
+      brand.text.w > 40,
+    detail: `${brand.text.size} / ${brand.text.weight} / 字距 ${brand.text.spacing} 宽度 ${brand.text.w}px 文字色 ${brand.text.color} 渐变文字填充=${brand.text.fill}`
+  });
+  results.push({
+    name: '0.9.0：图标与文字间距 10px、品牌区留白 16px 20px（不贴边）',
+    ok: brand.gap === '10px' && brand.padding === '16px 20px 16px 20px' && brand.gapPx >= 8 && brand.gapPx <= 12,
+    detail: `gap ${brand.gap}（实际间距 ${brand.gapPx}px） padding ${brand.padding}`
+  });
+
+  // 折叠成 60px 图标条时：小图标必须水平居中、不裁切（文字收 0 由上面第五版断言守）
+  await toggleSidebar(true);
+  await sleep(700); // 等侧栏收起动画（0.38s）彻底停下，否则量到的是中途宽度
+  const collapsedBrand = JSON.parse(
+    String(
+      await cdp.eval(`(() => {
+        const mark = document.querySelector('.brand-mark').getBoundingClientRect();
+        const sidebar = document.querySelector('.sidebar').getBoundingClientRect();
+        const rail = Math.min(60, Math.round(sidebar.right));
+        return JSON.stringify({
+          rail,
+          center: Math.round((mark.left + mark.width / 2) * 10) / 10,
+          want: Math.round((rail / 2) * 10) / 10,
+          width: Math.round(mark.width),
+          right: Math.round(mark.right),
+          brandW: Math.round(document.querySelector('.brand').getBoundingClientRect().width),
+          brandOverflow: getComputedStyle(document.querySelector('.brand')).overflow
+        });
+      })()`)
+    )
+  );
+  results.push({
+    name: '0.9.0：侧栏折叠成 60px 图标条时，「Jw」图标水平居中、不裁切',
+    ok:
+      collapsedBrand.width === 28 &&
+      Math.abs(collapsedBrand.center - collapsedBrand.want) <= 1.5 &&
+      collapsedBrand.right <= collapsedBrand.rail + 1 &&
+      collapsedBrand.brandW <= 40 &&
+      collapsedBrand.brandOverflow === 'hidden',
+    detail: `图标 28px，中心 ${collapsedBrand.center}px / 图标条中点 ${collapsedBrand.want}px（偏差 ${Math.round((collapsedBrand.center - collapsedBrand.want) * 10) / 10}px） 右边缘 ${collapsedBrand.right}px / 条宽 ${collapsedBrand.rail}px 品牌行宽 ${collapsedBrand.brandW}px（overflow=${collapsedBrand.brandOverflow}，文字宽度被裁到 0 后由原规则接管）`
+  });
+  await toggleSidebar(false);
+  await sleep(260);
 
   // ---- 动画专项：收起/展开那 0.38s 里临时关掉侧栏毛玻璃（backdrop 每帧重算最贵） ----
   const glassSwap = JSON.parse(
@@ -5430,7 +5547,13 @@ try {
     if (!card) return JSON.stringify(out);
     const btn=await waitFor(()=>q('.export-md-btn'),4000);
     if (btn) btn.click();
-    const done=await waitFor(()=>q('.export-progress')&&/导出完成/.test(q('.export-progress').textContent||''),20000);
+    // 软件渲染下偶发丢一次点击：12 秒还没开始/没结束就再点一次（断言标准不变）
+    let done=await waitFor(()=>q('.export-progress')&&/导出完成/.test(q('.export-progress').textContent||''),12000);
+    if (!done && !/失败/.test((q('.export-progress')||{}).textContent||'')) {
+      const again = await waitFor(()=>q('.export-md-btn'),2000);
+      if (again && !again.classList.contains('loading')) again.click();
+      done=await waitFor(()=>q('.export-progress')&&/导出完成/.test(q('.export-progress').textContent||''),18000);
+    }
     rec('0.8.0：点导出后能跑完并显示结果（进度 → 完成）', !!done, done?(q('.export-progress').textContent||'').trim():'没等到完成');
     rec('0.8.0：导出结束后按钮不是一直转圈', !q('.export-md-btn')||!q('.export-md-btn').classList.contains('loading'), (q('.export-md-btn')||{}).textContent||'');
     rec('0.8.0：导出完成没有报错 Toast（显示的是完成提示）', qa('.toast-wrap').every((t)=>!/失败/.test(t.textContent||'')), qa('.toast-wrap').map((t)=>t.textContent).join(' | ').slice(0,80));
