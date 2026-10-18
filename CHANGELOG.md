@@ -6,6 +6,8 @@
 
 ## [0.8.3] - 2026-10-19
 
+发布：[GitHub Release v0.8.3](https://github.com/x-000001/zhishiku/releases/tag/v0.8.3)（附件 JwKB-Setup-0.8.3.exe，112,540,468 字节）
+
 ### 修复
 
 - **「测试连接」在 `deepseek-v4-pro` / `deepseek-reasoner` 这类接口上误报「AI 返回的内容里没有文字」**：非流式解析改成多层兜底 —— 标准 `choices[0].message.content` → 内容数组（多段 text 拼起来）→ `choices[0].text` → 推理模型的 `reasoning_content` / `reasoning`；整段正文被包在 SSE 里也能读出来。
