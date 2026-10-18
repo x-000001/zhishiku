@@ -4,6 +4,24 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 `主.次.修订`。
 
+## [0.9.2] - 2026-10-19
+
+> 说明：本条是品牌区排版的代码修复；安装包与 GitHub Release 在发版时补齐。
+
+### 修复
+
+- **「库」被截断**：品牌行可用宽度只有 167px，而「三色点 58 + gap 10 + 图标 28 + gap 10 + 亮青 `Jw` 18.4 + gap 10 + 正文 47 = 181px」，文字被 flex 压到 33px 宽却仍 `nowrap`，于是尾字被裁。改为单行 **`Jw 知识库`**（统一 `var(--text)`、删掉第二个亮色字标）、图标 **28→24px**、行容器 `overflow:hidden`、右侧留白 20→10px，文字加 `flex:1 1 auto` + `min-width:0` + `text-overflow: ellipsis`；实测文字内容宽/可见宽 **81/81**，`scrollWidth ≤ clientWidth`。
+- **折叠态同步**：24px 图标在 60px 图标条里居中（实测偏差 0px），文字透明度收 0 让位，不裁切不越界。
+
+### 测试
+
+- e2e：0.9.1 的 6 条品牌断言改写为 0.9.2 的 6 条，新增「**品牌区文字没有被截断（scrollWidth ≤ clientWidth，且整行不横向溢出）**」；其余 287 条原样未改。
+- 未新增依赖、未改 DOM 类名与组件逻辑。
+
+### 验证
+
+- typecheck 0 错；e2e **293/293**；单测 344 未受影响。强杀与打包自检留到发版时跑。
+
 ## [0.9.1] - 2026-10-19
 
 发布：[GitHub Release v0.9.1](https://github.com/x-000001/zhishiku/releases/tag/v0.9.1)（附件 JwKB-Setup-0.9.1.exe，112,578,786 字节）

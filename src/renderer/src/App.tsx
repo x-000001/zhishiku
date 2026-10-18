@@ -244,14 +244,13 @@ export default function App(): ReactNode {
           {/* 第五版（方案B）：窗口是无边框的，这三个点就是系统标题栏 */}
           <WinLights />
           <span className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 28 28" focusable="false">
-              <circle cx="8.2" cy="14" r="6.16" fill="none" stroke="#ffffff" strokeWidth="2.8" />
-              <circle cx="19.8" cy="14" r="6.16" fill="none" stroke="#ffffff" strokeWidth="2.8" />
-              <circle cx="14" cy="14" r="1.15" fill="#5ee7e6" />
+            <svg viewBox="0 0 24 24" focusable="false">
+              <circle cx="7.1" cy="12" r="5.28" fill="none" stroke="#ffffff" strokeWidth="2.4" />
+              <circle cx="16.9" cy="12" r="5.28" fill="none" stroke="#ffffff" strokeWidth="2.4" />
+              <circle cx="12" cy="12" r="0.95" fill="#5ee7e6" />
             </svg>
           </span>
-          <span className="brand-jw">Jw</span>
-          <span className="brand-text">知识库</span>
+          <span className="brand-text">Jw 知识库</span>
         </div>
         <nav className="nav" aria-label="主导航">
           {NAV.map((item) => (

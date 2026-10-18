@@ -5072,24 +5072,32 @@ blockquote.ai-summary b {
   border-color: var(--danger) !important;
 }
 
-/* ================= 0.9.1：视觉门面（无尽折叠图标 + 侧栏品牌区） =================
-   图标：近黑 squircle 底板 + 白色双环 ∞ + 中心极光蓝实心点（生成器见 .tools/gen-icon.mjs）。
-   这里只做「把同一枚图形搬进侧栏」：DOM 类名、组件逻辑、快捷键一律没动，
-   只是把 .brand-mark 里的旧文字换成了内联 SVG（aria-hidden），标题改成单色细字重。 */
+
+/* ================= 0.9.2：品牌区排版（修「库」被截断） =================
+   方向 1「修复并保留」：图标 24px + 单行「Jw 知识库」统一用正文色，
+   用 flex:1 / min-width:0 / nowrap + 省略号兜底，任何宽度都不会出现半个字。
+   只动外观：DOM 里的 .brand / .brand-mark / .brand-text 三个类名、组件逻辑、快捷键一律没变。 */
 
 .brand {
   gap: 10px;
-  padding: 16px 20px;
+  /* 右侧比左侧收一点：给单行文字留出足够空间，视觉上仍以左侧图标对齐 */
+  padding: 16px 10px 16px 20px;
   font-weight: 500;
   letter-spacing: 0.5px;
+  overflow: hidden;
 }
 
-/* 图标底板：与桌面图标同款近黑；内高光只留 1px，不投影（侧栏本来就贴在浅底上） */
+/* 三个窗口点自带 6px 右外边距，与 gap 叠加太浪费，这里归零 */
+.brand .win-lights {
+  margin-right: 0;
+}
+
+/* 图标：与桌面图标同款近黑底板，只留 1px 内高光，不投影 */
 .brand-mark {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
-  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 7px;
   background: #0a0b10;
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.15);
   color: transparent;
@@ -5102,20 +5110,17 @@ blockquote.ai-summary b {
 
 .brand-mark svg {
   display: block;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
 }
 
-/* 文字标：Jw 抬成品牌色粗体，知识库用正文字色细字重（粗细对比 = 层级） */
-.brand-jw {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: #5ee7e6;
-  text-shadow: none;
-}
-
+/* 文字：单行、可伸缩；真到极窄时用省略号收尾，绝不出现「半个库」 */
 .brand-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 15px;
   font-weight: 500;
   letter-spacing: 0.5px;
@@ -5133,13 +5138,9 @@ blockquote.ai-summary b {
   -webkit-text-fill-color: currentColor;
 }
 
-/* 折叠态：文字收成 0 宽（原有规则），字距归零、Jw 文字标先让位，只留这枚图标居中 */
+/* 折叠态：文字淡出（原有规则接管），字距归零，只留居中的小图标 */
 .sidebar.collapsed .brand-text {
   letter-spacing: 0;
-}
-
-.sidebar.collapsed .brand-jw {
-  display: none;
 }
 
 .sidebar.collapsed .brand-mark {
