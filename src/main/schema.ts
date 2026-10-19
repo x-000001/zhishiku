@@ -257,3 +257,15 @@ CREATE TABLE IF NOT EXISTS focus_sessions (
 CREATE INDEX IF NOT EXISTS idx_focus_started ON focus_sessions(started_at DESC);
 `;
 
+
+/**
+ * 第七版（GitHub Issues 同步）：每个仓库的增量游标。
+ * 只存「上次成功同步到哪一刻」和「上次失败原因」，不改任何已有表。
+ */
+export const GITHUB_SCHEMA = `
+CREATE TABLE IF NOT EXISTS github_sync_meta (
+  repo           TEXT PRIMARY KEY,
+  last_synced_at TEXT,
+  last_error     TEXT
+);
+`;

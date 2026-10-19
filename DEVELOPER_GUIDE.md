@@ -95,7 +95,7 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 
 ### ADR-1 数据库用 SQLite（WAL + FTS5），不用 JSON 文件
 
-- 实现：`src/main/db.ts:291-301` 打开时 `journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`、`busy_timeout=5000`；表结构在 `src/main/schema.ts:9`（19 张表 + 1 张 FTS5 虚表 `note_fts`）。
+- 实现：`src/main/db.ts:291-301` 打开时 `journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`、`busy_timeout=5000`；表结构在 `src/main/schema.ts:9`（20 张表 + 1 张 FTS5 虚表 `note_fts`；schema 版本 `SCHEMA_VERSION = 7`）。
 - 为什么：
   1. 这个应用是「**逐条写入、随时断电**」的使用方式（README 里的「数据不丢七条保障」），JSON 全量重写无法保证原子性；
   2. 需要跨表一致性（笔记/标签/附件/版本点/复习卡互相引用），外键 + 事务是刚需；
@@ -139,12 +139,12 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 - 代价：必须自己洗 HTML —— 所有入库 HTML 都过 `sanitizeHtml()`（`src/shared/html.ts:201`，白名单在 `:86-124`）；`execCommand` 已被标准标为废弃但 Chromium 仍稳定支持。
 - 现状：`package.json:34-36` 仍声明了三个 CodeMirror 依赖，但 `src/` 里**没有任何 import**（实测 grep 0 命中）——属于历史遗留，见 §10 技术债。
 
-### ADR-6 IPC 统一信封 + 单点注册（124 个通道）
+### ADR-6 IPC 统一信封 + 单点注册（133 个通道）
 
 - 实现：`Result<T> = {ok:true,data}|{ok:false,error}`（`src/main/ipc/common.ts:5`）；`wrap()` 统一 try/catch 并 `console.error('[IPC] 处理失败：')`（`src/main/ipc/common.ts:20-29`）；所有域在 `src/main/ipc/index.ts:16-49` 里一次性注册；preload 把 `invoke` 解包成「成功返回 data、失败 throw Error」（`src/preload/index.ts:13-23`）。
 - 为什么：渲染层永远不用判断两套错误形态；`ipcMain.removeHandler(channel)` 让重复注册幂等（`src/main/ipc/index.ts:18-21`），e2e 多次启动不冲突；错误文案能直接给用户看。
 - 代价：错误没有结构化 error code（只有中文 message），需要分类时靠文案前缀（如 AI 配置错误，`src/shared/ai.ts:221` 的 `classifyAiConfigError`）。
-- 通道规模（机器统计）：**124** 个；按域：notes 25、goals 20、review 15、tasks 15、system 15、plans 11、focus 7、update 6、ai 5、core 3、export 2。
+- 通道规模（机器统计）：**133** 个；按域：notes 25、goals 20、review 15、tasks 15、system 15、plans 11、focus 7、update 6、ai 5、core 3、export 2、github 9。
 
 ### ADR-7 e2e 用「自写 CDP 客户端」驱动真 Electron，不用 Playwright
 
@@ -171,6 +171,7 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 | **安装包图标 / 应用名 / 安装行为** | `electron-builder.yml:32`（ico）、`:50`（artifactName）、`:38-53`（NSIS）；图标生成脚本 `.tools/gen-icon.mjs`；NSIS 定制 `resources/installer.nsh` | 改完要 `npm run dist` 重打 |
 | **数据表结构** | `src/main/schema.ts:9`（`SCHEMA`）、`:245`（`FOCUS_SCHEMA` 是「加表」的最好范例） | 别忘了 `db.ts:156` 的版本号和迁移分支 |
 | **新增 IPC 通道** | 域文件 `src/main/ipc/*.ts` + 注册 `src/main/ipc/index.ts:37-47` + 渲染层封装 `src/renderer/src/api.ts:111` | 事件型通道还要加 `src/preload/index.ts:3-11` 白名单 |
+| **改 GitHub 同步 / 授权** | 主进程 `src/main/github.ts`（请求/分页/映射）、`src/main/github-sync.ts`（串行+事务）、`src/main/ipc/github.ts`（Device Flow/Token/锁）、渲染层 `src/renderer/src/github.tsx`（设置卡）、`src/renderer/src/pages/Tasks.tsx`（同步按钮） | 同步语义见 §5.5；Token 加密见 ADR-3 |
 | **导出为 Markdown** | HTML→MD：`src/main/html-to-md.ts:313`；目录/文件名/图片拷贝：`src/main/export.ts:109`；IPC：`src/main/ipc/export.ts:26`；UI：`Settings.tsx:313`、`:435` | e2e 用 `JWKB_EXPORT_DIR` 跳过系统对话框 |
 | **备份 / 恢复 / 数据库自检** | `src/main/backup.ts:29`（列表）、`:53`（备份）、`:94`（每日）、`:111`（恢复）、`:136`（删除）；IPC `src/main/ipc/system.ts:39-52` | 恢复前自动备份当前库，可反悔 |
 | **检查更新 / 下载安装包** | 检查：`src/main/update.ts:132`；下载+SHA256：`src/main/updater.ts:78`；IPC：`src/main/ipc/update.ts`；URL 白名单 `:31-45` | 测试用 `JWKB_UPDATE_URL` / `JWKB_UPDATE_DRYRUN` |
@@ -303,11 +304,21 @@ stateDiagram-v2
   - `JWKB_DATA_DIR`（`src/main/paths.ts:68`）、`JWKB_UPDATE_URL` / `JWKB_UPDATE_DIR` / `JWKB_UPDATE_DRYRUN`（`src/main/ipc/update.ts:34,69,74`）、`JWKB_EXPORT_DIR`（`src/main/ipc/export.ts:29`）、`JWKB_FOCUS_MIN_SECONDS`（`src/main/focus.ts:60`）。
   - 打包期脚本另有 `JWKB_OUT_DIR`/`JWKB_BUILD_DIR`（`.tools/build-installer.mjs:28-31`、`README.md:179`）和 `JWKB_EXE`（`.tools/check-packaged.mjs:11`）。
 - 渲染层唯一的环境差异是 dev 地址（`ELECTRON_RENDERER_URL`），且只在主进程用（`src/main/index.ts:179`）。
+- GitHub 集成另有三个测试/自建 App 用的变量：`JWKB_GITHUB_CLIENT_ID`（OAuth App 的 Client ID）、`JWKB_GITHUB_API_BASE`、`JWKB_GITHUB_OAUTH_BASE`（默认 `https://api.github.com` / `https://github.com`，e2e 指向本地 stub），读取点在 `src/main/ipc/github.ts` 的 `clientIdOf/apiBase/oauthBase`。
 - 构建时 CSP 收紧（dev 放开 ws/localhost，构建只留 `'self'`）：`electron.vite.config.ts:8-18`。
 
 ### 5.4 附件协议 `jw-att://`
 
 笔记正文里 `<img src="jw-att://attachments/2026-10/a.png">`，主进程把它映射到数据目录真实文件，并做「只在数据目录内」的越界检查（`src/main/index.ts:40-61`）。改附件路径逻辑要同时动 `src/shared/html.ts:22-49`（`attachmentUrl/attachmentRelFromUrl`）。
+
+### 5.5 GitHub 同步的游标、锁与增量语义
+
+- 游标按仓库存在 `github_sync_meta.last_synced_at`；每次成功同步该仓库后推进，失败只写 `last_error` 并继续下一个仓库（`src/main/github-sync.ts`）。
+- 同步锁是主进程模块级开关（`src/main/ipc/github.ts`）：正在同步时再次 `github:sync` 直接失败，文案「同步正在进行中，请稍候」。
+- 去重键 `task.github_issue_id`（唯一部分索引）+ `upsertGithubTask`；已软删的任务不会被复活。
+- PR 混在 Issues API 里：任何带 `pull_request` 字段的对象都必须过滤，并计入 `pruned`。
+- `since` 必须 ISO 8601（`toSinceIso()` 负责转换），GitHub 会拒绝其它格式。
+- Issue 正文写成**纯文本**进 `note`，不要直接渲染 Markdown/HTML；确实要渲染时必须先过 `sanitizeHtml()`（§8.5）。
 
 ---
 
@@ -402,7 +413,7 @@ try {
 }
 ```
 
-同类实现：标签重命名合并 `src/main/db.ts:877-911`、标签删除 `src/main/db.ts:912-933`、迁移 v3 批量回填 `src/main/db.ts:244-252`。**新写多语句操作时照抄这个形状**，不要指望 `DatabaseSync` 自动事务。
+同类实现：标签重命名合并 `src/main/db.ts:877-911`、标签删除 `src/main/db.ts:912-933`、迁移 v3 批量回填 `src/main/db.ts:244-252`、GitHub 单仓库同步写入（`src/main/github-sync.ts` 的 `runInTransaction`）。**新写多语句操作时照抄这个形状**，不要指望 `DatabaseSync` 自动事务。
 
 ### 8.5 其它硬规矩
 
@@ -410,6 +421,7 @@ try {
 - 全仓 `as any` 命中数为 **0**（机器统计）；不要开这个口子。
 - 用户可见文案一律中文、不吞异常（`src/renderer/src/errors.ts:11-21`）。
 - 笔记 HTML 必须过 `sanitizeHtml()`（`src/shared/html.ts:201`），渲染时禁止直接 `dangerouslySetInnerHTML` 未经清洗的内容。
+- GitHub 同步是**单向**的：只允许「远端 → 本地」，不给渲染层任何回写远端 Issue 的通道；Token 只以密文存 `meta`（§ADR-3），不要把 token 放进 IPC 返回值。
 
 ---
 
@@ -429,7 +441,7 @@ try {
 1. 域文件里 `handle('域:动作', (payload) => …)`（参考 `src/main/ipc/notes.ts` / `ai.ts`）；payload 类型尽量放 `src/shared/types.ts`。
 2. 在 `src/main/ipc/index.ts:37-47` 注册（新域要新建 `registerX(handle)`）；错误直接 `throw new Error('中文原因')`，`wrap()` 会转成 `{ok:false}`。
 3. 渲染层：`src/renderer/src/api.ts:111` 的 `api` 对象里加一行 `xxx: (p) => call('域:动作', p)`。
-4. 如果是**主进程主动推送**的事件：`webContents.send('域:事件', payload)` + 把通道名加进 `src/preload/index.ts:3-11` 的 `ALLOWED_EVENTS` + 在 `api.ts` 加 `onXxx(listener)`（参考 `onAiStream`）。
+4. 如果是**主进程主动推送**的事件：`webContents.send('域:事件', payload)` + 把通道名加进 `src/preload/index.ts:3-11` 的 `ALLOWED_EVENTS` + 在 `api.ts` 加 `onXxx(listener)`（参考 `onAiStream` / `onGithubProgress`）。
 5. 补单测（纯逻辑函数放 `src/main/*.ts` 里并注入依赖，参考 `src/main/ai.ts` 的 `AiFetcher` 设计），e2e 里用 `window.api.invoke` 真打一次。
 
 ### 9.3 Recipe：加一个新页面
@@ -539,7 +551,7 @@ flowchart TD
 
 源码总量：58 个 `.ts/.tsx` 文件、17,237 行；测试：单测 24 文件 4,605 行、e2e 2 文件 5,918 行。
 
-## 附录 B：IPC 通道按域（124 个）
+## 附录 B：IPC 通道按域（133 个）
 
 | 域 | 数量 | 文件 |
 |---|---|---|
@@ -554,5 +566,6 @@ flowchart TD
 | ai（配置/运行/取消） | 5 | `src/main/ipc/ai.ts` |
 | core（app:info / settings） | 3 | `src/main/ipc/core.ts` |
 | export（导出 Markdown） | 2 | `src/main/ipc/export.ts` |
+| github（授权/配置/同步/解绑） | 9 | `src/main/ipc/github.ts` |
 
 **文档维护**：改完代码顺手改这里的行号；提交前跑 `node .tools/check-guide.cjs`，它会校验本文引用的每个路径与行号是否仍然存在。

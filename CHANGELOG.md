@@ -4,6 +4,29 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 `主.次.修订`。
 
+## [0.10.0] - 2026-10-19
+
+发布：[GitHub Release v0.10.0](https://github.com/x-000001/zhishiku/releases/tag/v0.10.0)（附件 JwKB-Setup-0.10.0.exe，112,589,040 字节）
+
+### 新增
+
+- **GitHub 集成（首期：Issues 单向增量同步成待办）**：
+  - 授权走 GitHub 官方 **Device Flow**（`github:request-code` / `github:poll-token`，15 分钟超时 + 主动取消 `github:cancel-auth`）；Token 用 `safeStorage` 加密存 `meta` 表（Windows 走 DPAPI），渲染层只拿到 `hasKey/tokenHint`；`github:logout` 只清 Token，本地任务不动。
+  - 设置页新增「GitHub」卡片：连接状态、打码 Token、`owner/repo` 多仓库输入（含 `/`、无空格校验）、Client ID（可用 `JWKB_GITHUB_CLIENT_ID` 注入）、断开连接。
+  - 任务页新增「⇅ 同步 GitHub」：主进程同步锁 + 按钮 loading/disabled 防连点、多仓库串行进度「正在同步 (1/3)：…」、完成 Toast 汇总「成功 X 个仓库，失败 Y 个，新增 N 条任务，过滤掉 K 个 PR」；401 自动回设置页并提示「授权已过期」。
+  - 同步引擎：`per_page=100` 逐页拉到空、`since` 增量、PR（含 `pull_request` 字段）过滤、`github_issue_id` 唯一索引 + upsert 去重、单仓库失败不拖垮整轮、`BEGIN…COMMIT` 事务。
+  - 映射：closed → 已完成；labels 含 `bug` → 优先级「重要」；Issue 正文以纯文本写入任务备注（不渲染 HTML，避免 XSS）。
+- 数据库：`SCHEMA_VERSION` 6→7 —— `task` 加 `github_issue_id` / `github_updated_at` + 唯一部分索引；新表 `github_sync_meta(repo, last_synced_at, last_error)`。
+- IPC：新增 `github:*` 9 个通道 + `github:progress` 推送事件。
+
+### 变更
+
+- 版本 0.9.2 → 0.10.0。
+
+### 验证
+
+- typecheck 0 错；单测 **381**（26 个文件；新增 `github-client.test.ts`、`github-sync.test.ts`）；e2e **305/305**（原有 293 条原样全过 + 12 条 `0.10.0：…` 新断言，`net.fetch` 全局 mock 走本地 stub，不连真 GitHub）；强杀 **6/6**；打包自检 **23/23**。
+
 ## [0.9.2] - 2026-10-19
 
 发布：[GitHub Release v0.9.2](https://github.com/x-000001/zhishiku/releases/tag/v0.9.2)（附件 JwKB-Setup-0.9.2.exe，112,578,774 字节）

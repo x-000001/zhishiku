@@ -10,6 +10,7 @@ import { registerReview } from './review';
 import { registerSystem, registerWindow } from './system';
 import { registerUpdate } from './update';
 import { registerFocus } from './focus';
+import { registerGithub } from './github';
 import { registerAi } from './ai';
 import { registerExport } from './export';
 
@@ -48,6 +49,7 @@ export function registerIpc(getPaths: () => DataPaths, sqliteVersion: string): v
   registerSystem(handle, deps);
   registerUpdate(handle);
   registerFocus(handle);
+  registerGithub(handle);
   registerAi(handle);
   registerExport(handle);
   registerWindow(handleWindow);

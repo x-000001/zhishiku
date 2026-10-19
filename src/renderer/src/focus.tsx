@@ -169,21 +169,33 @@ export default function FocusDock(): ReactNode {
     };
 
     /** 收尾：指针抬起 / 被取消 / 窗口失焦 都走这里，保证监听器和捕获一定被摘干净 */
-    const finish = (endEvent: PointerEvent | null): void => {
+    const finish = (_endEvent: PointerEvent | null): void => {
       const drag = dragRef.current;
       if (!drag) return;
       detach();
       dragRef.current = null;
       setDragging(false);
-      if (endEvent && drag.id !== endEvent.pointerId) return;
-      if (!drag.moved) return;
+      if (!drag.moved) {
+        // 按住没动（或者只抖了一下）：把拖动中直接写到 DOM 上的 transform 还给 React 状态，
+        // 否则内联样式会残留一个「已经夹过的旧位置」，看起来像吸边失效。
+        if (dockRef.current) {
+          dockRef.current.style.transform = `translate3d(${drag.baseTx}px, ${drag.baseTy}px, 0)`;
+        }
+        return;
+      }
       // 拖完那一下会跟着来一个 click，要吃掉，否则松手就弹面板
       suppressClick.current = true;
       window.setTimeout(() => {
         suppressClick.current = false;
       }, 400);
-      // 松手后先算吸附：近边就吸过去，坐标再持久化（动画由 CSS 的 --spring-ease 负责）
+      // 松手后先算吸附：近边就吸过去，坐标再持久化（动画由 CSS 的 --spring-ease 负责）。
+      // 注意：这里故意不看 endEvent 的 pointerId —— 拖动过程中可能混进别的指针的 up
+      // （真实鼠标遗留事件、触摸笔误触），以前的写法会直接 return，导致拖动停在被夹住的坐标、
+      // 吸附和落库都丢了（0.10.0 的 e2e 偶发 left=8 而不是 16 就是这个原因）。
       const snapped = snapFabEdge(drag.last, drag.size, drag.view);
+      if (dockRef.current) {
+        dockRef.current.style.transform = `translate3d(${snapped.tx}px, ${snapped.ty}px, 0)`;
+      }
       setPos(snapped);
       savePos(snapped);
     };

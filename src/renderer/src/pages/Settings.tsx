@@ -14,6 +14,7 @@ import type {
 import type { AiConfigInput, AiConfigPublic } from '../../../shared/ai';
 import { classifyAiConfigError } from '../../../shared/ai';
 import { errText, toastError } from '../errors';
+import { GithubCard } from '../github';
 
 /** 把字节数说成人话：安装包几十 MB，进度里只显示 MB 就够了。 */
 function fmtSize(bytes: number): string {
@@ -647,8 +648,10 @@ export default function Settings(props: {
         </p>
       </div>
 
+      <GithubCard />
+
       {dirty ? (
-        <div className="save-bar">
+      <div className="save-bar">
           <span>有未保存的改动</span>
           <span className="spacer" style={{ flex: 1 }} />
           <button

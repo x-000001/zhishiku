@@ -53,7 +53,9 @@ import type {
   TaskPriority,
   TaskStatus
 } from '../shared/types';
-import { FOCUS_SCHEMA, SCHEMA } from './schema';
+import { FOCUS_SCHEMA, GITHUB_SCHEMA, SCHEMA } from './schema';
+import { mapIssueToTask, type GithubIssue } from './github';
+import type { GithubRepoMeta } from '../shared/github';
 
 let db: DatabaseSync | null = null;
 let paths: DataPaths | null = null;
@@ -153,7 +155,7 @@ function snippetAround(content: string, query: string, len = 90): string {
 /* 建表与迁移                                                          */
 /* ------------------------------------------------------------------ */
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 /** 给老库补列：SQLite 没有 ADD COLUMN IF NOT EXISTS，先查表结构再决定。 */
 function addColumnIfMissing(table: string, column: string, decl: string): void {
@@ -273,6 +275,17 @@ function migrate(): void {
     // v5 → v6：番茄钟专注计时。只加 focus_sessions 表和它的时间索引，
     // 已有表一列都不动；老用户升级后历史为空，从第一次点「开始专注」开始记。
     database.exec(FOCUS_SCHEMA);
+  }
+  if (current < 7) {
+    // v6 → v7：GitHub Issues 单向同步。task 加两列（issue 唯一键 + issue 侧 updated_at，
+    // 用来判断这行到底变没变），github_sync_meta 记每个仓库的增量游标（since）。
+    addColumnIfMissing('task', 'github_issue_id', 'TEXT');
+    addColumnIfMissing('task', 'github_updated_at', 'TEXT');
+    // SQLite 的 ADD COLUMN 不能带 UNIQUE，改成「部分唯一索引」：老任务的 NULL 不参与唯一性。
+    database.exec(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_task_github_issue ON task(github_issue_id) WHERE github_issue_id IS NOT NULL'
+    );
+    database.exec(GITHUB_SCHEMA);
   }
   if (current < SCHEMA_VERSION) {
     database.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
@@ -2397,4 +2410,111 @@ export function closeDanglingFocusSessions(keepId: Id | null, endedAt: string): 
     endedAt,
     keepId
   );
+}
+/* ------------------------------------------------------------------ */
+/* GitHub Issues 同步（第七版）                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 把一批写操作放进同一个事务：多仓库里的「一个仓库」是原子单位。
+ * 同步引擎只负责决定边界，具体 BEGIN/COMMIT 在这里，避免上层碰 SQL。
+ */
+export function runInTransaction<T>(fn: () => T): T {
+  const database = requireDb();
+  database.exec('BEGIN');
+  try {
+    const out = fn();
+    database.exec('COMMIT');
+    return out;
+  } catch (err) {
+    try {
+      database.exec('ROLLBACK');
+    } catch {
+      /* 回滚失败就把原始错误抛出去 */
+    }
+    throw err;
+  }
+}
+
+export function githubRepoMeta(repo: string): GithubRepoMeta | null {
+  const row = one<{ repo: string; last_synced_at: string | null; last_error: string | null }>(
+    'select * from github_sync_meta where repo = ?',
+    repo
+  );
+  if (!row) return null;
+  return { repo: row.repo, lastSyncedAt: row.last_synced_at, lastError: row.last_error };
+}
+
+export function githubRepoMetaAll(): GithubRepoMeta[] {
+  return all<{ repo: string; last_synced_at: string | null; last_error: string | null }>(
+    'select * from github_sync_meta order by repo asc'
+  ).map((row) => ({ repo: row.repo, lastSyncedAt: row.last_synced_at, lastError: row.last_error }));
+}
+
+/** 只更新传进来的字段：`lastSyncedAt` 成功才推进，`lastError` 失败时记原因。 */
+export function saveGithubRepoMeta(
+  repo: string,
+  patch: { lastSyncedAt?: string | null; lastError?: string | null }
+): void {
+  run(
+    `insert into github_sync_meta(repo, last_synced_at, last_error) values(?, ?, ?)
+     on conflict(repo) do update set
+       last_synced_at = case when ? then excluded.last_synced_at else github_sync_meta.last_synced_at end,
+       last_error     = case when ? then excluded.last_error     else github_sync_meta.last_error     end`,
+    repo,
+    patch.lastSyncedAt ?? null,
+    patch.lastError ?? null,
+    patch.lastSyncedAt !== undefined ? 1 : 0,
+    patch.lastError !== undefined ? 1 : 0
+  );
+}
+
+/**
+ * 按 `github_issue_id` 去重落库：新增 / 更新 / 跳过三种结果。
+ * - 跳过：issue 的 updated_at 没变，或者本地已经删掉了这条（尊重用户删除，不复活）
+ * - 只覆盖 GitHub 侧字段（标题/正文/状态/优先级/截止/完成时间），不碰本地 sort_order 与提醒
+ */
+export function upsertGithubTask(issue: GithubIssue, repo: string): 'created' | 'updated' | 'skipped' {
+  const mapped = mapIssueToTask(issue, repo);
+  const existing = one<{
+    id: Id;
+    github_updated_at: string | null;
+    deleted_at: string | null;
+  }>('select id, github_updated_at, deleted_at from task where github_issue_id = ?', mapped.githubIssueId);
+  const now = nowIso();
+  if (!existing) {
+    run(
+      `insert into task(title, note, status, priority, due_at, remind_at, repeat_rule, goal_id, plan_id,
+                        completed_at, sort_order, created_at, updated_at, github_issue_id, github_updated_at)
+       values(?, ?, ?, ?, ?, null, 'none', null, null, ?, 0, ?, ?, ?, ?)`,
+      mapped.title,
+      mapped.note,
+      mapped.status,
+      mapped.priority,
+      mapped.dueAt,
+      mapped.completedAt,
+      now,
+      now,
+      mapped.githubIssueId,
+      mapped.githubUpdatedAt
+    );
+    return 'created';
+  }
+  if (existing.deleted_at) return 'skipped';
+  if (existing.github_updated_at === mapped.githubUpdatedAt) return 'skipped';
+  run(
+    `update task set title = ?, note = ?, status = ?, priority = ?, due_at = ?,
+                      completed_at = ?, github_updated_at = ?, updated_at = ?
+     where id = ?`,
+    mapped.title,
+    mapped.note,
+    mapped.status,
+    mapped.priority,
+    mapped.dueAt,
+    mapped.completedAt,
+    mapped.githubUpdatedAt,
+    now,
+    existing.id
+  );
+  return 'updated';
 }

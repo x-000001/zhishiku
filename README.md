@@ -2,7 +2,7 @@
 
 一个只在你电脑上运行的私人工作学习知识库：收集箱、知识库、任务待办、当前目标、下一阶段目标、学习计划、复习与复盘，加首页总览和数据备份——全部本地，不需要账号。除了设置页那个「检查更新」按钮，它不联网。
 
-- 当前版本 **0.9.2**；代码与安装包在 [GitHub: x-000001/zhishiku](https://github.com/x-000001/zhishiku)，最新版在 [Releases](https://github.com/x-000001/zhishiku/releases)
+- 当前版本 **0.10.0**；代码与安装包在 [GitHub: x-000001/zhishiku](https://github.com/x-000001/zhishiku)，最新版在 [Releases](https://github.com/x-000001/zhishiku/releases)
 - 装好以后能自己升级：设置页点「检查更新」→ 有新版本就点「下载并安装」，自动下载、校验、静默安装并重开新版（详见下面「怎么更新到新版本」）
 - 技术：Electron + React + TypeScript + SQLite（WAL）+ FTS5；笔记正文用轻量 `contenteditable` 富文本编辑器（不引重型编辑器依赖）
 - 数据：一个 SQLite 文件 + 一个附件文件夹 + 一个备份文件夹，都在 D 盘
@@ -37,7 +37,7 @@ C:\JwKB\portable\Jw知识库.exe
 
 ### 办法二：安装版（会让桌面出现正式图标、可从控制面板卸载）
 
-安装包：`C:\JwKB\setup\Jw知识库-安装包-0.9.2.exe`（约 107 MB）。
+安装包：`C:\JwKB\setup\Jw知识库-安装包-0.10.0.exe`（约 107 MB）。
 
 1. 双击 → 可能先被 Windows SmartScreen 拦一下，显示「Windows 已保护你的电脑」：
    因为安装包没买代码签名证书，显示「发布者未知」是正常的。点 **「更多信息」→「仍要运行」**。
@@ -159,7 +159,7 @@ npm run test:all       # 上面全部按顺序跑一遍
 
 - 单元测试和端到端测试的细节、最近一次结果：`tests\unit\`、`tests\e2e\last-result.txt`、`tests\e2e\last-kill-result.txt`
 - 端到端测试会给十几个关键界面截图，放在 `tests\e2e\shots\`
-- 现在这一版：单测 **344** 项（24 个文件）、e2e **293** 项、强杀 **6** 项全过；打完包再跑 `node .tools\check-packaged.mjs` 验交付目录里的 exe（**23** 项）
+- 现在这一版：单测 **381** 项（26 个文件）、e2e **305** 项、强杀 **6** 项全过；打完包再跑 `node .tools\check-packaged.mjs` 验交付目录里的 exe（**23** 项）
 - **接手/深入开发**：先读 [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) —— 含 Day-1 SOP、7 条 ADR（为什么这么设计）、代码导航地图、IPC 流式与番茄钟状态图、工程红线、加表/加通道/加页面 Recipe、发版 SOP 与技术债清单；文档里的路径行号可用 `node .tools\check-guide.cjs` 一键核对
 
 ### 打包
@@ -398,6 +398,22 @@ C:\JwKB\使用说明.txt
 
 **怎么验收这块**：见 [验收清单.md](验收清单.md) 里「0.9.1 修正」与「0.9.2 修正」两节；`tests/unit/icon-assets.test.ts`（12 条）会解开 ico 逐档验证，e2e 里 6 条 `0.9.2：…` 断言会把品牌区的计算样式与几何量出来（底板色、SVG 双环与极光点、单行文案 15px/500、**scrollWidth ≤ clientWidth 不被截断**、无字影、间距与留白、折叠居中）。
 
+### 第十版（GitHub 集成：把 Issues 单向同步成待办，2026-10-19）
+
+把仓库里 Open / Closed 的 Issue 拉下来变成本地任务——**单向**：本地勾完、改优先级、删掉都不会回写 GitHub，误操作不会污染仓库。网络照旧只在主进程（`net.fetch`），渲染层零网络。
+
+**连接方式**：GitHub 官方 **Device Flow**（「在浏览器输入 8 位码」那种授权），不用手填 Token；拿到的 token 用 `safeStorage` 加密（Windows 上就是 DPAPI）后进 `kb.db`，**同机同用户**才能解，设置页只显示打码的 `gho…3456`。401 会提示「授权已过期」并自动把你带回设置页；403 限流会告诉你要等几分钟；404 说明仓库名错或没权限。
+
+| 部分 | 做了什么 | 你实际会看到什么 |
+|---|---|---|
+| **授权** | Device Flow 两个通道（拿设备码 / 轮询换 Token），轮询带 **15 分钟**超时和主动取消；断开连接只清 Token，本地任务一条不动。 | 设置页多一张「GitHub」卡片：连接 → 弹窗显示 8 位码 → 浏览器确认 → 卡片变「已连接 @你的账号」 |
+| **增量同步** | `per_page=100` 逐页拉到空，`since` 用 ISO 8601 只拉更新过的；按 `github_issue_id` 去重 **upsert**（存在就更新，不存在才新增），连续点两次不会多出一堆重复任务。 | 任务页「⇅ 同步 GitHub」点一下，完成后 toast：「同步完成：成功 2 个仓库，失败 1 个，新增 3 条任务，过滤掉 1 个 PR」 |
+| **多仓库与容错** | 仓库列表一行一个 `owner/repo`，前端校验格式（必须含 `/`、不能有空格）；主进程 `for...of` 串行拉，某个仓库 500 / 断网只记一行错误、**继续下一个**，不会整轮崩；主进程还有同步锁，正在同步时再点直接拒绝「同步正在进行中，请稍候」。 | 三个仓库同步时按钮显示「正在同步 (1/3)：owner/repo · 已拉取 N 条」，期间按钮 disabled 防连点 |
+| **映射与过滤** | `state=closed` → 已完成；`labels` 里有 `bug` → 优先级「重要」；带 `pull_request` 的对象是 PR，**过滤掉**（GitHub Issues API 会把 PR 混进来）；正文以纯文本写进任务备注（`来自 GitHub：owner/repo #N`），不把 Markdown 当 HTML 渲染。 | 同步下来的任务标题就是 Issue 标题，备注里有仓库、编号和链接；PR 不会变成任务 |
+| **数据库** | `SCHEMA_VERSION` 6→**7**：`task` 表加 `github_issue_id` / `github_updated_at` 两列 + 唯一部分索引；新表 `github_sync_meta` 存每个仓库的同步游标与上次错误。 | 老库打开自动迁移，不用重装、不用手动导数据 |
+
+**怎么验收这块**：见 [验收清单.md](验收清单.md) 的「第十版」；单测 `github-client.test.ts` / `github-sync.test.ts` 用假 `GithubFetcher` 验 PR 过滤、分页、401、串行部分失败、upsert 去重；e2e 用 `JWKB_GITHUB_CLIENT_ID` + 本地 stub 服务器把整条链路跑一遍（同步中按钮 disabled、连续两次不重复、401 自动回设置页、解绑不动任务）。
+
 逐条验收证据见 [验收清单.md](验收清单.md)，开发过程见 [开发计划.md](开发计划.md)，每个版本的变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
@@ -442,5 +458,9 @@ C:\JwKB\使用说明.txt
 |---|---|
 | ![应用图标](docs/screenshots/16-app-icon.png) | ![折叠侧栏](docs/screenshots/17-sidebar-collapsed.png) |
 | ![品牌区](docs/screenshots/18-brand.png) | 侧栏左上角品牌区（0.9.2：24px 图标 + 单行「Jw 知识库」，不再被截断） |
+
+| GitHub 设置（授权状态 + Token 打码 + 仓库列表，0.10.0） |  |
+|---|---|
+| ![GitHub 设置](docs/screenshots/19-github.png) |  |
 
 截图对应的验收项、每条断言怎么跑的，见 [验收清单.md](验收清单.md)。

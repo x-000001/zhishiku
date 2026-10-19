@@ -173,7 +173,7 @@ describe('老库自动升级', () => {
     expect(columnNames('review_card')).toContain('lapses');
 
     const version = db.getRawDb().prepare('pragma user_version').get() as { user_version: number };
-    expect(Number(version.user_version)).toBe(6);
+    expect(Number(version.user_version)).toBe(7);
 
     // v5：标签管理只加了按标签反查的索引，表结构没动
     const tagIndexes = db
@@ -270,7 +270,7 @@ describe('老库自动升级', () => {
     expect(note.content_html).toContain('<strong>老内容</strong>');
     expect(note.sort_order).toBeGreaterThanOrEqual(1);
     const version = db.getRawDb().prepare('pragma user_version').get() as { user_version: number };
-    expect(Number(version.user_version)).toBe(6);
+    expect(Number(version.user_version)).toBe(7);
     expect(db.integrityCheck()).toBe('ok');
   });
 
@@ -291,7 +291,7 @@ describe('老库自动升级', () => {
     expect(db.listTasks({ view: 'all' }).find((t) => t.id === urgent)!.priority).toBe('urgent');
     expect(db.listTasks({ view: 'all' }).find((t) => t.id === normal)!.priority).toBe('normal');
     const version3 = db.getRawDb().prepare('pragma user_version').get() as { user_version: number };
-    expect(Number(version3.user_version)).toBe(6);
+    expect(Number(version3.user_version)).toBe(7);
 
     // 再开一次：已经转成文字的不会被 cast() 当 0 降成 normal
     db.closeDatabase();
@@ -319,7 +319,7 @@ describe('老库自动升级', () => {
     db.openDatabase(paths);
 
     const version = db.getRawDb().prepare('pragma user_version').get() as { user_version: number };
-    expect(Number(version.user_version)).toBe(6);
+    expect(Number(version.user_version)).toBe(7);
     const index = db
       .getRawDb()
       .prepare(`select name from sqlite_master where type = 'index' and name = 'idx_note_tag_tag'`)

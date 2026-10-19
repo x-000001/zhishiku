@@ -59,6 +59,7 @@ function aiReplyFor(messages) {
 /* 假安装包：内容固定，测试里断言「落盘大小 + SHA256 对得上」就用它算 */
 const stubInstaller = Buffer.alloc(384 * 1024, 0x5a);
 const stubInstallerSha = createHash('sha256').update(stubInstaller).digest('hex');
+const githubCalls = [];
 let stubPort = 0;
 const stubServer = http.createServer((req, res) => {
   const url = req.url || '';
@@ -129,6 +130,114 @@ const stubServer = http.createServer((req, res) => {
         index += 1;
       }, chunkDelay);
     });
+    return;
+  }
+  /* 第九版：GitHub 集成（Device Flow / Issues 分页 / PR 过滤 / 401 / 部分仓库失败）。 */
+  if (url.startsWith('/github/')) {
+    const send = (body, status = 200) => {
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+    };
+    if (req.method === 'POST' && url.startsWith('/github/oauth/login/device/code')) {
+      send({ device_code: 'e2e-device-code', user_code: 'E2E-1234', verification_uri: 'https://github.com/login/device', expires_in: 900, interval: 1 });
+      return;
+    }
+    if (req.method === 'POST' && url.startsWith('/github/oauth/login/oauth/access_token')) {
+      send({ access_token: 'gho_e2e_token_123456', token_type: 'bearer', scope: 'repo' });
+      return;
+    }
+    if (url.startsWith('/github/api/user')) {
+      send({ login: 'octo-e2e' });
+      return;
+    }
+    if (url.startsWith('/github/api/repos/')) {
+      githubCalls.push(url);
+      const page = Number((url.match(/[?&]page=(\d+)/) || [])[1] || '1');
+      const repo = url.replace('/github/api/repos/', '').split('/issues')[0];
+    if (repo === 'octo/many') {
+      const rows = page === 1
+        ? Array.from({ length: 100 }, (_, i) => ({
+            number: 1000 + i,
+            title: '批量 Issue ' + (1000 + i),
+            body: '分页自检用。',
+            state: 'open',
+            labels: [],
+            html_url: 'https://github.com/octo/many/issues/' + (1000 + i),
+            updated_at: '2026-10-15T08:00:00Z',
+            closed_at: null,
+            milestone: null
+          }))
+        : [];
+      setTimeout(() => send(rows), 120);
+      return;
+    }
+      const later = () => {
+        send([]);
+      };
+      if (repo === 'octo/expired') {
+        send({ message: 'Bad credentials' }, 401);
+        return;
+      }
+      if (repo === 'octo/boom') {
+        send({ message: 'stub 500' }, 500);
+        return;
+      }
+      const issues = {
+        'octo/demo': [
+          {
+            number: 11,
+            title: '登录页在窄窗口下错位',
+            body: '把窗口拉到 720 宽，登录卡片会压到边栏上。',
+            state: 'open',
+            labels: [{ name: 'bug' }],
+            html_url: 'https://github.com/octo/demo/issues/11',
+            updated_at: '2026-10-18T09:00:00Z',
+            closed_at: null,
+            milestone: null
+          },
+          {
+            number: 12,
+            title: '补一份 Markdown 导出说明',
+            body: '导出后的目录结构要写清楚。',
+            state: 'closed',
+            labels: [{ name: 'docs' }],
+            html_url: 'https://github.com/octo/demo/issues/12',
+            updated_at: '2026-10-17T08:00:00Z',
+            closed_at: '2026-10-17T10:00:00Z',
+            milestone: null
+          },
+          {
+            number: 13,
+            title: '这是一个 PR，不该变成待办',
+            body: 'pull_request 字段在这里。',
+            state: 'open',
+            labels: [],
+            html_url: 'https://github.com/octo/demo/pull/13',
+            updated_at: '2026-10-18T09:30:00Z',
+            closed_at: null,
+            milestone: null,
+            pull_request: { url: 'https://api.github.com/repos/octo/demo/pulls/13' }
+          }
+        ],
+        'octo/second': [
+          {
+            number: 21,
+            title: '第二个仓库的 Issue',
+            body: '这条来自另一个仓库。',
+            state: 'open',
+            labels: [{ name: 'enhancement' }],
+            html_url: 'https://github.com/octo/second/issues/21',
+            updated_at: '2026-10-16T09:00:00Z',
+            closed_at: null,
+            milestone: null
+          }
+        ]
+      }[repo] || [];
+      const rows = page === 1 ? issues : [];
+      setTimeout(() => send(rows), 200);
+      return;
+    }
+    send({ message: 'stub: unknown github route' }, 404);
     return;
   }
   if (url.startsWith('/download/')) {
@@ -214,7 +323,10 @@ const child = spawn(
       JWKB_UPDATE_DRYRUN: '1',
       JWKB_EXPORT_DIR: exportDir,
       // 番茄钟最短时长临时降到 2 秒：不设这个的话一轮 25 分钟，e2e 等不起
-      JWKB_FOCUS_MIN_SECONDS: '2'
+      JWKB_FOCUS_MIN_SECONDS: '2',
+      JWKB_GITHUB_CLIENT_ID: 'e2e-client-id',
+      JWKB_GITHUB_API_BASE: `http://127.0.0.1:${stubPort}/github/api`,
+      JWKB_GITHUB_OAUTH_BASE: `http://127.0.0.1:${stubPort}/github/oauth`
     },
     stdio: 'inherit'
   }
@@ -5674,6 +5786,201 @@ try {
     detail: exportedTexts.length > 0 ? '最小文件 ' + Math.min(...exportedTexts.map((item) => item.text.length)) + ' 字节' : '没有文件'
   });
 
+  // ---- 第九版：GitHub Issues 单向同步（Device Flow / PR 过滤 / 串行容错 / 分页 / 去重 / 401）----
+  const ghSetup = await cdp.eval(`(async () => {
+    const inv = (ch, p) => window.api.invoke(ch, p);
+    const bad = await inv('github:config:set', { repos: ['not a repo', 'octo/demo', 'octo/second'] });
+    const before = await inv('github:status');
+    let code = null;
+    let error = '';
+    try { code = await inv('github:request-code'); } catch (err) { error = (err && err.message) || String(err); }
+    const status = code ? await inv('github:poll-token') : before;
+    return { bad, before, code, error, status };
+  })()`);
+  results.push({
+    name: '0.10.0：仓库名格式校验（非法项被丢掉，owner/repo 原样保留）',
+    ok:
+      Array.isArray(ghSetup.status.repos) &&
+      ghSetup.status.repos.length === 2 &&
+      ghSetup.status.repos.includes('octo/demo') &&
+      ghSetup.status.repos.includes('octo/second'),
+    detail: 'repos=' + JSON.stringify(ghSetup.status && ghSetup.status.repos)
+  });
+  results.push({
+    name: '0.10.0：Device Flow 能拿到设备码（user_code + 轮询间隔）',
+    ok: !!ghSetup.code && String(ghSetup.code.userCode || '').length >= 4,
+    detail: 'userCode=' + (ghSetup.code && ghSetup.code.userCode) + ' error=' + ghSetup.error
+  });
+  results.push({
+    name: '0.10.0：授权成功后 Token 只在主进程（前端只有打码状态）',
+    ok: ghSetup.status.connected === true && !JSON.stringify(ghSetup.status).includes('gho_e2e_token_123456'),
+    detail: 'hint=' + ghSetup.status.tokenHint + ' encrypted=' + ghSetup.status.encrypted
+  });
+
+  /* 串行同步：串行 3 个仓库，中间一个 500 失败也不应拖垮整轮 */
+  const ghSync1 = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (ch, p) => window.api.invoke(ch, p);
+    await inv('github:config:set', { repos: ['octo/demo', 'octo/second', 'octo/boom'] });
+    location.hash = '/tasks';
+    await sleep(700);
+    const btn = document.querySelector('.github-sync-btn');
+    if (!btn) return { error: '没有同步按钮' };
+    btn.click();
+    await sleep(160);
+    const during = { disabled: btn.disabled === true, loading: btn.classList.contains('loading'), text: (document.body.innerText || '').includes('正在同步') };
+    for (let i = 0; i < 140; i += 1) {
+      await sleep(150);
+      if (!btn.classList.contains('loading')) break;
+    }
+    await sleep(800);
+    const toastText = ((Array.from(document.querySelectorAll('.toast-wrap .toast')).pop() || {}).innerText || '').replace(/\s+/g, ' ');
+    const tasks = await inv('task:list', { status: 'all' });
+    return {
+      during,
+      toastText,
+      tasks: (tasks || []).map((t) => ({ title: t.title, status: t.status, priority: t.priority })),
+      btnDisabledAfter: btn.disabled
+    };
+  })()`);
+  results.push({
+    name: '0.10.0：同步进行中按钮被禁用（防连点），并显示「正在同步 (1/3)」',
+    ok: ghSync1.during && ghSync1.during.disabled === true && ghSync1.during.text === true,
+    detail: 'disabled=' + (ghSync1.during && ghSync1.during.disabled) + ' 文案=' + (ghSync1.during && ghSync1.during.text)
+  });
+  results.push({
+    name: '0.10.0：三个仓库串行同步（一个 500 失败也不拖垮整轮）',
+    ok: !!ghSync1.toastText && ghSync1.toastText.includes('成功 2 个仓库') && ghSync1.toastText.includes('失败 1 个'),
+    detail: (ghSync1.toastText || '').slice(0, 120)
+  });
+  results.push({
+    name: '0.10.0：Issue → 待办映射（closed→已完成，bug→重要），PR 被过滤',
+    ok:
+      Array.isArray(ghSync1.tasks) &&
+      ghSync1.tasks.some((t) => t.title === '登录页在窄窗口下错位' && t.priority === 'important' && t.status === 'todo') &&
+      ghSync1.tasks.some((t) => t.title === '补一份 Markdown 导出说明' && t.status === 'done') &&
+      ghSync1.tasks.some((t) => t.title === '第二个仓库的 Issue') &&
+      !ghSync1.tasks.some((t) => t.title === '这是一个 PR，不该变成待办'),
+    detail: '任务 ' + (ghSync1.tasks || []).length + ' 条，PR 已过滤'
+  });
+  results.push({
+    name: '0.10.0：同步汇总 Toast（成功/失败/新增）',
+    ok: !!ghSync1.toastText && ghSync1.toastText.includes('新增 3 条任务') && ghSync1.toastText.includes('过滤掉 1 个 PR'),
+    detail: '按钮已恢复=' + ghSync1.btnDisabledAfter + ' toast=' + (ghSync1.toastText || '').slice(0, 80)
+  });
+
+  /* 去重：再点一次同步，不应该重复建任务 */
+  const ghSync2 = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (ch, p) => window.api.invoke(ch, p);
+    const before = (await inv('task:list', { status: 'all' })).length;
+    const btn = document.querySelector('.github-sync-btn');
+    btn.click();
+    for (let i = 0; i < 140; i += 1) {
+      await sleep(150);
+      if (!btn.classList.contains('loading')) break;
+    }
+    await sleep(800);
+    const after = (await inv('task:list', { status: 'all' })).length;
+    const toastText = ((Array.from(document.querySelectorAll('.toast-wrap .toast')).pop() || {}).innerText || '').replace(/\s+/g, ' ');
+    return { before, after, toastText };
+  })()`);
+  results.push({
+    name: '0.10.0：连续同步两次不会重复建任务（按 github_issue_id 去重）',
+    ok: ghSync2.before === ghSync2.after && ghSync2.toastText.includes('新增 0 条任务'),
+    detail: '第一次=' + ghSync2.before + ' 第二次=' + ghSync2.after + ' toast=' + (ghSync2.toastText || '').slice(0, 60)
+  });
+
+  /* 分页：octo/many 第一页正好 100 条，应该继续请求 page=2 */
+  const ghPage = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (ch, p) => window.api.invoke(ch, p);
+    await inv('github:config:set', { repos: ['octo/many'] });
+    location.hash = '/tasks';
+    await sleep(600);
+    const btn = document.querySelector('.github-sync-btn');
+    btn.click();
+    for (let i = 0; i < 160; i += 1) {
+      await sleep(150);
+      if (!btn.classList.contains('loading')) break;
+    }
+    await sleep(900);
+    const toastText = ((Array.from(document.querySelectorAll('.toast-wrap .toast')).pop() || {}).innerText || '').replace(/\s+/g, ' ');
+    return { toastText };
+  })()`);
+  results.push({
+    name: '0.10.0：分页真的翻了页（per_page=100，第一页满 100 条会继续请求 page=2）',
+    ok:
+      githubCalls.some((u) => u.includes('per_page=100')) &&
+      githubCalls.some((u) => u.includes('page=2')) &&
+      ghPage.toastText.includes('新增 100 条任务'),
+    detail: '请求 ' + githubCalls.length + ' 次，示例=' + (githubCalls[0] || '')
+  });
+
+  /* 401：授权过期 → 中文提示 + 自动回设置页 */
+  const ghAuth = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (ch, p) => window.api.invoke(ch, p);
+    await inv('github:config:set', { repos: ['octo/expired'] });
+    location.hash = '/tasks';
+    await sleep(700);
+    const btn = document.querySelector('.github-sync-btn');
+    if (btn) btn.click();
+    await sleep(1600);
+    const toastText = ((Array.from(document.querySelectorAll('.toast-wrap .toast')).pop() || {}).innerText || '').replace(/\s+/g, ' ');
+    return { hash: location.hash, toastText };
+  })()`);
+  results.push({
+    name: '0.10.0：401 会提示「授权已过期」并自动回设置页',
+    ok: ghAuth.hash.includes('/settings') && ghAuth.toastText.includes('授权已过期'),
+    detail: 'hash=' + ghAuth.hash + ' toast=' + (ghAuth.toastText || '').slice(0, 80)
+  });
+
+  /* 设置页：连接状态 / Token 打码 / 仓库列表（截图后再解绑） */
+  const ghSettings = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    location.hash = '/settings';
+    await sleep(900);
+    const card = document.querySelector('.github-card');
+    if (card) card.scrollIntoView({ block: 'center' });
+    await sleep(500);
+    return { cardText: card ? card.innerText.replace(/\s+/g, ' ') : '' };
+  })()`);
+  await sleep(300);
+  await cdp.shot('github-settings');
+  results.push({
+    name: '0.10.0：设置页显示授权状态（已连接 + Token 打码 + 仓库列表）',
+    ok:
+      ghSettings.cardText.includes('已连接') &&
+      ghSettings.cardText.includes('gho…3456') &&
+      ghSettings.cardText.includes('octo/expired') &&
+      !ghSettings.cardText.includes('gho_e2e_token_123456'),
+    detail: (ghSettings.cardText || '').slice(0, 120)
+  });
+
+  /* 解绑：只清 Token，本地任务一条不动 */
+  const ghLogout = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (ch, p) => window.api.invoke(ch, p);
+    const before = (await inv('task:list', {})).length;
+    const logoutBtn = document.querySelector('.github-logout-btn');
+    if (logoutBtn) logoutBtn.click();
+    await sleep(1300);
+    const status = await inv('github:status');
+    const after = (await inv('task:list', {})).length;
+    const card = document.querySelector('.github-card');
+    const text = card ? card.innerText.replace(/\s+/g, ' ') : '';
+    return { before, after, connected: status.connected, text };
+  })()`);
+  results.push({
+    name: '0.10.0：解绑 GitHub 只清 Token，本地任务一条不动',
+    ok: ghLogout.connected === false && ghLogout.before === ghLogout.after && ghLogout.text.includes('未连接'),
+    detail: '解绑前=' + ghLogout.before + ' 解绑后=' + ghLogout.after + ' connected=' + ghLogout.connected
+  });
+  await cdp.eval(`(async () => {
+    await window.api.invoke('github:config:set', { repos: [] });
+    return true;
+  })()`);
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {
