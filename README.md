@@ -4,9 +4,9 @@
 
 - 当前版本 **0.9.2**；代码与安装包在 [GitHub: x-000001/zhishiku](https://github.com/x-000001/zhishiku)，最新版在 [Releases](https://github.com/x-000001/zhishiku/releases)
 - 装好以后能自己升级：设置页点「检查更新」→ 有新版本就点「下载并安装」，自动下载、校验、静默安装并重开新版（详见下面「怎么更新到新版本」）
-- 技术：Electron + React + TypeScript + CodeMirror 6 + SQLite（WAL）+ FTS5
+- 技术：Electron + React + TypeScript + SQLite（WAL）+ FTS5；笔记正文用轻量 `contenteditable` 富文本编辑器（不引重型编辑器依赖）
 - 数据：一个 SQLite 文件 + 一个附件文件夹 + 一个备份文件夹，都在 D 盘
-- 需求原文：[PRD.md](PRD.md)　开发过程：[开发计划.md](开发计划.md)　验收清单：[验收清单.md](验收清单.md)　版本变更：[CHANGELOG.md](CHANGELOG.md)
+- 需求原文：[PRD.md](PRD.md)　开发过程：[开发计划.md](开发计划.md)　验收清单：[验收清单.md](验收清单.md)　版本变更：[CHANGELOG.md](CHANGELOG.md)　**接手开发先读：[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)（架构与开发者导航）**
 
 ## 〇、30 秒极速上手
 
@@ -160,6 +160,7 @@ npm run test:all       # 上面全部按顺序跑一遍
 - 单元测试和端到端测试的细节、最近一次结果：`tests\unit\`、`tests\e2e\last-result.txt`、`tests\e2e\last-kill-result.txt`
 - 端到端测试会给十几个关键界面截图，放在 `tests\e2e\shots\`
 - 现在这一版：单测 **344** 项（24 个文件）、e2e **293** 项、强杀 **6** 项全过；打完包再跑 `node .tools\check-packaged.mjs` 验交付目录里的 exe（**23** 项）
+- **接手/深入开发**：先读 [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) —— 含 Day-1 SOP、7 条 ADR（为什么这么设计）、代码导航地图、IPC 流式与番茄钟状态图、工程红线、加表/加通道/加页面 Recipe、发版 SOP 与技术债清单；文档里的路径行号可用 `node .tools\check-guide.cjs` 一键核对
 
 ### 打包
 
