@@ -350,7 +350,7 @@ stateDiagram-v2
 | e2e 结果快照 | `tests/e2e/last-result.txt` | 每次跑完覆盖，含逐条 PASS/FAIL 与 detail |
 | 强杀测试结果 | `tests/e2e/last-kill-result.txt` | 同上 |
 | 界面截图 | `tests/e2e/shots/*.png`（约 50 张） | 失败时先看对应页截图；`cdp.shot()` 在 `:293-306` |
-| 打包产物自检日志 | `.tools/pack-app-stderr.log`、`.tools/build.log` | `.tools/check-packaged.mjs:25` 打开写 |
+| 打包产物自检结果 | `.tools/last-packaged-result.txt`、`tests/e2e/last-result.txt` | `.tools/check-packaged.mjs` 每次运行覆盖写（临时 `.log` 不入库，`.gitignore` 已拦） |
 | 数据库完整性 | 设置页「数据库自检」（`src/main/db.ts:329`） | 返回非 `ok` 时日志 `[数据] 完整性检查未通过`（`src/main/index.ts:320-322`） |
 
 ### 7.2 常见坑逐个破
@@ -510,10 +510,11 @@ flowchart TD
 
 | 优先级 | 问题 | 证据 | 建议动作 |
 |---|---|---|---|
-| **P0** | `src/renderer/src/pages/Knowledge.tsx` 2331 行单组件：编辑器、AI、标签、分类树、版本抽屉、拖拽排序全在一个文件 | `Knowledge.tsx:42` 起；文件 85 KB | 先抽 hooks（`useNoteEditor` / `useAiActions` / `useTagActions`）+ 子组件，保持 DOM 与类名不变；每抽一步靠 e2e 293 条兜底 |
+| **P0** | `src/renderer/src/pages/Knowledge.tsx` 2331 行单组件：编辑器、AI、标签、分类树、版本抽屉、拖拽排序全在一个文件 | `Knowledge.tsx:42` 起；文件 85 KB | 先抽 hooks（`useNoteEditor` / `useAiActions` / `useTagActions`）+ 子组件，保持 DOM 与类名不变；每抽一步靠 e2e 305 条兜底 |
 | **P0** | `tests/e2e/cdp-check.mjs` 5711 行单脚本、顺序强耦合、跑一轮数分钟 | `:309` 的 `CHECK_SCRIPT` 巨串；`rec()` 追加式 | 拆成 `specs/*.mjs` + 共享 `harness.mjs`（Cdp/stub/rec/shot），主入口按顺序 import；断言之间禁止共享状态 |
 | **P1** | `src/renderer/src/styles.css` 5149 行，同一选择器多段重复（`.sidebar` 4 段、`.modal-backdrop` 3 段），靠特异性互相覆盖 | `styles.css:222/1874/2845/3225`、`:1003/2521/3544` | 按域拆文件（tokens/base/sidebar/modal/editor/ai/focus）+ `@layer` 固定优先级；拆之前先把最终生效值写成快照测试 |
 | **P1** | `src/main/db.ts` 2400 行巨型仓储，所有域混在一起 | 241 个 `export`（`db.ts:124-2387`） | 按域拆 `db/{notes,tasks,goals,review,focus}.ts`，`db/index.ts` 重导出；已有单测可作护栏 |
+| **P1** | GitHub 集成要用户自备 OAuth App 的 Client ID：`GITHUB_DEFAULT_CLIENT_ID` 默认空串（`src/shared/github.ts:19`），没配就报「还没配置 GitHub Client ID」 | `src/main/ipc/github.ts:59` `clientIdOf()`（env → setting → none） | 发行方注册一个公开 OAuth App 把 client id 内置（Device Flow 不需要 secret），或让用户自建 |
 | **P1** | 没有 CI：所有门槛只在本地跑 | 无 `.github/workflows/` | 加 Windows runner 跑 `typecheck + unit`；e2e 目前依赖图形环境，可先只跑单测 + build |
 | **P2** | 无 ErrorBoundary / 全局未捕获异常兜底 | §5.1，grep 0 命中 | 加 `ErrorBoundary` + `window.onerror/unhandledrejection` 上报到 toast + 写入 `.log`；主进程加 `process.on('uncaughtException')` 打日志后 `app.exit(1)` |
 | **P2** | `App.tsx` 用 prop drilling 传 `navigate/refreshCount` 到 9 个页面 | `App.tsx:335-343` | 页面数不再增长就先不动；要加「跨页编辑态」时引一个轻 Context |

@@ -406,6 +406,8 @@ C:\JwKB\使用说明.txt
 
 **连接方式**：GitHub 官方 **Device Flow**（「在浏览器输入 8 位码」那种授权），不用手填 Token；拿到的 token 用 `safeStorage` 加密（Windows 上就是 DPAPI）后进 `kb.db`，**同机同用户**才能解，设置页只显示打码的 `gho…3456`。401 会提示「授权已过期」并自动把你带回设置页；403 限流会告诉你要等几分钟；404 说明仓库名错或没权限。
 
+**首次使用要一个 Client ID**（GitHub 的规定）：到 `Settings → Developer settings → OAuth Apps → New OAuth App` 建一个（Homepage 随便填，Device Flow 用不到回调地址），把它的 **Client ID** 填进设置页「GitHub」卡片；也可以用环境变量 `JWKB_GITHUB_CLIENT_ID` 注入。Client ID 是公开标识，不是密钥。
+
 | 部分 | 做了什么 | 你实际会看到什么 |
 |---|---|---|
 | **授权** | Device Flow 两个通道（拿设备码 / 轮询换 Token），轮询带 **15 分钟**超时和主动取消；断开连接只清 Token，本地任务一条不动。 | 设置页多一张「GitHub」卡片：连接 → 弹窗显示 8 位码 → 浏览器确认 → 卡片变「已连接 @你的账号」 |
