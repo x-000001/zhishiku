@@ -438,7 +438,7 @@ try {
 
 ### 9.2 Recipe：加一个 IPC 通道
 
-1. 域文件里 `handle('域:动作', (payload) => …)`（参考 `src/main/ipc/notes.ts` / `ai.ts`）；payload 类型尽量放 `src/shared/types.ts`。
+1. 域文件里 `handle('域:动作', (payload) => …)`（参考 `src/main/ipc/notes.ts` / `src/main/ipc/ai.ts`）；payload 类型尽量放 `src/shared/types.ts`。
 2. 在 `src/main/ipc/index.ts:37-47` 注册（新域要新建 `registerX(handle)`）；错误直接 `throw new Error('中文原因')`，`wrap()` 会转成 `{ok:false}`。
 3. 渲染层：`src/renderer/src/api.ts:111` 的 `api` 对象里加一行 `xxx: (p) => call('域:动作', p)`。
 4. 如果是**主进程主动推送**的事件：`webContents.send('域:事件', payload)` + 把通道名加进 `src/preload/index.ts:3-11` 的 `ALLOWED_EVENTS` + 在 `api.ts` 加 `onXxx(listener)`（参考 `onAiStream` / `onGithubProgress`）。
@@ -511,9 +511,9 @@ flowchart TD
 | 优先级 | 问题 | 证据 | 建议动作 |
 |---|---|---|---|
 | **P0** | `src/renderer/src/pages/Knowledge.tsx` 2331 行单组件：编辑器、AI、标签、分类树、版本抽屉、拖拽排序全在一个文件 | `Knowledge.tsx:42` 起；文件 85 KB | 先抽 hooks（`useNoteEditor` / `useAiActions` / `useTagActions`）+ 子组件，保持 DOM 与类名不变；每抽一步靠 e2e 305 条兜底 |
-| **P0** | `tests/e2e/cdp-check.mjs` 5711 行单脚本、顺序强耦合、跑一轮数分钟 | `:309` 的 `CHECK_SCRIPT` 巨串；`rec()` 追加式 | 拆成 `specs/*.mjs` + 共享 `harness.mjs`（Cdp/stub/rec/shot），主入口按顺序 import；断言之间禁止共享状态 |
+| **P0** | `tests/e2e/cdp-check.mjs` 5711 行单脚本、顺序强耦合、跑一轮数分钟 | `:309` 的 `CHECK_SCRIPT` 巨串；`rec()` 追加式 | 拆成 `specs/*.mjs` + 共享的 e2e harness 模块（Cdp/stub/rec/shot），主入口按顺序 import；断言之间禁止共享状态 |
 | **P1** | `src/renderer/src/styles.css` 5149 行，同一选择器多段重复（`.sidebar` 4 段、`.modal-backdrop` 3 段），靠特异性互相覆盖 | `styles.css:222/1874/2845/3225`、`:1003/2521/3544` | 按域拆文件（tokens/base/sidebar/modal/editor/ai/focus）+ `@layer` 固定优先级；拆之前先把最终生效值写成快照测试 |
-| **P1** | `src/main/db.ts` 2400 行巨型仓储，所有域混在一起 | 241 个 `export`（`db.ts:124-2387`） | 按域拆 `db/{notes,tasks,goals,review,focus}.ts`，`db/index.ts` 重导出；已有单测可作护栏 |
+| **P1** | `src/main/db.ts` 2400 行巨型仓储，所有域混在一起 | 241 个 `export`（`db.ts:124-2387`） | 按域拆 `db/{notes,tasks,goals,review,focus}.ts`，各域 index.ts 重导出；已有单测可作护栏 |
 | **P1** | GitHub 集成要用户自备 OAuth App 的 Client ID：`GITHUB_DEFAULT_CLIENT_ID` 默认空串（`src/shared/github.ts:19`），没配就报「还没配置 GitHub Client ID」 | `src/main/ipc/github.ts:59` `clientIdOf()`（env → setting → none） | 发行方注册一个公开 OAuth App 把 client id 内置（Device Flow 不需要 secret），或让用户自建 |
 | **P1** | 没有 CI：所有门槛只在本地跑 | 无 `.github/workflows/` | 加 Windows runner 跑 `typecheck + unit`；e2e 目前依赖图形环境，可先只跑单测 + build |
 | **P2** | 无 ErrorBoundary / 全局未捕获异常兜底 | §5.1，grep 0 命中 | 加 `ErrorBoundary` + `window.onerror/unhandledrejection` 上报到 toast + 写入 `.log`；主进程加 `process.on('uncaughtException')` 打日志后 `app.exit(1)` |
@@ -550,7 +550,7 @@ flowchart TD
 | `src/shared/types.ts` | 538 | 跨进程 DTO |
 | `src/preload/index.ts` | 47 | 唯一桥接面 |
 
-源码总量：58 个 `.ts/.tsx` 文件、17,237 行；测试：单测 24 文件 4,605 行、e2e 2 文件 5,918 行。
+源码总量：58 个 TS/TSX 文件、17,237 行；测试：单测 24 文件 4,605 行、e2e 2 文件 5,918 行。
 
 ## 附录 B：IPC 通道按域（133 个）
 
