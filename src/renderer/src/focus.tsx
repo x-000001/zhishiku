@@ -92,6 +92,8 @@ export default function FocusDock(): ReactNode {
     view: FabView;
   } | null>(null);
   const suppressClick = useRef(false);
+  /* 拖动期间挂到 window / document 上的监听器，收尾函数存在这里：组件卸载时也能兜底摘干净 */
+  const dragDetachRef = useRef<(() => void) | null>(null);
   const [pos, setPos] = useState<FabPos>(() => parseFabPos(readStoredPosRaw(), FAB_FALLBACK_SIZE, currentView()));
   const [dragging, setDragging] = useState(false);
   // 窗口尺寸单独存一份：resize 时面板换边的判断要用新尺寸，不能读渲染时缓存的旧值
@@ -116,6 +118,14 @@ export default function FocusDock(): ReactNode {
     return () => window.removeEventListener('resize', refitPos);
     // 只挂一次；refitPos 里读的都是 ref / window，不依赖渲染期状态
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 拖动中组件被卸载（切页 / 关窗口 / 热更新）时 pointerup 永远不会来，
+  // 这里兜底把 window / document 上的监听器和 pointer capture 摘干净。
+  useEffect(() => {
+    return () => {
+      dragDetachRef.current?.();
+    };
   }, []);
 
   const onFabPointerDown = (event: ReactPointerEvent<HTMLButtonElement>): void => {
@@ -161,6 +171,7 @@ export default function FocusDock(): ReactNode {
       window.removeEventListener('pointercancel', onFinish);
       window.removeEventListener('blur', onAbort);
       document.removeEventListener('visibilitychange', onVisibility);
+      dragDetachRef.current = null;
       try {
         if (button.hasPointerCapture?.(event.pointerId)) button.releasePointerCapture(event.pointerId);
       } catch {
@@ -211,6 +222,7 @@ export default function FocusDock(): ReactNode {
     window.addEventListener('pointercancel', onFinish);
     window.addEventListener('blur', onAbort);
     document.addEventListener('visibilitychange', onVisibility);
+    dragDetachRef.current = detach;
   };
 
   // 拖动中即使组件因计时刷新而重渲染，也要接着显示拖到一半的位置，不能弹回旧坐标
