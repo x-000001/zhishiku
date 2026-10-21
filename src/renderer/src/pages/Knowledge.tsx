@@ -132,6 +132,8 @@ export default function Knowledge(props: {
 
   const draftTimer = useRef<number | null>(null);
   const wordTimer = useRef<number | null>(null);
+  /** 「已保存」闪标的定时器：连点保存时先清旧的，别让旧定时器把新状态提前关掉 */
+  const savedFlashTimer = useRef(0);
   /** touchBody 定义在 scheduleDraft 之前，用 ref 转一手避免顺序问题 */
   const scheduleDraftRef = useRef<(() => void) | null>(null);
   const stateRef = useRef({ title: '', html: '', id: null as Id | null });
@@ -357,7 +359,8 @@ export default function Knowledge(props: {
       );
       setSaveState('saved');
       setSavedFlash(true);
-      window.setTimeout(() => setSavedFlash(false), TIMING.savedFlash);
+      window.clearTimeout(savedFlashTimer.current);
+      savedFlashTimer.current = window.setTimeout(() => setSavedFlash(false), TIMING.savedFlash);
       setNote((prev) =>
         prev && res.note ? { ...res.note, tags: prev.tags, attachments: prev.attachments } : prev
       );
@@ -371,6 +374,13 @@ export default function Knowledge(props: {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadList, loadTags]);
+
+  // 「已保存」闪标的定时器归这个组件所有：切页 / 关笔记时清掉，别让旧定时器在卸载后还 setState。
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(savedFlashTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
