@@ -54,6 +54,7 @@ import type {
   TaskStatus
 } from '../shared/types';
 import { FOCUS_SCHEMA, GITHUB_SCHEMA, SCHEMA } from './schema';
+import { runCleanGithubBugMigration } from './migrations/cleanGithubBug';
 import type { RepoExtractMeta, RepoExtractStatus } from '../shared/github';
 
 let db: DatabaseSync | null = null;
@@ -319,6 +320,8 @@ export function openDatabase(p: DataPaths): void {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
   migrate();
+  // 数据清理（指令回显修复配套）：把 0.11.0 遗留的条目改判 ai_failed（自己兜 try/catch，不阻断启动）
+  runCleanGithubBugMigration(db);
   ensureDefaultCategories();
   purgeExpiredTrash();
 }

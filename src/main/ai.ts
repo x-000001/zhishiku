@@ -758,14 +758,42 @@ export interface RepoExtractDraft {
   scenes: string;
 }
 
-const REPO_EXTRACT_SYSTEM =
-  '你是资深开源项目研究员，负责把仓库 README 变成别人能快速判断“要不要用”的笔记。' +
-  '必须遵守：只根据 README 里写到的内容作答，严禁编造 README 中未提及的技术栈、性能数字或功能；' +
-  '拿不准就写“README 未提及”。输出必须是纯 Markdown，不要开场白、不要解释。';
+/** 提炼失败时统一的中文提示（调用方降级保存基础信息，卡片上给「重试提炼」）。 */
+export const REPO_EXTRACT_EMPTY_ERROR = 'AI 没有返回能看的提炼结果，可以稍后在卡片上点“重试提炼”';
 
-/** 拼 GitHub 项目提炼的对话消息。 */
+/**
+ * 指令回显的特征串：模型把 Prompt 模板/格式说明抄成正文时，这些「整句级」片段会原样出现。
+ * 只匹配整句、不匹配「回答用户」这类普通词，避免误伤合法的项目描述。
+ */
+export const REPO_EXTRACT_ECHO_MARKERS = [
+  '我们需要回答用户',
+  '严格按格式输出纯 Markdown',
+  '按以下 Markdown 格式输出',
+  '只写 README 里明确提到的能力',
+  '一句话：什么情况下值得用',
+  '3 到 5 条，每条不超过 30 字',
+  '不要输出“以下是”'
+];
+
+/** 模型是不是在复述指令（而不是在写提炼结果）。 */
+export function looksLikeInstructionEcho(text: string): boolean {
+  const value = String(text ?? '');
+  return REPO_EXTRACT_ECHO_MARKERS.some((marker) => value.includes(marker));
+}
+
+const REPO_EXTRACT_SYSTEM =
+  '你是一个 JSON 提取器。严禁输出任何 Markdown 代码块、严禁复述指令，直接输出纯 JSON 字符串。' +
+  '只根据 README 里写到的内容作答，严禁编造 README 中未提及的技术栈、性能数字或功能；拿不准就写“README 未提及”。';
+
+/** 按「字符」截断，不按 UTF-16 码元截（否则 emoji/生僻字会被切成半个乱码）。 */
+function truncateChars(text: string, max: number): string {
+  const chars = Array.from(String(text ?? ''));
+  return chars.length > max ? chars.slice(0, max).join('') : chars.join('');
+}
+
+/** 拼 GitHub 项目提炼的对话消息（要求直接输出 JSON，杜绝「抄模板」的空间）。 */
 export function buildRepoExtractMessages(info: GithubRepoInfo): AiMessage[] {
-  const readme = clampAiText(info.readme ?? '', 8000).trim();
+  const readme = truncateChars(info.readme ?? '', 8000).trim();
   const head = [
     `仓库：${info.repo}`,
     `简介：${info.description ?? '（README 里没有简介）'}`,
@@ -774,18 +802,17 @@ export function buildRepoExtractMessages(info: GithubRepoInfo): AiMessage[] {
     `Topics：${info.topics.length ? info.topics.join(', ') : '（无）'}`
   ].join('\n');
   const user = [
-    '请阅读下面这个 GitHub 仓库的 README，提炼成三段，严格按以下 Markdown 格式输出（不要加代码块围栏）：',
-    '### 项目总结',
-    '（不超过 100 字，一句话说清它是什么、解决什么问题）',
-    '### 核心亮点',
-    '- （3 到 5 条，每条不超过 30 字，只写 README 里明确提到的能力）',
-    '### 适用场景',
-    '（一句话：什么情况下值得用，什么情况下不建议用）',
+    '请阅读下面这个 GitHub 仓库的 README，只输出一个 JSON 对象（不要解释、不要开场白、不要代码块围栏）：',
+    '{',
+    '  "summary": "项目总结：一句话说清它是什么、解决什么问题，不超过 100 字",',
+    '  "highlights": ["核心亮点 1", "核心亮点 2", "核心亮点 3"],',
+    '  "scenes": "适用场景：一句话说清什么情况下值得用、什么情况下不建议用"',
+    '}',
     '',
     '硬性要求：',
-    '1. 严禁编造 README 中未提及的技术栈、数据或功能；',
-    '2. 项目总结不超过 100 字；核心亮点 3 到 5 条，每条不超过 30 字；',
-    '3. 不要在正文里重复仓库名，不要输出“以下是”之类的开场白。',
+    '1. 核心亮点 3 到 5 条，每条不超过 30 字，只写 README 里明确提到的能力；',
+    '2. 严禁编造 README 中未提及的技术栈、数据或功能；',
+    '3. summary / highlights / scenes 三个字段都要有且不为空；不要在值里重复仓库名，不要输出“以下是”之类的开场白。',
     '',
     '仓库信息：',
     head,
@@ -812,14 +839,70 @@ function cleanLine(line: string): string {
     .trim();
 }
 
+function pickString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
 /**
- * 解析模型返回的三段 Markdown。容错策略：
- * - 去掉 ``` 代码块围栏；
- * - 标题写法不固定（## / ### / **加粗** / “项目总结：”）都能认；
- * - 缺字段时用空串（调用方会降级保存），整段为空才抛错。
+ * 把三个字段裁到上限、去重，并做最后两道闸：
+ * 1) 指令回显（模型把 Prompt 模板抄成正文）→ 判失败，交给卡片上的「重试提炼」；
+ * 2) 三个字段全空 → 同样判失败，调用方降级保存基础信息。
+ */
+function finalizeDraft(input: RepoExtractDraft): RepoExtractDraft {
+  const draft: RepoExtractDraft = {
+    summary: clip(input.summary, REPO_SUMMARY_LIMIT),
+    highlights: Array.from(new Set(input.highlights.filter(Boolean)))
+      .slice(0, REPO_HIGHLIGHT_COUNT)
+      .map((item) => clip(item, REPO_HIGHLIGHT_LIMIT)),
+    scenes: clip(input.scenes, 200)
+  };
+  const joined = [draft.summary, ...draft.highlights, draft.scenes].join(' ');
+  if (looksLikeInstructionEcho(joined)) throw new Error(REPO_EXTRACT_EMPTY_ERROR);
+  if (!draft.summary && draft.highlights.length === 0 && !draft.scenes) {
+    throw new Error(REPO_EXTRACT_EMPTY_ERROR);
+  }
+  return draft;
+}
+
+/**
+ * 从模型返回里抠 JSON 主体：用 indexOf('{') / lastIndexOf('}') 精准截取，
+ * 兼容 ```json 围栏与「好的，结果如下：」这类废话前缀（绝不写巨型正则）。
+ * 只在「看起来像 JSON」时才走这条；坏 JSON 直接判失败，不再退化成 Markdown 垃圾。
+ */
+function parseJsonDraft(raw: string): RepoExtractDraft | null {
+  const start = raw.indexOf('{');
+  if (start < 0) return null;
+  const end = raw.lastIndexOf('}');
+  if (end <= start) throw new Error(REPO_EXTRACT_EMPTY_ERROR);
+  let data: unknown;
+  try {
+    data = JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    // 截断、尾逗号、半截字段都走这里：不把原生 SyntaxError 抛给用户
+    throw new Error(REPO_EXTRACT_EMPTY_ERROR);
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error(REPO_EXTRACT_EMPTY_ERROR);
+  }
+  const obj = data as Record<string, unknown>;
+  const highlightsRaw = obj.highlights ?? obj.亮点 ?? obj.核心亮点;
+  const highlights = Array.isArray(highlightsRaw) ? highlightsRaw.map((item) => pickString(item)) : [];
+  const summary = pickString(obj.summary ?? obj.项目总结 ?? obj.一句话总结);
+  const scenes = pickString(obj.scenes ?? obj.适用场景 ?? obj.使用场景);
+  return finalizeDraft({ summary, highlights, scenes });
+}
+
+/**
+ * 解析模型返回的提炼结果。兼容两种格式：
+ * - 首选 JSON（新 Prompt）：带围栏/前缀/字段别名都能吃下来；
+ * - 老的三段 Markdown（历史 Prompt、第三方兼容）：标题写法不固定也能认。
+ * 两种格式都会做「指令回显」检测，回显一律判失败（不能把模板当成品存进收集箱）。
  */
 export function parseRepoExtract(text: string): RepoExtractDraft {
   const raw = String(text ?? '').replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '');
+  if (!raw.trim()) throw new Error(REPO_EXTRACT_EMPTY_ERROR);
+  const fromJson = parseJsonDraft(raw);
+  if (fromJson) return fromJson;
   const lines = raw.split(/\r?\n/);
   let section: 'summary' | 'highlights' | 'scenes' | '' = '';
   const summary: string[] = [];
@@ -848,20 +931,9 @@ export function parseRepoExtract(text: string): RepoExtractDraft {
     }
     if (section === 'summary') summary.push(value);
     else if (section === 'scenes') scenes.push(value);
-    else if (/^[-•·]\s*/.test(line.trim()) || highlights.length < 1) highlights.push(value);
     else highlights.push(value);
   }
-  const draft: RepoExtractDraft = {
-    summary: clip(summary.join(' '), REPO_SUMMARY_LIMIT),
-    highlights: Array.from(new Set(highlights.filter(Boolean)))
-      .slice(0, REPO_HIGHLIGHT_COUNT)
-      .map((item) => clip(item, REPO_HIGHLIGHT_LIMIT)),
-    scenes: clip(scenes.join(' '), 200)
-  };
-  if (!draft.summary && draft.highlights.length === 0 && !draft.scenes) {
-    throw new Error('AI 没有返回能看的提炼结果，可以稍后在卡片上点“重试提炼”');
-  }
-  return draft;
+  return finalizeDraft({ summary: summary.join(' '), highlights, scenes: scenes.join(' ') });
 }
 
 /** 提炼请求用的最大 token（三段文字不短，留 900 足够）。 */
