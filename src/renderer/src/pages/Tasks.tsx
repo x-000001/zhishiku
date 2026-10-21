@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { TIMING } from '../timing';
-import { api, onGithubProgress } from '../api';
+import { api } from '../api';
 import { Empty, ConfirmDialog, toast } from '../ui';
 import { showContextMenu } from '../menu';
 import { PRIORITY_LABEL, PRIORITY_ORDER, REPEAT_LABEL, fmtDate, fmtDateTime, nextPriority, relative, todayLocal } from '../format';
 import { SaveButton, useManualSave } from '../save';
 import type { GoalSummary, Id, Task, TaskFilter, TaskPriority } from '../../../shared/types';import { toastError } from '../errors';
 import { DEFAULT_FOCUS_MINUTES } from '../../../shared/focus';
-import { formatSyncProgress, formatSyncSummary } from '../../../shared/github';
 
 const VIEWS: { key: NonNullable<TaskFilter['view']>; icon: string; label: string; hint: string }[] = [
   { key: 'today', icon: '☀️', label: '今天', hint: '今天到期，连同已经逾期的（完成的留在原地）' },
@@ -44,51 +43,6 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
   const [confirmBatch, setConfirmBatch] = useState(false);
   const addRef = useRef<HTMLInputElement>(null);
 
-  /* 第九版：GitHub Issues 同步。网络全在主进程，这里只发 IPC + 显示进度。 */
-  const [syncing, setSyncing] = useState(false);
-  const [syncText, setSyncText] = useState('');
-  useEffect(() => {
-    return onGithubProgress((p) => setSyncText(p.repoTotal ? formatSyncProgress(p) : ''));
-  }, []);
-  const syncGithub = async (): Promise<void> => {
-    if (syncing) return;
-    setSyncing(true);
-    setSyncText('正在同步…');
-    try {
-      const result = await api.githubSync();
-      if (result.authExpired) {
-        window.location.hash = '/settings';
-        toast('GitHub 授权已过期，请到设置页重新连接（本地任务不动）', {
-          ttl: 9000,
-          actionLabel: '去设置',
-          onAction: () => {
-            window.location.hash = '/settings';
-          }
-        });
-      } else {
-        toast(formatSyncSummary(result), { ttl: 7000 });
-      }
-      await load();
-    } catch (err) {
-      const message = (err as Error).message || '同步失败';
-      // 401：授权失效 → 提示回设置页重新连接（本地任务与数据都不动）
-      if (/401|授权已失效/.test(message)) {
-        window.location.hash = '/settings';
-        toast('GitHub 授权已过期，请到设置页重新连接', {
-          ttl: 9000,
-          actionLabel: '去设置',
-          onAction: () => {
-            window.location.hash = '/settings';
-          }
-        });
-      } else {
-        toastError('同步失败：', err);
-      }
-    } finally {
-      setSyncing(false);
-      setSyncText('');
-    }
-  };
 
   const load = useCallback(
     (which = view) => {
@@ -325,18 +279,8 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
               {tasks.length} 条 · {current.hint}
               {pickMode ? ` · 已选 ${picked.size} 条` : ''}
               {tasks.length >= 500 ? '（只显示前 500 条，用搜索缩小范围）' : ''}
-              {syncText ? ` · ${syncText}` : ''}
             </span>
             <span className="spacer" style={{ flex: 1 }} />
-            <button
-              type="button"
-              className={syncing ? 'btn sm loading github-sync-btn' : 'btn sm github-sync-btn'}
-              title="把配置的 GitHub 仓库里的 Issues 拉下来变成待办（单向，不回写）"
-              disabled={syncing}
-              onClick={() => void syncGithub()}
-            >
-              {syncing ? '同步中…' : '⇅ 同步 GitHub'}
-            </button>
             {pickMode ? (
               <>
                 <button

@@ -2,7 +2,7 @@
 
 一个只在你电脑上运行的私人工作学习知识库：收集箱、知识库、任务待办、当前目标、下一阶段目标、学习计划、复习与复盘，加首页总览和数据备份——全部本地，不需要账号。除了设置页那个「检查更新」按钮，它不联网。
 
-- 当前版本 **0.10.0**；代码与安装包在 [GitHub: x-000001/zhishiku](https://github.com/x-000001/zhishiku)，最新版在 [Releases](https://github.com/x-000001/zhishiku/releases)
+- 当前版本 **0.11.0**；代码与安装包在 [GitHub: x-000001/zhishiku](https://github.com/x-000001/zhishiku)，最新版在 [Releases](https://github.com/x-000001/zhishiku/releases)
 - 装好以后能自己升级：设置页点「检查更新」→ 有新版本就点「下载并安装」，自动下载、校验、静默安装并重开新版（详见下面「怎么更新到新版本」）
 - 技术：Electron + React + TypeScript + SQLite（WAL）+ FTS5；笔记正文用轻量 `contenteditable` 富文本编辑器（不引重型编辑器依赖）
 - 数据：一个 SQLite 文件 + 一个附件文件夹 + 一个备份文件夹，都在 D 盘
@@ -37,7 +37,7 @@ C:\JwKB\portable\Jw知识库.exe
 
 ### 办法二：安装版（会让桌面出现正式图标、可从控制面板卸载）
 
-安装包：`C:\JwKB\setup\Jw知识库-安装包-0.10.0.exe`（约 107 MB）。
+安装包：`C:\JwKB\setup\Jw知识库-安装包-0.11.0.exe`（约 107 MB）。
 
 1. 双击 → 可能先被 Windows SmartScreen 拦一下，显示「Windows 已保护你的电脑」：
    因为安装包没买代码签名证书，显示「发布者未知」是正常的。点 **「更多信息」→「仍要运行」**。
@@ -159,7 +159,7 @@ npm run test:all       # 上面全部按顺序跑一遍
 
 - 单元测试和端到端测试的细节、最近一次结果：`tests\unit\`、`tests\e2e\last-result.txt`、`tests\e2e\last-kill-result.txt`
 - 端到端测试会给十几个关键界面截图，放在 `tests\e2e\shots\`
-- 现在这一版：单测 **381** 项（26 个文件）、e2e **305** 项、强杀 **6** 项全过；打完包再跑 `node .tools\check-packaged.mjs` 验交付目录里的 exe（**23** 项）
+- 现在这一版：单测 **389** 项（27 个文件）、e2e **305** 项、强杀 **6** 项全过；打完包再跑 `node .tools\check-packaged.mjs` 验交付目录里的 exe（**23** 项）
 - **接手/深入开发**：先读 [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) —— 含 Day-1 SOP、7 条 ADR（为什么这么设计）、代码导航地图、IPC 流式与番茄钟状态图、工程红线、加表/加通道/加页面 Recipe、发版 SOP 与技术债清单；想先快速摸清「项目是什么 + 第一刀往哪切」，读 [TECH_REPORT.md](TECH_REPORT.md)（含架构拓扑与时序图、核心难点剖析、First PR 实操）。两份文档里的路径行号可用 `node .tools\check-doc.cjs DEVELOPER_GUIDE.md TECH_REPORT.md` 一键核对
 
 ### 打包
@@ -400,7 +400,9 @@ C:\JwKB\使用说明.txt
 
 **怎么验收这块**：见 [验收清单.md](验收清单.md) 里「0.9.1 修正」与「0.9.2 修正」两节；`tests/unit/icon-assets.test.ts`（12 条）会解开 ico 逐档验证，e2e 里 6 条 `0.9.2：…` 断言会把品牌区的计算样式与几何量出来（底板色、SVG 双环与极光点、单行文案 15px/500、**scrollWidth ≤ clientWidth 不被截断**、无字影、间距与留白、折叠居中）。
 
-### 第十版（GitHub 集成：把 Issues 单向同步成待办，2026-10-19）
+### 第十版（GitHub 集成：把 Issues 单向同步成待办 → 0.11.0 已移除，2026-10-19）
+
+> 这一版的「Issues 同步成待办」在 0.11.0 被重构掉了：收集箱里直接粘项目地址、AI 提炼知识点，见下面「第十一版」。老的 `github_sync_meta` 表按迁移规则留着（不删数据），但已不再读写。
 
 把仓库里 Open / Closed 的 Issue 拉下来变成本地任务——**单向**：本地勾完、改优先级、删掉都不会回写 GitHub，误操作不会污染仓库。网络照旧只在主进程（`net.fetch`），渲染层零网络。
 
@@ -416,7 +418,26 @@ C:\JwKB\使用说明.txt
 | **映射与过滤** | `state=closed` → 已完成；`labels` 里有 `bug` → 优先级「重要」；带 `pull_request` 的对象是 PR，**过滤掉**（GitHub Issues API 会把 PR 混进来）；正文以纯文本写进任务备注（`来自 GitHub：owner/repo #N`），不把 Markdown 当 HTML 渲染。 | 同步下来的任务标题就是 Issue 标题，备注里有仓库、编号和链接；PR 不会变成任务 |
 | **数据库** | `SCHEMA_VERSION` 6→**7**：`task` 表加 `github_issue_id` / `github_updated_at` 两列 + 唯一部分索引；新表 `github_sync_meta` 存每个仓库的同步游标与上次错误。 | 老库打开自动迁移，不用重装、不用手动导数据 |
 
-**怎么验收这块**：见 [验收清单.md](验收清单.md) 的「第十版」；单测 `github-client.test.ts` / `github-sync.test.ts` 用假 `GithubFetcher` 验 PR 过滤、分页、401、串行部分失败、upsert 去重；e2e 用 `JWKB_GITHUB_CLIENT_ID` + 本地 stub 服务器把整条链路跑一遍（同步中按钮 disabled、连续两次不重复、401 自动回设置页、解绑不动任务）。
+**怎么验收这块**：见 [验收清单.md](验收清单.md) 的「第十版」；单测 `github-client.test.ts` 用假 `GithubFetcher` 验 401/403 限流/404 与 README 截断（这一版起旧的 Issue 同步那份测试已删除）；e2e 用 `JWKB_GITHUB_CLIENT_ID` + 本地 stub 服务器把整条链路跑一遍（同步中按钮 disabled、连续两次不重复、401 自动回设置页、解绑不动任务）。
+
+
+### 第十一版（GitHub 项目搜集：收集箱 + AI 提炼，0.11.0）
+
+收集箱不再只是「记一条想法」：顶部多了「🐙 导入 GitHub 项目」——粘一个仓库地址，可以只存链接，也可以让 AI 读 README 提炼成结构化知识点，再一键变成知识库笔记。
+
+**为什么要改**：0.10.0 把仓库里的 Issue 同步成待办，实际用起来会把待办页撑爆，而且「看过的好项目」和「我要做的事」是两回事。0.11.0 把它换成「先收进收集箱 → 再决定要不要沉淀成笔记」。
+
+**地址清洗**：`parseRepoUrl()` 用严格正则从脏链接里抠出干净的 `owner/repo`——`https://github.com/octo/demo.git`、`.../tree/main`、`?tab=readme`、`#top`、裸 `octo/demo` 都能认；不是 GitHub 地址、带空格、只有 owner 的，弹窗里直接中文报错，不发请求。
+
+**AI 提炼**：主进程拉仓库信息 + README（截前 **8000** 字符），交给 AI 输出「项目总结（≤100 字）/ 核心亮点（3–5 条，每条≤30 字）/ 适用场景」；Prompt 里写死「严禁编造 README 中未提及的技术栈」，防止它自己脑补一堆没出现过的框架。提炼是**非流式**一次性返回（列表页不做逐字渲染）。
+
+**并发与降级**：主进程用 `RepoExtractLimiter` 限制同时最多 **2** 个提炼，超出的提示「同时最多提炼 2 个项目，请等待当前任务完成」；AI 失败不丢数据，先存基础信息并标记「AI 提炼失败」，卡片上给「↻ 重试提炼」。
+
+**去向是知识库**：条目的 `content` 是「YAML frontmatter + 引用块 Markdown」——`repo / stars / language` 在 YAML 里，正文是 💡 项目总结 / 🎯 核心亮点 / ⚠️ 适用场景。卡片上只显示徽章和正文（不显示 `---`）；点「📄 转为知识库笔记」把完整 YAML + Markdown 推进知识库，原来的标签、分类、搜索、复习卡全都能直接用。
+
+**数据库**：`SCHEMA_VERSION` 7→**8**，`inbox_item` 加 6 列（`github_repo / github_url / github_stars / github_language / extract_status / extract_meta`）；老表 `github_sync_meta` 保留兼容，不再读写。
+
+**怎么验收这块**：见 [验收清单.md](验收清单.md) 的「第十一版」；单测 `repo-url.test.ts`（脏地址清洗）、`repo-extract.test.ts`（YAML 组装、AI 乱输出的容错、并发锁、降级）、`github-client.test.ts`（401/403 限流/404、README 截断）；e2e 用本地 stub 仓库把「导入 → 提炼 → 卡片 → 转笔记」跑一遍，并断言 AI 失败时出现「重试提炼」。
 
 逐条验收证据见 [验收清单.md](验收清单.md)，开发过程见 [开发计划.md](开发计划.md)，每个版本的变更见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -463,8 +484,8 @@ C:\JwKB\使用说明.txt
 | ![应用图标](docs/screenshots/16-app-icon.png) | ![折叠侧栏](docs/screenshots/17-sidebar-collapsed.png) |
 | ![品牌区](docs/screenshots/18-brand.png) | 侧栏左上角品牌区（0.9.2：24px 图标 + 单行「Jw 知识库」，不再被截断） |
 
-| GitHub 设置（授权状态 + Token 打码 + 仓库列表，0.10.0） |  |
+| GitHub 项目导入（收集箱顶部「🐙 导入 GitHub 项目」弹窗：地址深度清洗 + AI 提炼，0.11.0） |  |
 |---|---|
-| ![GitHub 设置](docs/screenshots/19-github.png) |  |
+| ![GitHub 项目导入](docs/screenshots/19-github.png) |  |
 
 截图对应的验收项、每条断言怎么跑的，见 [验收清单.md](验收清单.md)。

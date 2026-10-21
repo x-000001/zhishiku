@@ -4,6 +4,39 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 `主.次.修订`。
 
+## [0.11.0] - 2026-10-19
+
+发布：__REL_LINK__（附件 JwKB-Setup-0.11.0.exe，__BYTES__ 字节）
+
+### 变更（重构）
+
+- **GitHub 集成的方向换了**：0.10.0 的「Issues 单向同步成待办」被移除，改成「收集箱里搜集优秀开源项目 + AI 提炼知识点」。收集箱顶部新增「🐙 导入 GitHub 项目」。
+- **旧同步代码一并清掉**：删除 `src/main/github-sync.ts` 与 `tests/unit/github-sync.test.ts`、`github:sync*` IPC 通道、任务页「同步 GitHub」按钮和侧边栏入口、db 里只有同步引擎在用的 `runInTransaction()`；`github_sync_meta` 表只留在迁移链里（建表、不读写），老库升级不丢历史数据。
+
+### 新增
+
+- 导入弹窗两个入口：**仅保存链接**（不联网、不花 AI 额度）/ **保存并 AI 提炼**；提炼中显示 loading，弹窗里就有中文校验。
+- 地址深度清洗 `parseRepoUrl()`：兼容 `.git`、`/tree/main`、`?tab=`、`#`、裸 `owner/repo`；不是 GitHub 地址直接中文报错，不发请求。
+- 主进程拉仓库信息与 README（前 8000 字符），AI 输出「项目总结 ≤100 字 / 核心亮点 3–5 条、每条 ≤30 字 / 适用场景」；Prompt 内写死「严禁编造 README 中未提及的技术栈」。
+- 收集箱条目渲染为徽章（repo / ⭐ star / 语言 / 状态）＋正文；不把 `---` 渲染出来。
+- 「📄 转为知识库笔记」：把完整 YAML frontmatter + Markdown 推进知识库，`note.content` 保留原文，标签/分类/搜索/复习卡直接可用。
+- AI 失败降级：先存基础信息并标 `extract_status = ai_failed`，卡片上给「↻ 重试提炼」。
+
+### 修复 / 加固
+
+- 并发锁：主进程 `RepoExtractLimiter` 限制同时最多 **2** 个提炼任务，超出直接中文提示「等待当前任务完成」，连点不会堆任务。
+- AI 提炼走**非流式**一次性返回，避免收集箱列表逐字重渲染卡顿。
+- 安全：导入的 Markdown 渲染前统一 `sanitizeHtml()`；所有 GitHub/AI 请求仍只在主进程 `net.fetch`，渲染层零网络；Token 仍 `safeStorage` 加密进 `meta`。
+
+### 数据层
+
+- `SCHEMA_VERSION` 7→**8**：`inbox_item` 加 `github_repo / github_url / github_stars / github_language / extract_status / extract_meta` 六列；`InboxKind` 增加一个 github 取值。老表 `github_sync_meta` 保留但不再读写（历史数据不删）。
+
+### 验证
+
+- typecheck 0 错；单测 **389** 项（27 个文件，新增 `repo-url.test.ts` / `repo-extract.test.ts`，重写 `github-client.test.ts`）；e2e **305/305**（新增 12 条 GitHub 项目搜集断言，原有 293 条原样全过）；强杀 **6/6**；打包自检 **23/23**。
+- 测试全程 mock（本地 stub 服务器 + 假 `GithubFetcher` / 假 AI），不连真 GitHub、不花 AI 额度。
+
 ## [0.10.0] - 2026-10-19
 
 发布：[GitHub Release v0.10.0](https://github.com/x-000001/zhishiku/releases/tag/v0.10.0)（附件 JwKB-Setup-0.10.0.exe，112,589,040 字节）

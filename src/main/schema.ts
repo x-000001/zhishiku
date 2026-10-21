@@ -259,8 +259,9 @@ CREATE INDEX IF NOT EXISTS idx_focus_started ON focus_sessions(started_at DESC);
 
 
 /**
- * 第七版（GitHub Issues 同步）：每个仓库的增量游标。
- * 只存「上次成功同步到哪一刻」和「上次失败原因」，不改任何已有表。
+ * 第七版留下的表：每个仓库的增量游标（last_synced_at / last_error）。
+ * 0.11.0 起「Issues 同步成待办」被换成「收集箱搜集项目 + AI 提炼」，这张表不再读写；
+ * 之所以不删，是为了老库升级时不动用户已有数据（迁移链里只建不写）。
  */
 export const GITHUB_SCHEMA = `
 CREATE TABLE IF NOT EXISTS github_sync_meta (

@@ -1,6 +1,6 @@
 # 技术分析报告（TECH_REPORT）
 
-> 基线：版本 **0.10.0**、schema **v7**、`src/` 63 个 TS/TSX 文件 17,289 行、单测 **381**（26 文件）、e2e **305**、强杀 **6**、打包自检 **23**。
+> 基线：版本 **0.11.0**、schema **v8**、`src/` 63 个 TS/TSX 文件 19,430 行、单测 **389**（27 文件）、e2e **305**、强杀 **6**、打包自检 **23**。
 > 这份报告里的每个 `path:line` 都可以用 `.tools/check-doc.cjs TECH_REPORT.md` 复核（会逐条检查文件存在 + 行号不越界 + Mermaid 图数量）。
 > 想看更细的操作手册（Day-1 SOP、发版 10 步）去 [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)；这份只回答三个问题：**它是什么、底层怎么转、我第一刀往哪切**。
 
@@ -20,7 +20,7 @@
 
 ### 1.1 一句话定位
 
-**一个本地优先（local-first）的 Windows 桌面「第二大脑」**：笔记 / 分类 / 标签、任务与计划、间隔复习、当前目标与里程碑、番茄钟、AI 润色与摘要、GitHub Issue 单向同步，全部数据落在本机一个 SQLite 文件里（`kb.db`），不登录、不上传、可整目录搬走。
+**一个本地优先（local-first）的 Windows 桌面「第二大脑」**：笔记 / 分类 / 标签、任务与计划、间隔复习、当前目标与里程碑、番茄钟、AI 润色与摘要、收集箱里的 GitHub 项目 AI 提炼，全部数据落在本机一个 SQLite 文件里（`kb.db`），不登录、不上传、可整目录搬走。
 
 它解决的痛点：把「记笔记 / 管任务 / 复习 / 专注」四件事拆成四个 App 的人，用同一个库把它们串起来（笔记 → 复习卡 → 任务 → 番茄钟 / 目标），并且**不牺牲数据主权**（`src/main/paths.ts:67` 的 `resolveDataRoot()` 允许把数据目录指到任意盘）。
 
@@ -45,7 +45,7 @@
 知识库笔记 --AI--> 摘要/标签/联想 --> 回写笔记或新建笔记
 任务 --定时提醒--> 系统通知（src/main/index.ts:277 checkDue）
 任务 --开始专注--> 番茄钟会话 focus_sessions --> 今日/本周统计
-GitHub Issue --单向同步--> 本地任务（github_issue_id 去重）
+GitHub 项目 --README + AI 提炼--> 收集箱条目（YAML+Markdown）--转笔记--> 知识库
 ```
 
 ### 1.3 核心技术栈（含「为什么」和「代价」）
@@ -59,7 +59,7 @@ GitHub Issue --单向同步--> 本地任务（github_issue_id 去重）
 | IPC | 手写 `ipcMain.handle` + `preload` 白名单桥（`src/preload/index.ts:3`） | 通道数量大（129 个），需要统一的 `{ok,data}|{ok,error}` 语义和事件白名单 | 每个新通道都要手动加：主进程注册 + 白名单 + `api.ts` 封装（3 处） |
 | 网络 | 全部在主进程，用 Electron `net.fetch`（AI / GitHub / 更新 / 附件协议） | 渲染层零网络是硬红线：Key/Token 不进渲染层，CSP 简单 | 流式响应要在主进程解析 SSE，再逐块 push 给渲染层（见 §2.4） |
 | 打包 | electron-builder 26 + NSIS（`electron-builder.yml`） | 免安装体验 + 单文件安装包；支持「检查更新 → 下载 → 静默安装」 | 无代码签名 → 首次运行 SmartScreen 提示；更新清单靠 GitHub Release |
-| 测试 | vitest 5（单测）+ CDP 驱动 Electron 的 e2e（`tests/e2e/cdp-check.mjs`） | 真跑应用、真截图、真点按钮，覆盖「软件渲染 + 真实 IPC + 真实 SQLite」 | 单脚本 6,017 行、顺序强耦合、跑一轮数分钟 |
+| 测试 | vitest 5（单测）+ CDP 驱动 Electron 的 e2e（`tests/e2e/cdp-check.mjs`） | 真跑应用、真截图、真点按钮，覆盖「软件渲染 + 真实 IPC + 真实 SQLite」 | 单脚本 6,140 行、顺序强耦合、跑一轮数分钟 |
 
 > 两个「看着像在用、其实没用」的东西（别被骗）：
 > - `package.json` 的 3 个 CodeMirror 依赖：`src/` 里 grep `codemirror|CodeMirror` **0 命中**（历史遗留，P2 技术债）。
@@ -87,7 +87,7 @@ GitHub Issue --单向同步--> 本地任务（github_issue_id 去重）
 
 | 职责 | 主进程 `src/main` | 预加载 `src/preload` | 渲染层 `src/renderer/src` |
 |---|---|---|---|
-| 数据库 | 全部（`db.ts` 2,519 行） | 不碰 | 不碰 |
+| 数据库 | 全部（`db.ts` 2,480 行） | 不碰 | 不碰 |
 | 网络 | 全部（`src/main/ai.ts` / `src/main/github.ts` / `src/main/update.ts`） | 不碰 | **0 处** `fetch/XHR/axios`（实测 grep = 0） |
 | 密钥 | `safeStorage` 加密后进 `meta` | 不碰 | 只拿 `hasKey` / 打码尾巴 |
 | 窗口/托盘/热键 | 全部 | 不碰 | 不碰 |
@@ -146,7 +146,7 @@ flowchart TB
 
 - **番茄钟**：`createFocus()`（`src/main/focus.ts:83`）是纯引擎（不 import electron），只存 `endAt`、全程一个 `setTimeout`、状态机 `idle / focus / paused / break`；副作用通过 `FocusDeps` 注入（`now / setTimer / clearTimer / notify / emit / persist / progress / flash`）。渲染层每秒只是拿 `endAt - now` 重算显示，**关面板、切页、最小化都不影响倒计时**；崩溃后 `restore()` 会用 `focus:state` 的持久化记录补记（残留的收 abandoned）。任务栏进度条 / 到点闪窗也在 ipc 层通过可选钩子注入（`src/main/ipc/focus.ts`），引擎本身保持可单测。
 - **AI 流式**：请求在主进程 `streamChat()`（`src/main/ai.ts:517`），三层超时 `AI_TIMEOUTS`（`src/main/ai.ts:22`）：等响应头 10s / 空闲 60s / 总 180s；用 `AbortController` + `requestId` 隔离并发；解析 SSE 逐块 `webContents.send('ai:stream', …)`，渲染层 `useAiRun()` 按 `requestId` 过滤后把增量拼进弹窗文本。取消走 `ai:cancel`；网络错误统一翻中文。
-- **SQLite 一致性**：`SCHEMA_VERSION`（`src/main/db.ts:158`）与 `migrate()`（`db.ts:220`）用 `PRAGMA user_version` 做**幂等顺序迁移**，每一步都 `addColumnIfMissing` 只加不删；批量写用 `runInTransaction()`（`db.ts:2422`，BEGIN/COMMIT/ROLLBACK），例如笔记排序、标签改名、GitHub 单仓库一轮 upsert；启动时 `integrityCheck()`（`db.ts:342`）跑 `PRAGMA integrity_check`，配合每日备份（`src/main/backup.ts`）与「强杀测试」（`tests/e2e/kill-test.mjs`）兜底。
+- **SQLite 一致性**：`SCHEMA_VERSION`（`src/main/db.ts:158`）与 `migrate()`（`db.ts:220`）用 `PRAGMA user_version` 做**幂等顺序迁移**，每一步都 `addColumnIfMissing` 只加不删；批量写用 `db.ts` 里内联的 `BEGIN`/`COMMIT`/`ROLLBACK`（如 `db.ts:764`、`db.ts:913`），例如笔记排序、标签改名、GitHub 仓库提炼结果落库；启动时 `integrityCheck()`（`db.ts:342`）跑 `PRAGMA integrity_check`，配合每日备份（`src/main/backup.ts`）与「强杀测试」（`tests/e2e/kill-test.mjs`）兜底。
 
 ### 2.5 核心交互时序：AI 润色流式（Mermaid）
 
@@ -208,7 +208,7 @@ stateDiagram-v2
 | 装依赖 | `npm ci`（首次可 `npm install`） | 需要 Node ≥ 22（本机实测 v24.19.0） |
 | 起开发 | `npm run dev` | electron-vite 热更新（渲染层 HMR） |
 | 类型检查 | `npm run typecheck` | `tsc --noEmit`，要求 0 错 |
-| 单测 | `npm run test:unit` | vitest，当前 **381** 项 / 26 文件，约 7 秒 |
+| 单测 | `npm run test:unit` | vitest，当前 **389** 项 / 27 文件，约 7 秒 |
 | 构建 + e2e | `npm run build` **然后** `npm run test:e2e` | **`test:e2e` 不会自动 build**，不 build 就跑旧 `out/`（经典坑） |
 | 强杀（断电）测试 | `npm run test:kill` | 6 项，验证 WAL + 草稿恢复 |
 | 全量门槛 | `npm run test:all` | typecheck → unit → build → e2e → kill |
@@ -244,8 +244,8 @@ e2e 自带隔离：脚本会创建 `.e2e-data/` 并通过 `JWKB_DATA_DIR` 传给
 | 笔记编辑器工具栏按钮 | `src/renderer/src/pages/Knowledge.tsx` | 工具栏 JSX（`Knowledge.tsx` 中 `.rt-toolbar`）；命令封装在 `rich.ts` |
 | AI 提示词 / 模型参数 | `src/main/ai.ts` | `SYSTEM_PROMPT`、`buildMessages`、`AI_TIMEOUTS`（`src/main/ai.ts:22`） |
 | AI 设置卡片 / 错误文案 | `src/renderer/src/pages/Settings.tsx` + `src/shared/ai.ts` | `classifyAiConfigError`（`src/shared/ai.ts`） |
-| GitHub 同步映射 | `src/main/github.ts` | `mapIssueToTask`、`fetchRepoIssues`（`src/main/github.ts:548`） |
-| GitHub 同步流程 | `src/main/github-sync.ts` + `src/main/ipc/github.ts` | `syncGithubIssues`（`github-sync.ts:40`）、`registerGithub`（`src/main/ipc/github.ts:245`） |
+| GitHub 项目拉取 / 地址清洗 | `src/main/github.ts` + `src/shared/github.ts` | `fetchRepoInfo`（README 截 8000 字）、`parseRepoUrl` |
+| GitHub 项目 AI 提炼 | `src/main/repo-extract.ts` + `src/main/ipc/github.ts` | `extractRepoNote`、`RepoExtractLimiter`（并发 ≤2）、`github:import` |
 | 番茄钟逻辑 | `src/main/focus.ts` + `src/renderer/src/focus.tsx` | `createFocus`（`src/main/focus.ts:83`）、悬浮球定位纯函数 `src/renderer/src/fabPos.ts:77` |
 | 加 IPC 通道 | 三处同名 | `src/main/ipc/<域>.ts` 注册 → `src/preload/index.ts:3` 白名单（仅事件）→ `src/renderer/src/api.ts` 封装 |
 | 加数据表 / 迁移 | `src/main/schema.ts` + `src/main/db.ts` | 表定义走 `SCHEMA`；版本与迁移见 `db.ts:158` / `db.ts:220` |
@@ -254,7 +254,7 @@ e2e 自带隔离：脚本会创建 `.e2e-data/` 并通过 `JWKB_DATA_DIR` 传给
 
 ### 3.4 First PR（低风险、可验证、30 分钟内完成）
 
-**任务**：在设置页「软件更新」卡片里加一个 **「复制版本信息」** 按钮，一键复制 `Jw知识库 0.10.0 · Electron 44.8.0 · Node 24.22.0`（报 bug 时给维护者用）。
+**任务**：在设置页「软件更新」卡片里加一个 **「复制版本信息」** 按钮，一键复制 `Jw知识库 0.11.0 · Electron 44.8.0 · Node 24.19.0`（报 bug 时给维护者用）。
 
 为什么安全：不碰数据库 / 不碰网络 / 不碰 IPC 契约（`system:copy-text` 已存在，`api.copyText` 在 `src/renderer/src/api.ts:323`），版本信息在页面挂载时已经通过 `api.appInfo()` 拿好了（`src/renderer/src/pages/Settings.tsx:64`），只是多一个按钮和一次剪贴板写入。
 
@@ -289,7 +289,7 @@ npm run build            # e2e 前必须 build
 npm run test:e2e         # 期望仍是 305/305（这条改动不新增断言）
 ```
 
-再手动看三件事：① 设置页「软件更新」卡片里出现按钮；② 点它弹 Toast「版本信息已复制」；③ 随便粘到记事本里，版本号与设置页「数据位置」卡片底部那行一致（`0.10.0 · Electron 44.8.0 · Node 24.22.0`）。
+再手动看三件事：① 设置页「软件更新」卡片里出现按钮；② 点它弹 Toast「版本信息已复制」；③ 随便粘到记事本里，版本号与设置页「数据位置」卡片底部那行一致（`0.11.0 · Electron 44.8.0 · Node 24.19.0`）。
 
 可选加分（第二个 PR）：给按钮加 `title="复制版本号与运行环境，报 bug 时贴给维护者"`，并在 `tests/e2e/cdp-check.mjs` 里补一条断言（用 `cdp.eval` 读剪贴板不可靠，改成断言按钮存在 + `.click()` 后出现 toast 文案）。
 
@@ -306,7 +306,7 @@ npm run test:e2e         # 期望仍是 305/305（这条改动不新增断言）
 | 数据库完整性检查 | `src/main/db.ts:342` `integrityCheck()` | 设置页「数据库自检」、启动时 | 只报错不自修 |
 | 每日/手动备份 + 恢复 | `src/main/backup.ts`、设置页「备份与恢复」 | 数据库文件级快照 | 恢复需要重启应用 |
 | 草稿自动保存 | `note:draft`（`Knowledge.tsx:136` 触发） | 断电/强杀后能找回未保存正文 | 只覆盖笔记正文 |
-| 事务回滚 | `src/main/db.ts:2422` `runInTransaction()` | 批量写要么全成要么全退 | 只在显式使用的事务里 |
+| 事务回滚 | `src/main/db.ts:764` 等内联 `BEGIN`/`COMMIT` | 批量写要么全成要么全退 | 只在显式开事务的地方 |
 | 强杀测试 | `tests/e2e/kill-test.mjs:5` | 回归「写一半断电」 | 只覆盖极少数路径 |
 | **渲染层全局兜底** | **不存在** | — | 没有 ErrorBoundary、没有 `window.onerror`、没有 `unhandledrejection`（grep 0 命中）：某个组件渲染抛错 = 白屏且无处上报（P2 技术债） |
 | **主进程未捕获异常** | **不存在** `process.on('uncaughtException')` | — | 未捕获异常默认让 Electron 弹错误对话框并退出 |
@@ -341,9 +341,9 @@ npm run test:e2e         # 期望仍是 305/305（这条改动不新增断言）
 
 | 优先级 | 问题 | 证据 | 建议 |
 |---|---|---|---|
-| **P0** | `Knowledge.tsx` 2,330 行单组件：编辑器 + AI + 标签 + 分类树 + 版本抽屉 + 拖拽全在一个文件 | `src/renderer/src/pages/Knowledge.tsx:42` 起 | 先抽 hooks（`useNoteEditor` / `useAiActions` / `useTagActions`）再抽子组件，**保持 DOM/类名不变**，每步用 e2e 305 条兜底 |
-| **P0** | e2e 是 6,017 行单脚本、顺序强耦合、跑一轮数分钟 | `tests/e2e/cdp-check.mjs:421` | 拆成 specs/*.mjs + 共享的 e2e harness 模块（Cdp/stub/rec/shot），断言之间禁止共享状态 |
-| **P1** | `db.ts` 2,519 行巨型仓储（122 个 export，所有域混在一起） | `src/main/db.ts` 全文件 | 按域拆 db/{notes,tasks,goals,review,focus,github}.ts + 各域 index.ts 重导出；现有单测可当护栏 |
+| **P0** | `Knowledge.tsx` 2,285 行单组件：编辑器 + AI + 标签 + 分类树 + 版本抽屉 + 拖拽全在一个文件 | `src/renderer/src/pages/Knowledge.tsx:42` 起 | 先抽 hooks（`useNoteEditor` / `useAiActions` / `useTagActions`）再抽子组件，**保持 DOM/类名不变**，每步用 e2e 305 条兜底 |
+| **P0** | e2e 是 6,140 行单脚本、顺序强耦合、跑一轮数分钟 | `tests/e2e/cdp-check.mjs:421` | 拆成 specs/*.mjs + 共享的 e2e harness 模块（Cdp/stub/rec/shot），断言之间禁止共享状态 |
+| **P1** | `db.ts` 2,480 行巨型仓储（120 个 export，所有域混在一起） | `src/main/db.ts` 全文件 | 按域拆 db/{notes,tasks,goals,review,focus,github}.ts + 各域 index.ts 重导出；现有单测可当护栏 |
 | **P1** | `styles.css` 5,148 行，同一选择器多段重复、靠特异性互相覆盖，且有**两个** `:root` | `styles.css:6` 与 `styles.css:4259` | 按域拆文件 + `@layer`；拆前先把最终生效值写成快照测试 |
 | **P1** | 没有 CI：typecheck/单测/e2e 全靠本地自觉 | 无 `.github/workflows/` | 加 Windows runner：`typecheck + test:unit + build`；e2e 依赖图形环境，可先只跑单测 |
 | **P2** | 渲染层无 ErrorBoundary / 全局异常兜底 | grep `ErrorBoundary|window.onerror|unhandledrejection` = 0 | 加 ErrorBoundary + 上报 toast + 写日志；主进程补 `uncaughtException` |
@@ -368,26 +368,26 @@ npm run test:e2e         # 期望仍是 305/305（这条改动不新增断言）
 
 1. 加 CI（只跑 typecheck + unit + build）——零业务风险，收益立刻有。
 2. 拆 `Knowledge.tsx` 的 hooks——e2e 305 条是安全网，先抽逻辑再抽视图。
-3. 拆 db.ts 按域 + 各域 index.ts 重导出——单测 381 条兜底。
+3. 拆 db.ts 按域 + 各域 index.ts 重导出——单测 389 条兜底。
 4. 拆 `styles.css`（先快照最终生效值，再按层拆）。
 5. 拆 e2e 成 specs（最后做，因为它是前面所有步骤的裁判）。
 
 ---
 
-## 附录 A：文件规模 Top 10（`Get-Content | Measure-Object -Line` 实测）
+## 附录 A：文件规模 Top 10（`(Get-Content <文件>).Count` 实测，含空行）
 
 | 文件 | 行数 |
 |---|---|
-| `tests/e2e/cdp-check.mjs` | 6,017 |
+| `tests/e2e/cdp-check.mjs` | 6,140 |
 | `src/renderer/src/styles.css` | 5,148 |
-| `src/main/db.ts` | 2,519 |
-| `src/renderer/src/pages/Knowledge.tsx` | 2,331 |
+| `src/main/db.ts` | 2,480 |
+| `src/renderer/src/pages/Knowledge.tsx` | 2,285 |
+| `src/main/ai.ts` | 863 |
 | `src/renderer/src/pages/Settings.tsx` | 788 |
-| `src/renderer/src/ai.tsx` | 789 |
-| `src/renderer/src/pages/Tasks.tsx` | 746 |
-| `src/main/ai.ts` | 741 |
-| `src/main/github.ts` | 653 |
-| `src/shared/types.ts` | 537 |
+| `src/renderer/src/ai.tsx` | 767 |
+| `src/renderer/src/pages/Inbox.tsx` | 734 |
+| `src/renderer/src/pages/Tasks.tsx` | 679 |
+| `src/shared/types.ts` | 548 |
 
 ## 附录 B：自检方式
 

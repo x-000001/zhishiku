@@ -1,3 +1,5 @@
+import type { RepoExtractStatus } from './github';
+
 /** 主进程与渲染进程共用的数据类型。字段命名与 SQLite 表列一一对应。 */
 
 export type Id = number;
@@ -91,7 +93,7 @@ export interface Attachment {
   created_at: string;
 }
 
-export type InboxKind = 'idea' | 'read' | 'organize';
+export type InboxKind = 'idea' | 'read' | 'organize' | 'github';
 export type InboxStatus = 'open' | 'processed' | 'discarded';
 
 export interface InboxItem {
@@ -102,6 +104,15 @@ export interface InboxItem {
   converted_to: string | null;
   created_at: string;
   updated_at: string;
+  /** GitHub 项目条目的元信息（v8 起；普通收集项都是 null）。 */
+  github_repo?: string | null;
+  github_url?: string | null;
+  github_stars?: number | null;
+  github_language?: string | null;
+  /** AI 提炼状态：pending / done / ai_failed / link_only。 */
+  extract_status?: RepoExtractStatus | null;
+  /** 提炼结果的 JSON 字符串（RepoExtractMeta）。 */
+  extract_meta?: string | null;
 }
 
 export type TaskStatus = 'todo' | 'done';

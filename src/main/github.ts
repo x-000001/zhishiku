@@ -9,21 +9,19 @@
  */
 import {
   GITHUB_API_VERSION,
+  GITHUB_AUTH_ERRORS,
   GITHUB_DEFAULT_CLIENT_ID,
   GITHUB_DEFAULT_OAUTH_BASE,
   GITHUB_DEFAULT_SCOPE,
+  GITHUB_README_LIMIT,
   GITHUB_REQUEST_TIMEOUT_MS,
-  GITHUB_SYNC_PAGE_SIZE,
   GITHUB_USER_AGENT,
-  GITHUB_AUTH_ERRORS,
-  githubIssueKey,
-  isValidRepoName,
-  normalizeRepoName,
+  parseRepoUrl,
   splitRepo,
   type GithubDeviceCode,
-  type GithubErrorKind
+  type GithubErrorKind,
+  type GithubRepoInfo
 } from '../shared/github';
-import type { TaskPriority, TaskStatus } from '../shared/types';
 
 // ---------------------------------------------------------------- 错误
 
@@ -144,9 +142,7 @@ function rateLimitMessage(res: GithubResponse, bodyText: string): string | null 
   const retryAfter = res.headers.get('retry-after');
   const reset = res.headers.get('x-ratelimit-reset');
   const isRate =
-    remaining === '0' ||
-    Boolean(retryAfter) ||
-    /rate limit|secondary rate/i.test(bodyText);
+    remaining === '0' || Boolean(retryAfter) || /rate limit|secondary rate/i.test(bodyText);
   if (!isRate) return null;
   if (retryAfter && /^\d+$/.test(retryAfter.trim())) {
     const mins = Math.max(1, Math.ceil(Number(retryAfter.trim()) / 60));
@@ -157,16 +153,51 @@ function rateLimitMessage(res: GithubResponse, bodyText: string): string | null 
     const mins = Math.max(1, Math.ceil((when.getTime() - Date.now()) / 60000));
     return `GitHub 说请求太频繁了（这个 Token 的额度用完了），约 ${mins} 分钟后再试`;
   }
-  return 'GitHub 说请求太频繁了（API 限流），请过一会儿再同步';
+  return 'GitHub 说请求太频繁了（API 限流），请过一会儿再试';
 }
 
-// ---------------------------------------------------------------- 基础请求
+/** 把 HTTP 状态码翻译成带 kind 的中文错误（401/403/404/429/5xx）。 */
+function httpError(status: number, bodyText: string, res: GithubResponse, subject: string): GithubError {
+  if (status === 401) {
+    return new GithubError('unauthorized', 'GitHub 授权已失效（HTTP 401），请到设置页重新连接 GitHub', 401);
+  }
+  if (status === 403) {
+    const rate = rateLimitMessage(res, bodyText);
+    if (rate) return new GithubError('rate_limited', rate, 403);
+    return new GithubError(
+      'forbidden',
+      `这个 Token 没有权限访问${subject}（HTTP 403）。确认地址对不对、Token 有没有 repo 权限`,
+      403
+    );
+  }
+  if (status === 404 || status === 410) {
+    return new GithubError(
+      'not_found',
+      `${subject}不存在，或者当前 Token 没有访问权限（HTTP 404）`,
+      status
+    );
+  }
+  if (status === 429) {
+    return new GithubError('rate_limited', 'GitHub 说请求太频繁了（HTTP 429），请过一会儿再试', 429);
+  }
+  return new GithubError(
+    'bad_response',
+    `GitHub 请求失败（HTTP ${status}）：${trimBody(bodyText) || '没有返回内容'}`,
+    status
+  );
+}
 
-async function requestJson(
+interface RawResponse {
+  text: string;
+  headers: GithubResponse['headers'];
+}
+
+/** 发一次带鉴权的 GET/POST，返回原始文本（不做 JSON 解析）。 */
+async function requestRaw(
   client: GithubClient,
   path: string,
   options: { method?: 'GET' | 'POST'; body?: string; accept?: string; timeoutMs?: number } = {}
-): Promise<unknown> {
+): Promise<RawResponse> {
   const timeoutMs = options.timeoutMs ?? client.timeoutMs ?? GITHUB_REQUEST_TIMEOUT_MS;
   const box = linkSignal(client.signal, timeoutMs);
   const headers = authHeaders(client.token);
@@ -191,47 +222,23 @@ async function requestJson(
   } finally {
     box.cleanup();
   }
+  const bodyText = await res.text().catch(() => '');
+  if (res.status === 401 || res.status === 403 || res.status === 404 || res.status === 410 || res.status === 429) {
+    throw httpError(res.status, bodyText, res, '这个仓库');
+  }
+  if (!res.ok) throw httpError(res.status, bodyText, res, '这个仓库');
+  return { text: bodyText, headers: res.headers };
+}
 
-  let bodyText = '';
+async function requestJson(
+  client: GithubClient,
+  path: string,
+  options: { method?: 'GET' | 'POST'; body?: string; accept?: string; timeoutMs?: number } = {}
+): Promise<unknown> {
+  const { text } = await requestRaw(client, path, options);
+  if (!text.trim()) return null;
   try {
-    bodyText = await res.text();
-  } catch {
-    bodyText = '';
-  }
-
-  if (res.status === 401) {
-    throw new GithubError('unauthorized', 'GitHub 授权已失效（HTTP 401），请到设置页重新连接 GitHub', 401);
-  }
-  if (res.status === 403) {
-    const rate = rateLimitMessage(res, bodyText);
-    if (rate) throw new GithubError('rate_limited', rate, 403);
-    throw new GithubError(
-      'forbidden',
-      `这个 Token 没有权限访问它（HTTP 403）。确认仓库名对不对、Token 有没有 repo 权限`,
-      403
-    );
-  }
-  if (res.status === 404 || res.status === 410) {
-    throw new GithubError(
-      'not_found',
-      '仓库或 Issue 不存在，或者当前 Token 没有访问权限（HTTP 404）',
-      res.status
-    );
-  }
-  if (res.status === 429) {
-    throw new GithubError('rate_limited', 'GitHub 说请求太频繁了（HTTP 429），请过一会儿再同步', 429);
-  }
-  if (!res.ok) {
-    throw new GithubError(
-      res.status >= 500 ? 'bad_response' : 'bad_response',
-      `GitHub 请求失败（HTTP ${res.status}）：${trimBody(bodyText) || '没有返回内容'}`,
-      res.status
-    );
-  }
-
-  if (!bodyText.trim()) return null;
-  try {
-    return JSON.parse(bodyText) as unknown;
+    return JSON.parse(text) as unknown;
   } catch {
     throw new GithubError('bad_response', 'GitHub 返回的内容不是 JSON，可能接口地址被代理改了');
   }
@@ -323,9 +330,7 @@ export async function requestDeviceCode(options: DeviceCodeOptions): Promise<Git
     deviceCode: data.device_code,
     userCode: data.user_code,
     verificationUri:
-      typeof data.verification_uri === 'string'
-        ? data.verification_uri
-        : 'https://github.com/login/device',
+      typeof data.verification_uri === 'string' ? data.verification_uri : 'https://github.com/login/device',
     expiresIn: typeof data.expires_in === 'number' ? data.expires_in : 900,
     interval: typeof data.interval === 'number' ? Math.max(1, data.interval) : 5
   };
@@ -448,206 +453,103 @@ export async function pollAccessToken(options: PollTokenOptions): Promise<string
   }
 }
 
-// ---------------------------------------------------------------- Issues
+// ---------------------------------------------------------------- 仓库信息
 
-export interface GithubIssue {
-  number: number;
-  title: string;
-  body: string | null;
-  state: 'open' | 'closed';
-  html_url: string;
-  updated_at: string;
-  closed_at: string | null;
-  labels: Array<{ name?: string } | string>;
-  milestone: { due_on?: string | null } | null;
-  /** 有值说明这是 PR——GitHub 的 issues 接口会把 PR 也塞进来，必须过滤。 */
-  pull_request?: unknown;
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function normalizeIssue(raw: unknown): GithubIssue | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const item = raw as Record<string, unknown>;
-  if (typeof item.number !== 'number' || typeof item.title !== 'string') return null;
-  const labels = Array.isArray(item.labels)
-    ? (item.labels as Array<{ name?: string } | string>)
-    : [];
-  const state = item.state === 'closed' ? 'closed' : 'open';
-  return {
-    number: item.number,
-    title: item.title,
-    body: typeof item.body === 'string' ? item.body : null,
-    state,
-    html_url: typeof item.html_url === 'string' ? item.html_url : '',
-    updated_at: typeof item.updated_at === 'string' ? item.updated_at : new Date(0).toISOString(),
-    closed_at: typeof item.closed_at === 'string' ? item.closed_at : null,
-    labels,
-    milestone:
-      item.milestone && typeof item.milestone === 'object'
-        ? (item.milestone as { due_on?: string | null })
-        : null,
-    pull_request: item.pull_request
-  };
+function readNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-/** `since` 必须是 ISO 8601；传空/非法一律当作「全量」。 */
-export function toSinceIso(since: string | number | Date | null | undefined): string | undefined {
-  if (since === null || since === undefined || since === '') return undefined;
-  const value = since instanceof Date ? since.getTime() : typeof since === 'number' ? since : Date.parse(String(since));
-  if (!Number.isFinite(value)) return undefined;
-  return new Date(value).toISOString();
-}
-
-export interface ListIssuesOptions {
-  repo: string;
-  page?: number;
-  perPage?: number;
-  since?: string | number | Date | null;
-  /** 增量基线：每个仓库上次同步成功的时间。 */
-  fetchFrom?: string | null;
-}
-
-/** 拉一页 issues（已按 per_page=100、state=all 组装）。 */
-export async function listIssuesPage(
-  client: GithubClient,
-  options: ListIssuesOptions
-): Promise<GithubIssue[]> {
-  const parts = splitRepo(options.repo);
-  if (!parts) throw new GithubError('bad_response', `仓库名不合法：${options.repo}（要 owner/repo 格式）`);
-  const page = Math.max(1, options.page ?? 1);
-  const perPage = Math.min(100, Math.max(1, options.perPage ?? GITHUB_SYNC_PAGE_SIZE));
-  const params = new URLSearchParams({
-    state: 'all',
-    per_page: String(perPage),
-    page: String(page),
-    sort: 'updated',
-    direction: 'asc'
-  });
-  const since = toSinceIso(options.since ?? options.fetchFrom ?? null);
-  if (since) params.set('since', since);
-
-  const raw = await requestJson(
-    client,
-    `/repos/${encodeURIComponent(parts.owner)}/${encodeURIComponent(parts.name)}/issues?${params.toString()}`
-  );
-  if (!Array.isArray(raw)) {
-    throw new GithubError('bad_response', 'GitHub 返回的 issues 不是列表，可能接口地址不对');
-  }
-  return raw.map(normalizeIssue).filter((issue): issue is GithubIssue => issue !== null);
-}
-
-export interface FetchRepoIssuesResult {
-  issues: GithubIssue[];
-  pruned: number;
-  pages: number;
-}
-
-/**
- * 循环翻页直到拉空（或不足一页），并顺手过滤 PR。
- * 为什么不用 `until page.length === 0`：不足一页说明到底了，少发一次空请求。
- */
-export async function fetchRepoIssues(
-  client: GithubClient,
-  options: {
-    repo: string;
-    since?: string | number | Date | null;
-    perPage?: number;
-    maxPages?: number;
-    onPage?: (info: { page: number; count: number; fetched: number }) => void;
-  }
-): Promise<FetchRepoIssuesResult> {
-  const perPage = Math.min(100, Math.max(1, options.perPage ?? GITHUB_SYNC_PAGE_SIZE));
-  const maxPages = Math.max(1, options.maxPages ?? 100);
-  const issues: GithubIssue[] = [];
-  let pruned = 0;
-  let fetched = 0;
-  let page = 1;
-  for (;;) {
-    if (page > maxPages) break;
-    const rows = await listIssuesPage(client, {
-      repo: options.repo,
-      page,
-      perPage,
-      since: options.since
-    });
-    if (rows.length === 0) {
-      options.onPage?.({ page, count: 0, fetched });
-      break;
-    }
-    fetched += rows.length;
-    for (const issue of rows) {
-      if (issue.pull_request !== undefined) {
-        pruned += 1;
-        continue;
+/** README 可能是 raw 文本，也可能是被代理包成 JSON（content 是 base64）。 */
+function decodeReadme(raw: string): string {
+  const text = String(raw ?? '');
+  if (!text.trim()) return '';
+  if (text.trim().startsWith('{')) {
+    try {
+      const data = JSON.parse(text) as { content?: unknown; encoding?: unknown };
+      if (typeof data.content === 'string' && data.content.trim()) {
+        const decoded =
+          data.encoding === 'base64'
+            ? Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf8')
+            : data.content;
+        return decoded;
       }
-      issues.push(issue);
+    } catch {
+      /* 不是 JSON，就当普通文本 */
     }
-    options.onPage?.({ page, count: rows.length, fetched });
-    if (rows.length < perPage) break;
-    page += 1;
   }
-  return { issues, pruned, pages: page };
+  return text;
 }
 
-// ---------------------------------------------------------------- Issue → Task 映射
-
-export interface GithubTaskFields {
-  githubIssueId: string;
-  githubIssueKey: string;
-  githubUpdatedAt: string;
-  repo: string;
-  number: number;
-  title: string;
-  note: string;
-  status: TaskStatus;
-  priority: TaskPriority;
-  dueAt: string | null;
-  completedAt: string | null;
-}
-
-export function issueLabelNames(issue: GithubIssue): string[] {
-  return issue.labels
-    .map((label) => (typeof label === 'string' ? label : label.name ?? ''))
-    .map((name) => name.trim())
-    .filter(Boolean);
-}
-
-export function hasBugLabel(issue: GithubIssue): boolean {
-  return issueLabelNames(issue).some((name) => /^bug$/i.test(name) || /^bug[/:]/.test(name.toLowerCase()));
+export interface FetchRepoInfoOptions {
+  /** 用户粘贴的任意 GitHub 地址（脏 URL 也接受，内部会严格清洗）。 */
+  url: string;
+  /** 读取 README 时最多保留多少字符，默认 {@link GITHUB_README_LIMIT}。 */
+  readmeLimit?: number;
 }
 
 /**
- * 字段映射规则（阶段 2 验收点）：
- * - state === 'closed' → 任务完成（done + completed_at）
- * - labels 含 bug → 高优先级（项目里 highest 可用档位是 important）
- * - milestone.due_on → due_at（GitHub 给的是 UTC 日期时间，只取日期部分）
- * - 正文放 note（纯文本字段，UI 按文本渲染，不注入 HTML）
+ * 严格清洗地址 + 拉取仓库元信息 + 拉 README（截断到 8000 字符）。
+ *
+ * - 地址不合法直接抛中文错误（parseRepoUrl）；
+ * - 仓库不存在 / 无权限 → GithubError('not_found' / 'forbidden')；
+ * - README 拉不到不算失败（有些仓库没有 README），只是 `readme = null`。
  */
-export function mapIssueToTask(issue: GithubIssue, repo: string): GithubTaskFields {
-  const cleanRepo = normalizeRepoName(repo);
-  const dueOn = issue.milestone?.due_on;
-  const dueAt = typeof dueOn === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dueOn) ? dueOn.slice(0, 10) : null;
-  const closed = issue.state === 'closed';
-  const body = (issue.body ?? '').trim();
-  const header = `来自 GitHub：${cleanRepo} #${issue.number}`;
-  const link = issue.html_url ? `\n${issue.html_url}` : '';
-  return {
-    githubIssueId: githubIssueKey(cleanRepo, issue.number),
-    githubIssueKey: githubIssueKey(cleanRepo, issue.number),
-    githubUpdatedAt: issue.updated_at,
-    repo: cleanRepo,
-    number: issue.number,
-    title: issue.title.trim() || `#${issue.number}`,
-    note: body ? `${header}${link}\n\n${body}` : `${header}${link}`,
-    status: closed ? 'done' : 'todo',
-    priority: hasBugLabel(issue) ? 'important' : 'normal',
-    dueAt,
-    completedAt: closed ? issue.closed_at : null
-  };
-}
+export async function fetchRepoInfo(
+  client: GithubClient,
+  options: FetchRepoInfoOptions
+): Promise<GithubRepoInfo> {
+  const repo = parseRepoUrl(options.url);
+  const parts = splitRepo(repo);
+  if (!parts) throw new GithubError('bad_response', '没看懂这个仓库地址，正确格式是 github.com/owner/repo');
+  const { owner, name } = parts;
 
-export function assertRepoUsable(repo: string): string {
-  if (!isValidRepoName(repo)) {
-    throw new GithubError('bad_response', `仓库名不合法：${repo}（要 owner/repo 格式，不能有空格）`);
+  const raw = await requestJson(client, `/repos/${owner}/${name}`);
+  const data = (raw ?? {}) as Record<string, unknown>;
+  if (!raw || typeof data !== 'object') {
+    throw new GithubError('bad_response', 'GitHub 没有返回这个仓库的信息');
   }
-  return normalizeRepoName(repo);
+  const license = (data.license ?? {}) as Record<string, unknown>;
+  const topics = Array.isArray(data.topics)
+    ? data.topics.filter((item): item is string => typeof item === 'string' && !!item.trim()).slice(0, 12)
+    : [];
+
+  const limit = options.readmeLimit ?? GITHUB_README_LIMIT;
+  let readme: string | null = null;
+  let readmeTruncated = false;
+  try {
+    const res = await requestRaw(client, `/repos/${owner}/${name}/readme`, {
+      accept: 'application/vnd.github.raw'
+    });
+    const decoded = decodeReadme(res.text).trim();
+    if (decoded) {
+      readme = decoded.length > limit ? decoded.slice(0, limit) : decoded;
+      readmeTruncated = decoded.length > limit;
+    }
+  } catch (err) {
+    // README 404 视为「没有 README」，其它错误（401/超时）照常抛出。
+    if (!(err instanceof GithubError && err.kind === 'not_found')) throw err;
+  }
+
+  return {
+    repo,
+    owner,
+    name,
+    description: readString(data.description),
+    stars: readNumber(data.stargazers_count),
+    forks: readNumber(data.forks_count),
+    language: readString(data.language),
+    topics,
+    license: readString(license.spdx_id) ?? readString(license.name),
+    homepage: readString(data.homepage),
+    updatedAt: readString(data.updated_at),
+    htmlUrl: readString(data.html_url) ?? `https://github.com/${repo}`,
+    defaultBranch: readString(data.default_branch) ?? 'main',
+    archived: data.archived === true,
+    readme,
+    readmeTruncated
+  };
 }

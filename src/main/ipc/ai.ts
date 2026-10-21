@@ -17,7 +17,8 @@ import {
   normalizeModelName,
   streamChat,
   type AiConfig,
-  type AiFetcher
+  type AiFetcher,
+  type AiMessage
 } from '../ai';
 import type { Handle } from './common';
 
@@ -220,5 +221,24 @@ export function registerAi(handle: Handle): void {
     if (!job) return false;
     job.controller.abort();
     return true;
+  });
+}
+
+/**
+ * 供 GitHub 项目提炼复用：拿一份已校验的 AI 配置（缺 Key 时抛中文错误）。
+ * 单测不会走到这里（单测直接测 repo-extract 的纯函数），所以不抽得更细。
+ */
+export function aiConfigOrThrow(): AiConfig {
+  return assertAiConfig(readConfig());
+}
+
+/** 供 GitHub 项目提炼复用：一次性非流式调用（静默，不广播流事件）。 */
+export async function aiChatOnce(messages: AiMessage[], maxTokens: number): Promise<string> {
+  return chatOnce({
+    fetcher: netFetcher,
+    config: aiConfigOrThrow(),
+    messages,
+    maxTokens,
+    timeouts: { headersMs: 10_000, idleMs: 25_000, totalMs: 60_000 }
   });
 }

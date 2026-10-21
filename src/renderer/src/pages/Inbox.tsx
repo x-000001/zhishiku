@@ -1,12 +1,28 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { TIMING } from '../timing';
 import { api } from '../api';
-import { Empty, toast } from '../ui';
+import { Empty, Modal, toast } from '../ui';
 import { PRIORITY_LABEL, PRIORITY_ORDER, relative } from '../format';
-import type { InboxItem, InboxKind, InboxStatus, TaskPriority } from '../../../shared/types';import { toastError } from '../errors';
+import { parseRepoNoteMarkdown } from '../../../shared/github';
+import { renderMarkdown } from '../../../shared/markdown';
+import { sanitizeHtml } from '../../../shared/html';
+import type { InboxItem, InboxKind, InboxStatus, TaskPriority } from '../../../shared/types';
+import { toastError } from '../errors';
 
-const KIND_LABEL: Record<InboxKind, string> = { idea: '想法', read: '待读', organize: '待整理' };
-const KIND_ICON: Record<InboxKind, string> = { idea: '💡', read: '📖', organize: '🧹' };
+const KIND_LABEL: Record<InboxKind, string> = {
+  idea: '想法',
+  read: '待读',
+  organize: '待整理',
+  github: 'GitHub 项目'
+};
+const KIND_ICON: Record<InboxKind, string> = {
+  idea: '💡',
+  read: '📖',
+  organize: '🧹',
+  github: '🐙'
+};
+/** 手动记录时能选的三类；github 只能由「导入 GitHub 项目」产生。 */
+const EDITABLE_KINDS: InboxKind[] = ['idea', 'read', 'organize'];
 const STATUS_TABS: { key: InboxStatus; label: string }[] = [
   { key: 'open', label: '待处理' },
   { key: 'processed', label: '已处理' },
@@ -21,6 +37,11 @@ function parseRef(ref: string): { kind: string; id: number } | null {
   const id = Number(raw);
   if (!kind || !Number.isFinite(id)) return null;
   return { kind, id };
+}
+
+/** 去掉笔记最前面的 YAML frontmatter，只留正文。 */
+function stripFrontmatter(markdown: string): string {
+  return markdown.replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
 }
 
 /* 可编辑正文：失焦时把改动写回去。 */
@@ -61,6 +82,10 @@ export default function Inbox(props: {
   const [cleaning, setCleaning] = useState(false);
   const [taskFormFor, setTaskFormFor] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  /* 0.11.0：从 GitHub 导入开源项目（仅保存链接 / 保存并 AI 提炼）。 */
+  const [ghOpen, setGhOpen] = useState(false);
+  const [ghBusy, setGhBusy] = useState<'link' | 'extract' | ''>('');
+  const [ghRetrying, setGhRetrying] = useState<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   /** 彻底删除的待办计时器：先让界面上的条目消失，5 秒后才真删，这期间可以撤销。 */
   const pendingDelete = useRef(new Map<number, ReturnType<typeof setTimeout>>());
@@ -189,9 +214,65 @@ export default function Inbox(props: {
     });
   };
 
+  /* ---------------- GitHub 项目 ---------------- */
+
+  const importRepo = async (url: string, extract: boolean) => {
+    setGhBusy(extract ? 'extract' : 'link');
+    try {
+      const result = await api.githubImport({ url, extract });
+      setGhOpen(false);
+      if (status !== 'open') setStatus('open');
+      await load('open');
+      if (result.status === 'ai_failed') {
+        toast(result.warning ?? 'AI 提炼失败，已先保存基础信息，可稍后重试');
+      } else if (result.status === 'link_only') {
+        toast('已保存链接：' + result.repo);
+      } else {
+        toast('已导入并提炼：' + result.repo);
+      }
+    } catch (err) {
+      toastError(extract ? '导入并提炼失败：' : '导入失败：', err);
+    } finally {
+      setGhBusy('');
+    }
+  };
+
+  const retryExtract = async (item: InboxItem) => {
+    setGhRetrying(item.id);
+    try {
+      const result = await api.githubRetryExtract(item.id);
+      await load();
+      if (result.status === 'ai_failed') {
+        toast(result.warning ?? 'AI 提炼还是没成功，可以稍后再试');
+      } else {
+        toast('AI 提炼完成');
+      }
+    } catch (err) {
+      toastError('提炼失败：', err);
+    } finally {
+      setGhRetrying(null);
+    }
+  };
+
+  const convertGithubToNote = async (item: InboxItem) => {
+    try {
+      const { noteId } = await api.githubConvertNote({ itemId: item.id });
+      await load();
+      toast('已转成知识库笔记（YAML 也一起存进去了）', {
+        actionLabel: '打开笔记',
+        onAction: () => props.openNote(noteId)
+      });
+    } catch (err) {
+      toastError('转笔记失败：', err);
+    }
+  };
+
   const convertByKey = useCallback(
     async (item: InboxItem, key: string): Promise<void> => {
-      if (key === '1') return convert(item, 'note');
+      if (key === '1') {
+        if (item.kind === 'github') return convertGithubToNote(item);
+        return convert(item, 'note');
+      }
       if (key === '2') {
         setTaskFormFor(item.id);
         return;
@@ -236,8 +317,16 @@ export default function Inbox(props: {
         <div className="card-head">
           <h2>随手记一条</h2>
           <span className="spacer" />
+          <button
+            type="button"
+            className="btn sm github-import-btn"
+            onClick={() => setGhOpen(true)}
+            title="粘一个 GitHub 仓库链接，拉 README 让 AI 提炼成知识点"
+          >
+            🐙 导入 GitHub 项目
+          </button>
           <select value={kind} onChange={(e) => setKind(e.target.value as InboxKind)} title="分类标签">
-            {(Object.keys(KIND_LABEL) as InboxKind[]).map((k) => (
+            {EDITABLE_KINDS.map((k) => (
               <option key={k} value={k}>
                 {KIND_ICON[k]} {KIND_LABEL[k]}
               </option>
@@ -282,11 +371,14 @@ export default function Inbox(props: {
               {cleaning ? '退出逐条清理' : '逐条清理'}
             </button>
           ) : null}
-          {(Object.keys(KIND_LABEL) as InboxKind[]).map((k) => (
+          {EDITABLE_KINDS.map((k) => (
             <span key={k} className="muted" style={{ marginLeft: 8 }}>
               {KIND_ICON[k]} {items.filter((i) => i.kind === k).length}
             </span>
           ))}
+          <span className="muted" style={{ marginLeft: 8 }}>
+            🐙 {items.filter((i) => i.kind === 'github').length}
+          </span>
         </div>
 
         {cleaning ? (
@@ -330,7 +422,9 @@ export default function Inbox(props: {
               <div className="row" style={{ alignItems: 'flex-start', gap: 8 }}>
                 <span title={KIND_LABEL[item.kind]}>{KIND_ICON[item.kind]}</span>
                 <div className="grow" style={{ minWidth: 0 }}>
-                  {item.status === 'open' ? (
+                  {item.kind === 'github' ? (
+                    <GithubItemBody item={item} />
+                  ) : item.status === 'open' ? (
                     <EditableText
                       value={item.content}
                       onSave={(next) => {
@@ -348,28 +442,39 @@ export default function Inbox(props: {
                     {item.status === 'discarded' ? ' · 已丢弃' : ''}
                   </div>
                 </div>
-                <select
-                  value={item.kind}
-                  title="改分类"
-                  disabled={item.status !== 'open'}
-                  onChange={(e) => {
-                    void api.updateInbox(item.id, { kind: e.target.value as InboxKind }).then(() => load());
-                  }}
-                >
-                  {(Object.keys(KIND_LABEL) as InboxKind[]).map((k) => (
-                    <option key={k} value={k}>
-                      {KIND_LABEL[k]}
-                    </option>
-                  ))}
-                </select>
+                {item.kind === 'github' ? null : (
+                  <select
+                    value={item.kind}
+                    title="改分类"
+                    disabled={item.status !== 'open'}
+                    onChange={(e) => {
+                      void api.updateInbox(item.id, { kind: e.target.value as InboxKind }).then(() => load());
+                    }}
+                  >
+                    {EDITABLE_KINDS.map((k) => (
+                      <option key={k} value={k}>
+                        {KIND_LABEL[k]}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <div className="inbox-tools">
                 {item.status === 'open' ? (
                   <>
-                    <button type="button" className="btn sm" onClick={() => void convert(item, 'note')}>
-                      📄 转笔记
-                    </button>
+                    {item.kind === 'github' ? (
+                      <GithubItemTools
+                        item={item}
+                        busy={ghRetrying === item.id}
+                        onConvert={() => convertGithubToNote(item)}
+                        onRetry={() => retryExtract(item)}
+                      />
+                    ) : (
+                      <button type="button" className="btn sm" onClick={() => void convert(item, 'note')}>
+                        📄 转笔记
+                      </button>
+                    )}
                     <button
                       type="button"
                       className={taskFormFor === item.id ? 'btn sm primary' : 'btn sm'}
@@ -435,7 +540,164 @@ export default function Inbox(props: {
         )}
       </div>
 
+      {ghOpen ? (
+        <ImportGithubModal
+          busy={ghBusy}
+          onClose={() => setGhOpen(false)}
+          onSubmit={(url, extract) => importRepo(url, extract)}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* GitHub 条目：解析 YAML frontmatter，把元信息渲染成徽章 + Markdown    */
+/* ------------------------------------------------------------------ */
+
+function GithubItemBody(props: { item: InboxItem }): ReactNode {
+  const { item } = props;
+  const parsed = parseRepoNoteMarkdown(item.content);
+  const body = stripFrontmatter(item.content);
+  const failed = item.extract_status === 'ai_failed';
+  const linkOnly = item.extract_status === 'link_only';
+  return (
+    <div className="github-item">
+      <div className="github-badges">
+        <span className="badge">{item.github_repo ?? parsed.repo ?? '未知仓库'}</span>
+        {item.github_stars !== null && item.github_stars !== undefined ? (
+          <span className="badge">⭐ {item.github_stars}</span>
+        ) : null}
+        {item.github_language ? <span className="badge">{item.github_language}</span> : null}
+        {failed ? <span className="badge badge-warn">AI 提炼失败</span> : null}
+        {linkOnly ? <span className="badge">仅链接</span> : null}
+      </div>
+      <div
+        className="md-preview github-md"
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(renderMarkdown(body)) }}
+      />
+    </div>
+  );
+}
+
+function GithubItemTools(props: {
+  item: InboxItem;
+  busy: boolean;
+  onConvert: () => Promise<void> | void;
+  onRetry: () => Promise<void> | void;
+}): ReactNode {
+  const { item, busy } = props;
+  const failed = item.extract_status === 'ai_failed';
+  const linkOnly = item.extract_status === 'link_only';
+  return (
+    <>
+      <button
+        type="button"
+        className="btn sm primary github-to-note"
+        disabled={busy}
+        onClick={() => void props.onConvert()}
+      >
+        📄 转为知识库笔记
+      </button>
+      {failed || linkOnly ? (
+        <button
+          type="button"
+          className="btn sm github-retry-btn"
+          disabled={busy}
+          onClick={() => void props.onRetry()}
+        >
+          {busy ? '提炼中…' : failed ? '↻ 重试提炼' : '✨ AI 提炼'}
+        </button>
+      ) : null}
+      {item.content ? (
+        <button
+          type="button"
+          className="btn sm ghost github-copy-md"
+          onClick={() => {
+            void navigator.clipboard.writeText(item.content);
+            toast('已复制 Markdown');
+          }}
+        >
+          复制 Markdown
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+/** 导入弹窗：URL 校验、两个按钮（仅保存 / 保存并提炼）、Loading。 */
+function ImportGithubModal(props: {
+  busy: '' | 'link' | 'extract';
+  onClose: () => void;
+  onSubmit: (url: string, extract: boolean) => Promise<void> | void;
+}): ReactNode {
+  const [url, setUrl] = useState('');
+  const [error, setError] = useState('');
+  const { busy } = props;
+  const working = busy !== '';
+
+  const submit = (extract: boolean) => {
+    const value = url.trim();
+    if (!value) {
+      setError('先粘一个 GitHub 仓库链接');
+      return;
+    }
+    if (!/github\.com/i.test(value) && !/^[\w.-]+\/[\w.-]+$/.test(value)) {
+      setError('这不像 GitHub 仓库地址，形如 https://github.com/owner/repo');
+      return;
+    }
+    setError('');
+    void props.onSubmit(value, extract);
+  };
+
+  return (
+    <Modal
+      variant="github-import"
+      title="导入 GitHub 开源项目"
+      width={620}
+      onClose={() => {
+        if (!working) props.onClose();
+      }}
+      footer={
+        <>
+          <button className="btn" disabled={working} onClick={() => props.onClose()}>
+            取消
+          </button>
+          <button className="btn" disabled={working} onClick={() => submit(false)}>
+            {busy === 'link' ? '保存中…' : '仅保存链接'}
+          </button>
+          <button className="btn primary" disabled={working} onClick={() => submit(true)}>
+            {busy === 'extract' ? 'AI 提炼中…' : '保存并 AI 提炼'}
+          </button>
+        </>
+      }
+    >
+      <div className="github-import-body">
+        <p className="muted">
+          支持带 <code>.git</code>、<code>/tree/main</code>、查询参数的链接，会自动清洗成 owner/repo。
+        </p>
+        <input
+          className="input github-import-url"
+          autoFocus
+          value={url}
+          placeholder="https://github.com/owner/repo"
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !working) submit(true);
+          }}
+        />
+        {error ? <p className="github-error">{error}</p> : null}
+        {working ? (
+          <p className="muted github-import-loading">
+            {busy === 'extract' ? '正在拉 README 并让 AI 提炼…（最多约半分钟）' : '正在读取仓库信息…'}
+          </p>
+        ) : (
+          <p className="muted">
+            「保存并 AI 提炼」会把 README 前 8000 字发给设置里的模型服务；失败也不会丢，卡片上可重试。
+          </p>
+        )}
+      </div>
+    </Modal>
   );
 }
 

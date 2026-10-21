@@ -54,8 +54,7 @@ import type {
   TaskStatus
 } from '../shared/types';
 import { FOCUS_SCHEMA, GITHUB_SCHEMA, SCHEMA } from './schema';
-import { mapIssueToTask, type GithubIssue } from './github';
-import type { GithubRepoMeta } from '../shared/github';
+import type { RepoExtractMeta, RepoExtractStatus } from '../shared/github';
 
 let db: DatabaseSync | null = null;
 let paths: DataPaths | null = null;
@@ -155,7 +154,7 @@ function snippetAround(content: string, query: string, len = 90): string {
 /* 建表与迁移                                                          */
 /* ------------------------------------------------------------------ */
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 /** 给老库补列：SQLite 没有 ADD COLUMN IF NOT EXISTS，先查表结构再决定。 */
 function addColumnIfMissing(table: string, column: string, decl: string): void {
@@ -286,6 +285,17 @@ function migrate(): void {
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_task_github_issue ON task(github_issue_id) WHERE github_issue_id IS NOT NULL'
     );
     database.exec(GITHUB_SCHEMA);
+  }
+  if (current < 8) {
+    // v7 → v8：GitHub 集成从「Issues 同步成待办」改成「收集箱里搜集开源项目 + AI 提炼」。
+    // 老表 github_sync_meta 与 task.github_issue_id 保留不动（老数据不丢，只是不再读写）；
+    // 收集箱补 6 列：仓库名、链接、star、语言、提炼状态、提炼结果（JSON）。
+    addColumnIfMissing('inbox_item', 'github_repo', 'TEXT');
+    addColumnIfMissing('inbox_item', 'github_url', 'TEXT');
+    addColumnIfMissing('inbox_item', 'github_stars', 'INTEGER');
+    addColumnIfMissing('inbox_item', 'github_language', 'TEXT');
+    addColumnIfMissing('inbox_item', 'extract_status', 'TEXT');
+    addColumnIfMissing('inbox_item', 'extract_meta', 'TEXT');
   }
   if (current < SCHEMA_VERSION) {
     database.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
@@ -582,12 +592,18 @@ export function createNote(input: {
   content?: string;
   /** 富文本正文；给了它就以它为准，content 由它抽出来 */
   html?: string;
+  /**
+   * 搜索用的纯文本正文；给了它就直接用（GitHub 笔记要把 YAML + Markdown 原文完整存下来，
+   * 不能走 html→text 的抽取，否则 frontmatter 会丢）。
+   */
+  plain?: string;
 }): Id {
   const now = nowIso();
   const title = input.title ?? '';
   const html =
     input.html != null ? sanitizeHtml(input.html) : markdownToHtmlSafe(input.content ?? '');
-  const content = input.html != null ? htmlToPlainText(html) : (input.content ?? '');
+  const content =
+    input.plain != null ? input.plain : input.html != null ? htmlToPlainText(html) : (input.content ?? '');
   const categoryId = input.categoryId ?? null;
   const r = run(
     `insert into note(category_id, title, content, content_html, sort_order, excerpt, word_count, created_at, updated_at)
@@ -2412,109 +2428,53 @@ export function closeDanglingFocusSessions(keepId: Id | null, endedAt: string): 
   );
 }
 /* ------------------------------------------------------------------ */
-/* GitHub Issues 同步（第七版）                                        */
+/* GitHub 项目（收集箱）                                               */
 /* ------------------------------------------------------------------ */
 
-/**
- * 把一批写操作放进同一个事务：多仓库里的「一个仓库」是原子单位。
- * 同步引擎只负责决定边界，具体 BEGIN/COMMIT 在这里，避免上层碰 SQL。
- */
-export function runInTransaction<T>(fn: () => T): T {
-  const database = requireDb();
-  database.exec('BEGIN');
-  try {
-    const out = fn();
-    database.exec('COMMIT');
-    return out;
-  } catch (err) {
-    try {
-      database.exec('ROLLBACK');
-    } catch {
-      /* 回滚失败就把原始错误抛出去 */
-    }
-    throw err;
-  }
+/** 收集箱单条（卡片重试提炼时用）。 */
+export function inboxItem(id: Id): InboxItem | null {
+  return one<InboxItem>('select * from inbox_item where id = ?', id) ?? null;
 }
 
-export function githubRepoMeta(repo: string): GithubRepoMeta | null {
-  const row = one<{ repo: string; last_synced_at: string | null; last_error: string | null }>(
-    'select * from github_sync_meta where repo = ?',
-    repo
+/** 新建一条 GitHub 项目收集箱条目（内容和元信息一起写进同一行）。 */
+export function addGithubInbox(input: {
+  content: string;
+  repo: string;
+  url: string;
+  stars: number;
+  language: string | null;
+  status: RepoExtractStatus;
+  meta: RepoExtractMeta;
+}): Id {
+  const now = nowIso();
+  const r = run(
+    `insert into inbox_item(content, kind, status, created_at, updated_at,
+                          github_repo, github_url, github_stars, github_language, extract_status, extract_meta)
+     values(?, 'github', 'open', ?, ?, ?, ?, ?, ?, ?, ?)`,
+    input.content,
+    now,
+    now,
+    input.repo,
+    input.url,
+    input.stars,
+    input.language,
+    input.status,
+    JSON.stringify(input.meta)
   );
-  if (!row) return null;
-  return { repo: row.repo, lastSyncedAt: row.last_synced_at, lastError: row.last_error };
+  return r.lastInsertRowid;
 }
 
-export function githubRepoMetaAll(): GithubRepoMeta[] {
-  return all<{ repo: string; last_synced_at: string | null; last_error: string | null }>(
-    'select * from github_sync_meta order by repo asc'
-  ).map((row) => ({ repo: row.repo, lastSyncedAt: row.last_synced_at, lastError: row.last_error }));
-}
-
-/** 只更新传进来的字段：`lastSyncedAt` 成功才推进，`lastError` 失败时记原因。 */
-export function saveGithubRepoMeta(
-  repo: string,
-  patch: { lastSyncedAt?: string | null; lastError?: string | null }
+/** 重试提炼后回写内容 / 状态 / 元信息（不动 status 和 created_at）。 */
+export function updateGithubInboxExtract(
+  id: Id,
+  input: { content: string; status: RepoExtractStatus; meta: RepoExtractMeta }
 ): void {
   run(
-    `insert into github_sync_meta(repo, last_synced_at, last_error) values(?, ?, ?)
-     on conflict(repo) do update set
-       last_synced_at = case when ? then excluded.last_synced_at else github_sync_meta.last_synced_at end,
-       last_error     = case when ? then excluded.last_error     else github_sync_meta.last_error     end`,
-    repo,
-    patch.lastSyncedAt ?? null,
-    patch.lastError ?? null,
-    patch.lastSyncedAt !== undefined ? 1 : 0,
-    patch.lastError !== undefined ? 1 : 0
+    `update inbox_item set content = ?, extract_status = ?, extract_meta = ?, updated_at = ? where id = ?`,
+    input.content,
+    input.status,
+    JSON.stringify(input.meta),
+    nowIso(),
+    id
   );
-}
-
-/**
- * 按 `github_issue_id` 去重落库：新增 / 更新 / 跳过三种结果。
- * - 跳过：issue 的 updated_at 没变，或者本地已经删掉了这条（尊重用户删除，不复活）
- * - 只覆盖 GitHub 侧字段（标题/正文/状态/优先级/截止/完成时间），不碰本地 sort_order 与提醒
- */
-export function upsertGithubTask(issue: GithubIssue, repo: string): 'created' | 'updated' | 'skipped' {
-  const mapped = mapIssueToTask(issue, repo);
-  const existing = one<{
-    id: Id;
-    github_updated_at: string | null;
-    deleted_at: string | null;
-  }>('select id, github_updated_at, deleted_at from task where github_issue_id = ?', mapped.githubIssueId);
-  const now = nowIso();
-  if (!existing) {
-    run(
-      `insert into task(title, note, status, priority, due_at, remind_at, repeat_rule, goal_id, plan_id,
-                        completed_at, sort_order, created_at, updated_at, github_issue_id, github_updated_at)
-       values(?, ?, ?, ?, ?, null, 'none', null, null, ?, 0, ?, ?, ?, ?)`,
-      mapped.title,
-      mapped.note,
-      mapped.status,
-      mapped.priority,
-      mapped.dueAt,
-      mapped.completedAt,
-      now,
-      now,
-      mapped.githubIssueId,
-      mapped.githubUpdatedAt
-    );
-    return 'created';
-  }
-  if (existing.deleted_at) return 'skipped';
-  if (existing.github_updated_at === mapped.githubUpdatedAt) return 'skipped';
-  run(
-    `update task set title = ?, note = ?, status = ?, priority = ?, due_at = ?,
-                      completed_at = ?, github_updated_at = ?, updated_at = ?
-     where id = ?`,
-    mapped.title,
-    mapped.note,
-    mapped.status,
-    mapped.priority,
-    mapped.dueAt,
-    mapped.completedAt,
-    mapped.githubUpdatedAt,
-    now,
-    existing.id
-  );
-  return 'updated';
 }

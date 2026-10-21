@@ -1,291 +1,238 @@
 /**
- * 设置页的「GitHub 同步」卡片（第九版）。
+ * 设置页的「GitHub」卡片：只负责授权（Device Flow）与 Client ID。
+ *
+ * 项目搜集的入口在「收集箱」页顶部（见 pages/Inbox.tsx），这样设置页保持轻量，
+ * 授权状态与导入动作各归其位。
  *
  * 安全约定（DEVELOPER_GUIDE.md ADR-3 / ADR-4）：
  * - 这里永远拿不到完整 Token，只显示「是否已连接 + @login + 打码尾巴」；
  * - 所有 GitHub 网络请求都在主进程，本组件只调 api.githubXxx（IPC）。
  */
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { api, onGithubProgress } from './api';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { api } from './api';
+import { errText, toastError } from './errors';
 import { Modal, toast } from './ui';
-import { toastError } from './errors';
-import {
-  formatSyncProgress,
-  isValidRepoName,
-  normalizeRepoName,
-  parseRepoList,
-  type GithubDeviceCode,
-  type GithubStatus,
-  type GithubSyncProgress
-} from '../../shared/github';
+import type { GithubDeviceCode, GithubStatus } from '../../shared/github';
 
 export function GithubCard(): ReactNode {
   const [status, setStatus] = useState<GithubStatus | null>(null);
-  const [reposText, setReposText] = useState('');
-  const [clientIdText, setClientIdText] = useState('');
-  const [busy, setBusy] = useState<'repos' | 'clientId' | 'connect' | 'logout' | ''>('');
-  const [device, setDevice] = useState<GithubDeviceCode | null>(null);
-  const [waiting, setWaiting] = useState(false);
-  const [progress, setProgress] = useState<GithubSyncProgress | null>(null);
-  const [lastError, setLastError] = useState('');
-
-  const applyStatus = useCallback((next: GithubStatus) => {
-    setStatus(next);
-    setReposText(next.repos.join('\n'));
-    setClientIdText(next.clientId ?? '');
-  }, []);
+  const [clientId, setClientId] = useState('');
+  const [busy, setBusy] = useState<'' | 'save' | 'connect' | 'logout'>('');
+  const [error, setError] = useState('');
+  const [code, setCode] = useState<GithubDeviceCode | null>(null);
+  const [polling, setPolling] = useState(false);
+  const pollRef = useRef(false);
+  const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    let alive = true;
     void api
       .githubStatus()
-      .then(applyStatus)
-      .catch((err) => toastError('读不到 GitHub 设置：', err));
-  }, [applyStatus]);
-
-  // 同步进度（这个卡片不发起同步，但同步进行中切到设置页能看见进度）
-  useEffect(() => {
-    return onGithubProgress((p) => setProgress(p.repoTotal ? p : null));
+      .then((next) => {
+        if (!alive) return;
+        setStatus(next);
+        setClientId(next.clientId ?? '');
+      })
+      .catch((err: Error) => {
+        if (alive) setError(errText(err));
+      });
+    return () => {
+      alive = false;
+      pollRef.current = false;
+      if (timerRef.current !== null) window.clearInterval(timerRef.current);
+    };
   }, []);
 
-  const connect = async (): Promise<void> => {
-    setBusy('connect');
-    setLastError('');
+  async function saveClientId(): Promise<void> {
+    setBusy('save');
+    setError('');
     try {
-      const code = await api.githubRequestCode();
-      setDevice(code);
-      setWaiting(true);
-      // 主进程负责轮询；这里只等结果
-      const next = await api.githubPollToken();
-      setDevice(null);
-      setWaiting(false);
-      applyStatus(next);
-      toast(`GitHub 已连接：@${next.login ?? '已授权'}`);
-    } catch (err) {
-      setDevice(null);
-      setWaiting(false);
-      setLastError((err as Error).message || '授权失败');
-      toastError('GitHub 授权失败：', err);
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const cancelAuth = (): void => {
-    void api.githubCancelAuth().catch(() => undefined);
-    setDevice(null);
-    setWaiting(false);
-    setBusy('');
-    toast('已取消这次授权');
-  };
-
-  const saveRepos = async (): Promise<void> => {
-    const list = parseRepoList(reposText);
-    const rawParts = reposText
-      .split(/[\s,，;；]+/)
-      .map((part) => part.trim())
-      .filter(Boolean);
-    const invalid = rawParts.filter((part) => !isValidRepoName(normalizeRepoName(part)));
-    if (invalid.length) {
-      toast(`这些仓库名不对（要 owner/repo，不能有空格）：${invalid.slice(0, 3).join('、')}`, { ttl: 7000 });
-      return;
-    }
-    setBusy('repos');
-    try {
-      const next = await api.githubSetConfig({ repos: list });
-      applyStatus(next);
-      toast(list.length ? `已保存 ${list.length} 个仓库` : '已清空仓库列表');
-    } catch (err) {
-      toastError('保存仓库失败：', err);
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const saveClientId = async (): Promise<void> => {
-    setBusy('clientId');
-    try {
-      const next = await api.githubSetConfig({ clientId: clientIdText.trim() });
-      applyStatus(next);
+      const next = await api.githubSetConfig({ clientId: clientId.trim() });
+      setStatus(next);
       toast('已保存 Client ID');
     } catch (err) {
+      setError(errText(err));
       toastError('保存 Client ID 失败：', err);
     } finally {
       setBusy('');
     }
-  };
+  }
 
-  const logout = async (): Promise<void> => {
-    setBusy('logout');
+  async function startConnect(): Promise<void> {
+    setBusy('connect');
+    setError('');
     try {
-      const next = await api.githubLogout();
-      applyStatus(next);
-      toast('已断开 GitHub 授权（本地任务保留）');
+      const next = await api.githubRequestCode();
+      setCode(next);
+      setPolling(true);
+      pollRef.current = true;
+      let waited = 0;
+      const interval = Math.max(1, next.interval || 5) * 1000;
+      timerRef.current = window.setInterval(() => {
+        if (!pollRef.current) return;
+        waited += interval;
+        void api
+          .githubPollToken()
+          .then((state) => {
+            pollRef.current = false;
+            setPolling(false);
+            setStatus(state);
+            setCode(null);
+            if (timerRef.current !== null) window.clearInterval(timerRef.current);
+            toast(`已连接：@${state.login ?? 'GitHub 用户'}`);
+          })
+          .catch((err: Error) => {
+            const message = errText(err);
+            // 「等待中」不是错误，继续轮询；其它错误（过期/拒绝/取消）就收摊。
+            if (/等待|还没|pending|继续/i.test(message) && waited < 15 * 60 * 1000) return;
+            pollRef.current = false;
+            setPolling(false);
+            setError(message);
+          });
+      }, interval);
     } catch (err) {
-      toastError('断开失败：', err);
+      setError(errText(err));
+      toastError('发起 GitHub 授权失败：', err);
     } finally {
       setBusy('');
     }
-  };
+  }
 
-  const showDevice = device !== null;
+  async function cancelConnect(): Promise<void> {
+    pollRef.current = false;
+    setPolling(false);
+    setCode(null);
+    if (timerRef.current !== null) window.clearInterval(timerRef.current);
+    try {
+      await api.githubCancelAuth();
+    } catch {
+      /* 取消失败不影响本地状态 */
+    }
+  }
+
+  async function logout(): Promise<void> {
+    setBusy('logout');
+    setError('');
+    try {
+      const next = await api.githubLogout();
+      setStatus(next);
+      toast('已断开 GitHub 连接（收集箱里已导入的条目还在）');
+    } catch (err) {
+      setError(errText(err));
+      toastError('断开连接失败：', err);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  const connected = Boolean(status?.connected);
 
   return (
     <div className="card github-card">
       <div className="card-head">
-        <h2>GitHub 同步（Issues → 待办）</h2>
-        <span className="spacer" style={{ flex: 1 }} />
-        {status?.connected ? (
-          <span className="badge ok">已连接 @{status.login ?? 'GitHub'}</span>
-        ) : (
-          <span className="badge">未连接</span>
-        )}
+        <h2>GitHub 项目搜集</h2>
+        <span className="spacer" />
+        <span className={connected ? 'badge badge-ok' : 'badge'}>
+          {connected ? `已连接 @${status?.login ?? '…'}` : '未连接'}
+        </span>
       </div>
 
       <div className="set-row">
         <div className="txt">
           <b>授权状态</b>
           <p>
-            {status?.connected
-              ? `Token ${status.tokenHint ?? ''} · ${status.encrypted ? '已用系统加密存储（DPAPI）' : '未加密（系统不支持加密）'} · 上次同步 ${
-                  status.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString() : '还没同步过'
-                }`
-              : '用 GitHub 官方 Device Flow 授权，Token 只存本机（加密后进 meta 表），渲染层看不到原文。'}
+            用 GitHub 官方 Device Flow 授权，Token 只存在本机（加密后进 meta 表），渲染层看不到原文。
           </p>
           <p className="muted">
-            想接的仓库写在这里，一行一个 <code>owner/repo</code>。同步是单向的：GitHub → 本地待办，本地改动不会回写。
+            {connected
+              ? `Token ${status?.tokenHint ?? ''} · ${status?.encrypted ? '已用系统加密存储（DPAPI）' : '未加密（系统加密不可用）'}`
+              : '还没连接。连接后可以导入私有仓库；不连接也能导入公开仓库。'}
           </p>
         </div>
-        {status?.connected ? (
-          <button
-            type="button"
-            className={busy === 'logout' ? 'btn loading github-logout-btn' : 'btn github-logout-btn'}
-            disabled={busy === 'logout'}
-            onClick={() => void logout()}
-          >
+        {connected ? (
+          <button className="btn sm" disabled={busy === 'logout'} onClick={() => void logout()}>
             {busy === 'logout' ? '断开中…' : '断开连接'}
           </button>
         ) : (
           <button
-            type="button"
-            className={busy === 'connect' ? 'btn primary loading github-connect-btn' : 'btn primary github-connect-btn'}
-            disabled={busy === 'connect' || !status || status.clientIdSource === 'none'}
-            title={
-              status && status.clientIdSource === 'none'
-                ? '还没有 GitHub OAuth App 的 Client ID：让开发者用 JWKB_GITHUB_CLIENT_ID 启动，或在下面填'
-                : '用 GitHub 官方 Device Flow 授权'
-            }
-            onClick={() => void connect()}
+            className="btn sm primary"
+            disabled={busy === 'connect' || polling}
+            onClick={() => void startConnect()}
           >
-            {busy === 'connect' ? '等待授权…' : '连接 GitHub'}
+            {busy === 'connect' || polling ? '等待授权…' : '连接 GitHub'}
           </button>
         )}
       </div>
 
       <div className="set-row">
         <div className="txt">
-          <b>要同步的仓库</b>
-          <p>一行一个，格式 owner/repo（GitHub 网页地址也可以，会自动去掉 https://github.com/ 和 .git）。</p>
-        </div>
-        <textarea
-          className="input github-repos"
-          rows={3}
-          spellCheck={false}
-          placeholder={'x-000001/zhishiku\n另一个用户/另一个仓库'}
-          value={reposText}
-          onChange={(e) => setReposText(e.target.value)}
-        />
-      </div>
-      <div className="set-row">
-        <div className="txt">
-          <b>仓库列表</b>
-          <p className="muted">
-            {parseRepoList(reposText).length
-              ? `将同步 ${parseRepoList(reposText).length} 个仓库：${parseRepoList(reposText).join('、')}`
-              : '还没有配置仓库。'}
-          </p>
-        </div>
-        <button
-          type="button"
-          className={busy === 'repos' ? 'btn primary loading' : 'btn primary'}
-          disabled={busy === 'repos'}
-          onClick={() => void saveRepos()}
-        >
-          {busy === 'repos' ? '保存中…' : '保存仓库列表'}
-        </button>
-      </div>
-
-      <div className="set-row">
-        <div className="txt">
           <b>OAuth App Client ID</b>
-          <p>
-            公开值（不是 secret）。{status?.clientIdSource === 'env' ? '当前来自启动环境变量 JWKB_GITHUB_CLIENT_ID。' : ''}
-            {status?.clientIdSource === 'setting' ? '当前来自这里保存的值。' : ''}
-            {status?.clientIdSource === 'none' ? '还没配置，没它不能发起 Device Flow。' : ''}
+          <p>公开值（不是 secret）。发起 Device Flow 必须有一个启用了 Device Flow 的 OAuth App。</p>
+          <p className="muted">
+            {status?.clientIdSource === 'env'
+              ? '当前来自启动环境变量 JWKB_GITHUB_CLIENT_ID。'
+              : status?.clientIdSource === 'setting'
+                ? '当前来自本机设置。'
+                : '还没配置：填一个 Client ID，或用 JWKB_GITHUB_CLIENT_ID 启动。'}
           </p>
         </div>
-        <input
-          className="input github-client-id"
-          style={{ width: 260 }}
-          spellCheck={false}
-          placeholder="Iv1.0123456789abcdef"
-          value={clientIdText}
-          onChange={(e) => setClientIdText(e.target.value)}
-        />
-      </div>
-      <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
-        <button
-          type="button"
-          className={busy === 'clientId' ? 'btn loading' : 'btn'}
-          disabled={busy === 'clientId'}
-          onClick={() => void saveClientId()}
-        >
-          {busy === 'clientId' ? '保存中…' : '保存 Client ID'}
-        </button>
+        <div className="row-tight">
+          <input
+            className="input github-client-id"
+            style={{ width: 260 }}
+            value={clientId}
+            placeholder="比如 lv1.0123456789abcdef"
+            onChange={(e) => setClientId(e.target.value)}
+          />
+          <button className="btn sm" disabled={busy === 'save'} onClick={() => void saveClientId()}>
+            {busy === 'save' ? '保存中…' : '保存 Client ID'}
+          </button>
+        </div>
       </div>
 
-      {progress ? (
-        <p className="muted github-progress">{formatSyncProgress(progress)}</p>
-      ) : lastError ? (
-        <p className="muted github-error">上次同步失败：{lastError}</p>
-      ) : null}
+      {error ? <p className="github-error">{error}</p> : null}
+      <p className="muted github-hint">
+        导入入口在「收集箱」页顶部：粘一个 GitHub 链接，选「仅保存链接」或「保存并 AI 提炼」。
+        AI 提炼会把 README 发给设置里的模型服务（只发这一步，本地功能不受影响）。
+      </p>
 
-      {showDevice ? (
+      {code ? (
         <Modal
+          variant="github-device"
           title="在 GitHub 上授权"
-          width={480}
-          onClose={() => (waiting ? cancelAuth() : setDevice(null))}
+          width={520}
+          onClose={() => void cancelConnect()}
           footer={
-            <button type="button" className="btn" onClick={cancelAuth}>
-              取消授权
-            </button>
-          }
-        >
-          <div className="github-device">
-            <p>复制下面的验证码，点按钮打开 GitHub 粘贴并授权。这里会自动等结果（最多 15 分钟）。</p>
-            <div className="github-user-code">{device?.userCode}</div>
-            <div className="row" style={{ gap: 8 }}>
+            <>
+              <button className="btn" onClick={() => void cancelConnect()}>
+                取消授权
+              </button>
               <button
-                type="button"
-                className="btn sm"
-                onClick={() => void api.copyText(device?.userCode ?? '').then(() => toast('验证码已复制'))}
+                className="btn"
+                onClick={() => {
+                  void navigator.clipboard.writeText(code.userCode);
+                  toast('验证码已复制');
+                }}
               >
                 复制验证码
               </button>
               <button
-                type="button"
-                className="btn sm primary"
-                onClick={() => {
-                  if (!device) return;
-                  void api.githubOpenUrl(device.verificationUri || 'https://github.com/login/device').catch((err: Error) =>
-                    toastError('打不开浏览器：', err)
-                  );
-                }}
+                className="btn primary"
+                onClick={() => void api.githubOpenUrl(code.verificationUri)}
               >
                 打开 GitHub 授权页
               </button>
-            </div>
+            </>
+          }
+        >
+          <div className="github-device-body">
+            <p>在 GitHub 页面里输入这个验证码：</p>
+            <div className="github-user-code">{code.userCode}</div>
             <p className="muted">
-              {waiting ? '正在等待你完成授权…完成后这个窗口会自动关掉。' : '这次授权已经结束，可以重试。'}
+              地址：{code.verificationUri} · 有效期约 {Math.round(code.expiresIn / 60)} 分钟
+            </p>
+            <p className="muted">
+              {polling ? '正在等待你在浏览器里确认…' : '授权完成后窗口会自动关闭。'}
             </p>
           </div>
         </Modal>

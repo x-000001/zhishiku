@@ -56,10 +56,10 @@ import type {
 } from '../../shared/types';
 import type {
   GithubDeviceCode,
-  GithubRepoMeta,
   GithubStatus,
-  GithubSyncProgress,
-  GithubSyncResult
+  RepoConvertInput,
+  RepoImportInput,
+  RepoImportResult
 } from '../../shared/github';
 
 const raw = window.api;
@@ -81,8 +81,7 @@ export function onEvent(
     | 'update:progress'
     | 'focus:state'
     | 'ai:stream'
-    | 'export:progress'
-    | 'github:progress',
+    | 'export:progress',
   listener: (payload: unknown) => void
 ): () => void {
   return bridge.on(channel, listener);
@@ -96,11 +95,6 @@ export function onExportProgress(listener: (progress: ExportProgress) => void): 
 /** AI 流式输出：主进程把增量一段段推过来（渲染层从不自己发请求）。 */
 export function onAiStream(listener: (event: AiStreamEventWithId) => void): () => void {
   return bridge.on('ai:stream', (payload) => listener(payload as AiStreamEventWithId));
-}
-
-/** GitHub 同步进度：多仓库串行时每拉完一页推一次。 */
-export function onGithubProgress(listener: (progress: GithubSyncProgress) => void): () => void {
-  return bridge.on('github:progress', (payload) => listener(payload as GithubSyncProgress));
 }
 
 /** 番茄钟状态变化（主进程是唯一计时源，渲染层只镜像）。 */
@@ -330,17 +324,19 @@ export const api = {
   resumeFocus: () => call<FocusState>('focus:resume'),
   abandonFocus: () => call<FocusState>('focus:abandon'),
   skipBreak: () => call<FocusState>('focus:skip-break'),
-  // ---- GitHub Issues 同步（网络全在主进程，见 ADR-4）----
+  // ---- GitHub 集成（授权 + 收集箱导入；网络全在主进程，见 ADR-4）----
   githubStatus: () => call<GithubStatus>('github:status'),
-  githubSetConfig: (input: { repos?: string[]; clientId?: string }) =>
-    call<GithubStatus>('github:config:set', input),
+  githubSetConfig: (input: { clientId?: string }) => call<GithubStatus>('github:config:set', input),
   githubRequestCode: () => call<GithubDeviceCode>('github:request-code'),
   githubPollToken: () => call<GithubStatus>('github:poll-token'),
   githubCancelAuth: () => call<boolean>('github:cancel-auth'),
   githubLogout: () => call<GithubStatus>('github:logout'),
-  githubSync: () => call<GithubSyncResult>('github:sync'),
-  githubRepos: () => call<GithubRepoMeta[]>('github:repos'),
   githubOpenUrl: (url: string) => call<boolean>('github:open-url', { url }),
+  githubImport: (input: RepoImportInput) => call<RepoImportResult>('github:import', input),
+  githubRetryExtract: (itemId: number) =>
+    call<RepoImportResult>('github:retry-extract', { itemId }),
+  githubConvertNote: (input: RepoConvertInput) =>
+    call<{ noteId: number }>('github:convert-note', input),
   focusSummary: () => call<FocusSummary>('focus:summary'),
 
   /* ---------------- 第七版：AI 辅助（全部请求走主进程） ---------------- */

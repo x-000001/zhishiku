@@ -41,6 +41,17 @@ function aiReplyFor(messages) {
   if (raw.includes('请把下面这段文字翻译成')) return 'TRANSLATED TEXT';
   if (raw.includes('请为下面这篇笔记写一段摘要'))
     return '这篇笔记讲了把零散知识收进知识库、再靠复习把它记住的完整流程。';
+  if (raw.includes('请阅读下面这个 GitHub 仓库的 README'))
+    return [
+      '### 项目总结',
+      '一个批量处理文件的命令行工具，内置进度条与配置模板。',
+      '### 核心亮点',
+      '- 批量处理文件',
+      '- 内置进度条',
+      '- 支持配置模板',
+      '### 适用场景',
+      '适合需要重复处理大量文件时使用。'
+    ].join('\n');
   if (raw.includes('请推荐 3 到 5 个标签'))
     return JSON.stringify({
       tags: ['知识管理', 'AI', '测试标签'],
@@ -132,7 +143,7 @@ const stubServer = http.createServer((req, res) => {
     });
     return;
   }
-  /* 第九版：GitHub 集成（Device Flow / Issues 分页 / PR 过滤 / 401 / 部分仓库失败）。 */
+  /* 0.11.0：GitHub 项目导入（仓库信息 / README / 401 / 404 / 500）。 */
   if (url.startsWith('/github/')) {
     const send = (body, status = 200) => {
       res.writeHead(status, { 'content-type': 'application/json' });
@@ -152,89 +163,47 @@ const stubServer = http.createServer((req, res) => {
     }
     if (url.startsWith('/github/api/repos/')) {
       githubCalls.push(url);
-      const page = Number((url.match(/[?&]page=(\d+)/) || [])[1] || '1');
-      const repo = url.replace('/github/api/repos/', '').split('/issues')[0];
-    if (repo === 'octo/many') {
-      const rows = page === 1
-        ? Array.from({ length: 100 }, (_, i) => ({
-            number: 1000 + i,
-            title: '批量 Issue ' + (1000 + i),
-            body: '分页自检用。',
-            state: 'open',
-            labels: [],
-            html_url: 'https://github.com/octo/many/issues/' + (1000 + i),
-            updated_at: '2026-10-15T08:00:00Z',
-            closed_at: null,
-            milestone: null
-          }))
-        : [];
-      setTimeout(() => send(rows), 120);
-      return;
-    }
-      const later = () => {
-        send([]);
-      };
+      const rest = url.replace('/github/api/repos/', '').split('?')[0];
+      const repo = rest.replace(/\/readme$/, '');
       if (repo === 'octo/expired') {
         send({ message: 'Bad credentials' }, 401);
+        return;
+      }
+      if (repo === 'octo/missing') {
+        send({ message: 'Not Found' }, 404);
         return;
       }
       if (repo === 'octo/boom') {
         send({ message: 'stub 500' }, 500);
         return;
       }
-      const issues = {
-        'octo/demo': [
-          {
-            number: 11,
-            title: '登录页在窄窗口下错位',
-            body: '把窗口拉到 720 宽，登录卡片会压到边栏上。',
-            state: 'open',
-            labels: [{ name: 'bug' }],
-            html_url: 'https://github.com/octo/demo/issues/11',
-            updated_at: '2026-10-18T09:00:00Z',
-            closed_at: null,
-            milestone: null
-          },
-          {
-            number: 12,
-            title: '补一份 Markdown 导出说明',
-            body: '导出后的目录结构要写清楚。',
-            state: 'closed',
-            labels: [{ name: 'docs' }],
-            html_url: 'https://github.com/octo/demo/issues/12',
-            updated_at: '2026-10-17T08:00:00Z',
-            closed_at: '2026-10-17T10:00:00Z',
-            milestone: null
-          },
-          {
-            number: 13,
-            title: '这是一个 PR，不该变成待办',
-            body: 'pull_request 字段在这里。',
-            state: 'open',
-            labels: [],
-            html_url: 'https://github.com/octo/demo/pull/13',
-            updated_at: '2026-10-18T09:30:00Z',
-            closed_at: null,
-            milestone: null,
-            pull_request: { url: 'https://api.github.com/repos/octo/demo/pulls/13' }
-          }
-        ],
-        'octo/second': [
-          {
-            number: 21,
-            title: '第二个仓库的 Issue',
-            body: '这条来自另一个仓库。',
-            state: 'open',
-            labels: [{ name: 'enhancement' }],
-            html_url: 'https://github.com/octo/second/issues/21',
-            updated_at: '2026-10-16T09:00:00Z',
-            closed_at: null,
-            milestone: null
-          }
-        ]
-      }[repo] || [];
-      const rows = page === 1 ? issues : [];
-      setTimeout(() => send(rows), 200);
+      if (rest.endsWith('/readme')) {
+        if (repo === 'octo/noreadme') {
+          send({ message: 'Not Found' }, 404);
+          return;
+        }
+        const readme =
+          '# ' + repo.split('/')[1] + '\n\n' +
+          '这是一个命令行工具，支持批量处理文件，内置进度条与配置模板。\n\n' +
+          '## 特性\n\n- 批量处理\n- 进度条\n- 配置模板\n';
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end(readme);
+        return;
+      }
+      send({
+        full_name: repo,
+        description: '一个批量处理文件的命令行工具',
+        stargazers_count: 4321,
+        forks_count: 12,
+        language: 'TypeScript',
+        topics: ['cli', 'tools'],
+        license: { spdx_id: 'MIT' },
+        homepage: null,
+        updated_at: '2026-10-01T00:00:00Z',
+        html_url: 'https://github.com/' + repo,
+        default_branch: 'main',
+        archived: false
+      });
       return;
     }
     send({ message: 'stub: unknown github route' }, 404);
@@ -884,7 +853,7 @@ try {
     results.push({
       name: `页面 ${route} 有实际内容`,
       ok: typeof text === 'string' && text.length > 10,
-      detail: (text || '').replace(/\\s+/g, ' ').slice(0, 110)
+      detail: (text || '').replace(/\s+/g, ' ').slice(0, 110)
     });
     await cdp.shot(name);
   }
@@ -1223,7 +1192,7 @@ try {
   })()`)
     )
   );
-  const layoutProp = /(^|[\s,])(width|height|margin|margin-left|margin-top|left|top|right|bottom|padding)([\s,]|$)/;
+  const layoutProp = /(^|[\\s,])(width|height|margin|margin-left|margin-top|left|top|right|bottom|padding)([\\s,]|$)/;
   const noLayoutAnim = (o) => !!o && !layoutProp.test(o.prop);
   results.push({
     name: '第五版：卡片/列表行的过渡只挂在合成或绘制属性上（没有 width / height / margin / left / top）',
@@ -5786,157 +5755,301 @@ try {
     detail: exportedTexts.length > 0 ? '最小文件 ' + Math.min(...exportedTexts.map((item) => item.text.length)) + ' 字节' : '没有文件'
   });
 
-  // ---- 第九版：GitHub Issues 单向同步（Device Flow / PR 过滤 / 串行容错 / 分页 / 去重 / 401）----
-  const ghSetup = await cdp.eval(`(async () => {
-    const inv = (ch, p) => window.api.invoke(ch, p);
-    const bad = await inv('github:config:set', { repos: ['not a repo', 'octo/demo', 'octo/second'] });
-    const before = await inv('github:status');
-    let code = null;
-    let error = '';
-    try { code = await inv('github:request-code'); } catch (err) { error = (err && err.message) || String(err); }
-    const status = code ? await inv('github:poll-token') : before;
-    return { bad, before, code, error, status };
-  })()`);
-  results.push({
-    name: '0.10.0：仓库名格式校验（非法项被丢掉，owner/repo 原样保留）',
-    ok:
-      Array.isArray(ghSetup.status.repos) &&
-      ghSetup.status.repos.length === 2 &&
-      ghSetup.status.repos.includes('octo/demo') &&
-      ghSetup.status.repos.includes('octo/second'),
-    detail: 'repos=' + JSON.stringify(ghSetup.status && ghSetup.status.repos)
-  });
-  results.push({
-    name: '0.10.0：Device Flow 能拿到设备码（user_code + 轮询间隔）',
-    ok: !!ghSetup.code && String(ghSetup.code.userCode || '').length >= 4,
-    detail: 'userCode=' + (ghSetup.code && ghSetup.code.userCode) + ' error=' + ghSetup.error
-  });
-  results.push({
-    name: '0.10.0：授权成功后 Token 只在主进程（前端只有打码状态）',
-    ok: ghSetup.status.connected === true && !JSON.stringify(ghSetup.status).includes('gho_e2e_token_123456'),
-    detail: 'hint=' + ghSetup.status.tokenHint + ' encrypted=' + ghSetup.status.encrypted
-  });
-
-  /* 串行同步：串行 3 个仓库，中间一个 500 失败也不应拖垮整轮 */
-  const ghSync1 = await cdp.eval(`(async () => {
+  // ---- 0.11.0：GitHub 项目搜集（导入收集箱 → AI 提炼 → 转知识库笔记）----
+  const repoFlow = await cdp.eval(`(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const inv = (ch, p) => window.api.invoke(ch, p);
-    await inv('github:config:set', { repos: ['octo/demo', 'octo/second', 'octo/boom'] });
-    location.hash = '/tasks';
-    await sleep(700);
-    const btn = document.querySelector('.github-sync-btn');
-    if (!btn) return { error: '没有同步按钮' };
-    btn.click();
-    await sleep(160);
-    const during = { disabled: btn.disabled === true, loading: btn.classList.contains('loading'), text: (document.body.innerText || '').includes('正在同步') };
-    for (let i = 0; i < 140; i += 1) {
-      await sleep(150);
-      if (!btn.classList.contains('loading')) break;
-    }
+    const setInput = (el, value) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const clickText = (root, text) => {
+      const btn = [...root.querySelectorAll('button')].find((b) => (b.textContent || '').includes(text));
+      if (btn) btn.click();
+      return !!btn;
+    };
+    const waitModalGone = async (limit = 120) => {
+      for (let i = 0; i < limit; i += 1) {
+        await sleep(150);
+        if (!document.querySelector('.modal.github-import')) return true;
+      }
+      return false;
+    };
+
+    const cfg = await inv('ai:config:get');
+    const goodBase = cfg.baseUrl;
+    const badBase = goodBase.replace('/ai/v1', '/ai-bad/v1');
+    await inv('ai:config:set', { baseUrl: goodBase, model: 'stub-model', apiKey: 'sk-e2e-secret-123456' });
+    await inv('github:config:set', { clientId: 'e2e-client-id' });
+    await inv('github:request-code');
+    await inv('github:poll-token');
+
+    location.hash = '/inbox';
     await sleep(800);
-    const toastText = ((Array.from(document.querySelectorAll('.toast-wrap .toast')).pop() || {}).innerText || '').replace(/\s+/g, ' ');
-    const tasks = await inv('task:list', { status: 'all' });
+    // 逐条清理模式开着时列表只渲染一条，先退出再断言
+    const exitCleaning = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').includes('退出逐条清理'));
+    if (exitCleaning) {
+      exitCleaning.click();
+      await sleep(400);
+    }
+    const hasImportBtn = !!document.querySelector('.github-import-btn');
+
+    // 1) 烂地址：弹窗里直接中文报错，不发请求
+    document.querySelector('.github-import-btn').click();
+    await sleep(320);
+    const modal = document.querySelector('.modal.github-import');
+    setInput(document.querySelector('.github-import-url'), 'https://gitlab.com/a/b');
+    clickText(modal, '仅保存链接');
+    await sleep(260);
+    const badError = ((modal.querySelector('.github-error') || {}).innerText || '').replace(/\\s+/g, ' ');
+    clickText(modal, '取消');
+    await sleep(280);
+
+    // 2) 脏链接 + 仅保存链接
+    document.querySelector('.github-import-btn').click();
+    await sleep(320);
+    clickText(document.querySelector('.modal.github-import'), '取消');
+    await sleep(200);
+    document.querySelector('.github-import-btn').click();
+    await sleep(320);
+    const modal2 = document.querySelector('.modal.github-import');
+    setInput(document.querySelector('.github-import-url'), 'https://github.com/octo/demo.git/tree/main?tab=readme#top');
+    clickText(modal2, '仅保存链接');
+    await waitModalGone();
+    await sleep(500);
+    const items1 = await inv('inbox:list', {});
+    const linkItem = (items1 || []).find((it) => it.github_repo === 'octo/demo' && it.extract_status === 'link_only');
+
+    // 3) 保存并 AI 提炼
+    document.querySelector('.github-import-btn').click();
+    await sleep(320);
+    const modal3 = document.querySelector('.modal.github-import');
+    setInput(document.querySelector('.github-import-url'), 'https://github.com/octo/second');
+    clickText(modal3, '保存并 AI 提炼');
+    await waitModalGone(160);
+    await sleep(800);
+    // 提炼是异步的：先轮询库里出现 done 的条目（最多 30s），再等卡片渲染
+    let items2 = [];
+    let aiItem = null;
+    for (let i = 0; i < 150; i += 1) {
+      items2 = (await inv('inbox:list', {})) || [];
+      aiItem = items2.find((it) => it.github_repo === 'octo/second' && it.extract_status === 'done');
+      if (aiItem) break;
+      await sleep(200);
+    }
+    if (!aiItem) items2 = (await inv('inbox:list', {})) || [];
+    let cards = [];
+    const squash = (v) => String(v || '').replace(/\\s+/g, '');
+    // 长仓库名会在 badge 里折行（octo/ second），比对时先去掉空白
+    let secondCardEl = null;
+    for (let i = 0; i < 60; i += 1) {
+      secondCardEl = [...document.querySelectorAll('.github-item')].find((el) => squash(el.textContent).includes('octo/second')) || null;
+      if (secondCardEl) break;
+      await sleep(150);
+    }
+    cards = [...document.querySelectorAll('.github-item')].map((el) => (el.innerText || '').replace(/\\s+/g, ' '));
+    const aiCard = secondCardEl ? (secondCardEl.innerText || '').replace(/\\s+/g, ' ') : '';
+    const anyCardShowsYamlSeparator = cards.some((t) => /(?:^|\\s)---(?:\\s|$)/.test(t));
+    const diag = {
+      hash: location.hash,
+      itemCount: document.querySelectorAll('.inbox-item').length,
+      cardCount: cards.length,
+      statuses: (items2 || []).map((it) => it.github_repo + ':' + it.status + ':' + it.extract_status),
+      emptyText: (document.querySelector('.empty') || {}).innerText || '',
+      tab: (document.querySelector('.tabs .btn.primary') || {}).innerText || '',
+      modalOpen: !!document.querySelector('.modal')
+    };
+
     return {
-      during,
-      toastText,
-      tasks: (tasks || []).map((t) => ({ title: t.title, status: t.status, priority: t.priority })),
-      btnDisabledAfter: btn.disabled
+      hasImportBtn,
+      badError,
+      linkItem: linkItem || null,
+      aiItem: aiItem || null,
+      aiCard,
+      anyCardShowsYamlSeparator,
+      diag,
+      connected: (await inv('github:status')).connected
+    };
+  })()`);
+  // 给文档留一张「导入 GitHub 项目」弹窗的截图（填好地址、两个按钮都在）
+  await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const setInput = (el, value) => {
+      if (!el) return;
+      const proto = Object.getPrototypeOf(el);
+      const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (desc && desc.set) desc.set.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const btn = document.querySelector('.github-import-btn');
+    if (btn) btn.click();
+    for (let i = 0; i < 20 && !document.querySelector('.modal.github-import'); i += 1) await sleep(120);
+    setInput(document.querySelector('.github-import-url'), 'https://github.com/octo/second');
+    await sleep(150);
+    return true;
+  })()`);
+  await cdp.shot('github-import');
+  await cdp.eval(`(async () => {
+    const m = document.querySelector('.modal.github-import');
+    if (!m) return false;
+    const cancel = [...m.querySelectorAll('button')].find((b) => /取消/.test(b.innerText || ''));
+    if (cancel) cancel.click();
+    return true;
+  })()`);
+  results.push({
+    name: '0.11.0：收集箱顶部有「导入 GitHub 项目」入口',
+    ok: repoFlow.hasImportBtn === true,
+    detail: '入口=' + repoFlow.hasImportBtn
+  });
+  results.push({
+    name: '0.11.0：烂地址在弹窗里就被拦下（中文提示，不发请求）',
+    ok: String(repoFlow.badError || '').includes('GitHub') && String(repoFlow.badError || '').includes('owner/repo'),
+    detail: '错误文案=' + (repoFlow.badError || '').slice(0, 80)
+  });
+  results.push({
+    name: '0.11.0：脏链接能清洗成 owner/repo，并「仅保存链接」进收集箱（带 YAML）',
+    ok:
+      !!repoFlow.linkItem &&
+      String(repoFlow.linkItem.content || '').includes('repo: octo/demo') &&
+      String(repoFlow.linkItem.content || '').startsWith('---') &&
+      !String(repoFlow.linkItem.content || '').includes('github.com/octo/demo.git'),
+    detail: 'repo=' + (repoFlow.linkItem && repoFlow.linkItem.github_repo) + ' 状态=' + (repoFlow.linkItem && repoFlow.linkItem.extract_status)
+  });
+  results.push({
+    name: '0.11.0：「保存并 AI 提炼」生成知识点，卡片只显示徽章和正文（不显示 ---）',
+    ok:
+      !!repoFlow.aiItem &&
+      repoFlow.aiCard.includes('项目总结') &&
+      repoFlow.aiCard.includes('核心亮点') &&
+      repoFlow.aiCard.includes('适用场景') &&
+      repoFlow.aiCard.includes('批量处理文件') &&
+      repoFlow.anyCardShowsYamlSeparator === false,
+    detail: '卡片=' + (repoFlow.aiCard || '').slice(0, 80) + ' 诊断=' + JSON.stringify(repoFlow.diag || {})
+  });
+
+  const convertFlow = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (ch, p) => window.api.invoke(ch, p);
+    const squash = (v) => String(v || '').replace(/\\s+/g, '');
+    let card = [...document.querySelectorAll('.github-item')].find((el) => squash(el.textContent).includes('octo/second'));
+    for (let i = 0; i < 40 && !card; i += 1) {
+      await sleep(150);
+      card = [...document.querySelectorAll('.github-item')].find((el) => squash(el.textContent).includes('octo/second'));
+    }
+    if (!card) return { error: '没找到 octo/second 卡片' };
+    const row = card.closest('.inbox-item');
+    const btn = row ? row.querySelector('.github-to-note') : null;
+    if (!btn) return { error: '没有转笔记按钮' };
+    btn.click();
+    let converted = null;
+    for (let i = 0; i < 80; i += 1) {
+      await sleep(150);
+      const list = (await inv('inbox:list', { status: 'processed' })) || [];
+      converted = list.find((it) => it.github_repo === 'octo/second' && it.status === 'processed');
+      if (converted) break;
+    }
+    let note = null;
+    if (converted && converted.converted_to) {
+      const noteId = Number(String(converted.converted_to).replace('note:', ''));
+      note = await inv('note:get', { id: noteId });
+    }
+    return { converted: !!converted, noteTitle: note && note.title, content: note ? note.content : '' };
+  })()`);
+  results.push({
+    name: '0.11.0：转成知识库笔记后，正文保留 YAML frontmatter 与提炼引用块',
+    ok:
+      convertFlow.converted === true &&
+      String(convertFlow.content || '').includes('repo: octo/second') &&
+      String(convertFlow.content || '').startsWith('---') &&
+      String(convertFlow.content || '').includes('💡'),
+    detail: '笔记=' + (convertFlow.noteTitle || convertFlow.error || '') + ' 字符=' + String(convertFlow.content || '').length
+  });
+  results.push({
+    name: '0.11.0：端到端「输入 URL → AI 提炼 → 转知识库笔记」一条链路走通',
+    ok:
+      !!repoFlow.aiItem &&
+      repoFlow.aiItem.github_repo === 'octo/second' &&
+      repoFlow.aiItem.extract_status === 'done' &&
+      String(repoFlow.aiCard || '').includes('项目总结') &&
+      String(repoFlow.aiCard || '').includes('核心亮点') &&
+      convertFlow.converted === true &&
+      String(convertFlow.content || '').startsWith('---') &&
+      String(convertFlow.content || '').includes('repo: octo/second'),
+    detail:
+      'URL→repo=' + (repoFlow.aiItem && repoFlow.aiItem.github_repo) +
+      ' 提炼=' + (repoFlow.aiItem && repoFlow.aiItem.extract_status) +
+      ' 转笔记=' + convertFlow.converted +
+      ' 笔记标题=' + (convertFlow.noteTitle || '')
+  });
+
+  const aiFailFlow = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (ch, p) => window.api.invoke(ch, p);
+    const cfg = await inv('ai:config:get');
+    const goodBase = cfg.baseUrl;
+    const badBase = goodBase.replace('/ai/v1', '/ai-bad/v1');
+    await inv('ai:config:set', { baseUrl: badBase, model: 'stub-model', apiKey: 'sk-e2e-bad-key' });
+    const failed = await inv('github:import', { url: 'https://github.com/octo/boom-fallback', extract: true });
+    await inv('ai:config:set', { baseUrl: goodBase, model: 'stub-model', apiKey: 'sk-e2e-secret-123456' });
+    location.hash = '/';
+    await sleep(320);
+    location.hash = '/inbox';
+    await sleep(950);
+    const items = await inv('inbox:list', {});
+    const item = (items || []).find((it) => it.github_repo === 'octo/boom-fallback');
+    const squash = (v) => String(v || '').replace(/\\s+/g, '');
+    let card = [...document.querySelectorAll('.github-item')].find((el) => squash(el.textContent).includes('boom-fallback'));
+    for (let i = 0; i < 40 && !card; i += 1) {
+      await sleep(150);
+      card = [...document.querySelectorAll('.github-item')].find((el) => squash(el.textContent).includes('boom-fallback'));
+    }
+    const row = card ? card.closest('.inbox-item') : null;
+    const retry = row ? row.querySelector('.github-retry-btn') : null;
+    if (retry) retry.click();
+    let after = null;
+    for (let i = 0; i < 60; i += 1) {
+      await sleep(200);
+      after = (await inv('inbox:list', {})).find((it) => it.github_repo === 'octo/boom-fallback');
+      if (after && after.extract_status === 'done') break;
+    }
+    await sleep(400);
+    const squash2 = (v) => String(v || '').replace(/\\s+/g, '');
+    const cardAfter = [...document.querySelectorAll('.github-item')].find((el) => squash2(el.textContent).includes('boom-fallback'));
+    return {
+      status: failed.status,
+      itemStatus: item && item.extract_status,
+      hasRetry: !!retry,
+      afterStatus: after && after.extract_status,
+      text: cardAfter ? (cardAfter.innerText || '').replace(/\\s+/g, ' ') : ''
     };
   })()`);
   results.push({
-    name: '0.10.0：同步进行中按钮被禁用（防连点），并显示「正在同步 (1/3)」',
-    ok: ghSync1.during && ghSync1.during.disabled === true && ghSync1.during.text === true,
-    detail: 'disabled=' + (ghSync1.during && ghSync1.during.disabled) + ' 文案=' + (ghSync1.during && ghSync1.during.text)
+    name: '0.11.0：AI 失败时降级保存基础信息，并出现「重试提炼」按钮',
+    ok: aiFailFlow.status === 'ai_failed' && aiFailFlow.itemStatus === 'ai_failed' && aiFailFlow.hasRetry === true,
+    detail: '导入结果=' + aiFailFlow.status + ' 条目状态=' + aiFailFlow.itemStatus + ' 有重试按钮=' + aiFailFlow.hasRetry
   });
   results.push({
-    name: '0.10.0：三个仓库串行同步（一个 500 失败也不拖垮整轮）',
-    ok: !!ghSync1.toastText && ghSync1.toastText.includes('成功 2 个仓库') && ghSync1.toastText.includes('失败 1 个'),
-    detail: (ghSync1.toastText || '').slice(0, 120)
-  });
-  results.push({
-    name: '0.10.0：Issue → 待办映射（closed→已完成，bug→重要），PR 被过滤',
-    ok:
-      Array.isArray(ghSync1.tasks) &&
-      ghSync1.tasks.some((t) => t.title === '登录页在窄窗口下错位' && t.priority === 'important' && t.status === 'todo') &&
-      ghSync1.tasks.some((t) => t.title === '补一份 Markdown 导出说明' && t.status === 'done') &&
-      ghSync1.tasks.some((t) => t.title === '第二个仓库的 Issue') &&
-      !ghSync1.tasks.some((t) => t.title === '这是一个 PR，不该变成待办'),
-    detail: '任务 ' + (ghSync1.tasks || []).length + ' 条，PR 已过滤'
-  });
-  results.push({
-    name: '0.10.0：同步汇总 Toast（成功/失败/新增）',
-    ok: !!ghSync1.toastText && ghSync1.toastText.includes('新增 3 条任务') && ghSync1.toastText.includes('过滤掉 1 个 PR'),
-    detail: '按钮已恢复=' + ghSync1.btnDisabledAfter + ' toast=' + (ghSync1.toastText || '').slice(0, 80)
+    name: '0.11.0：点「重试提炼」能把知识点补回来（不用删了重导）',
+    ok: aiFailFlow.afterStatus === 'done' && String(aiFailFlow.text || '').includes('项目总结'),
+    detail: '重试后状态=' + aiFailFlow.afterStatus + ' 卡片=' + String(aiFailFlow.text || '').slice(0, 60)
   });
 
-  /* 去重：再点一次同步，不应该重复建任务 */
-  const ghSync2 = await cdp.eval(`(async () => {
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const repo404 = await cdp.eval(`(async () => {
     const inv = (ch, p) => window.api.invoke(ch, p);
-    const before = (await inv('task:list', { status: 'all' })).length;
-    const btn = document.querySelector('.github-sync-btn');
-    btn.click();
-    for (let i = 0; i < 140; i += 1) {
-      await sleep(150);
-      if (!btn.classList.contains('loading')) break;
+    try {
+      await inv('github:import', { url: 'https://github.com/octo/missing', extract: false });
+      return { error: '' };
+    } catch (err) {
+      return { error: (err && err.message) || String(err) };
     }
-    await sleep(800);
-    const after = (await inv('task:list', { status: 'all' })).length;
-    const toastText = ((Array.from(document.querySelectorAll('.toast-wrap .toast')).pop() || {}).innerText || '').replace(/\s+/g, ' ');
-    return { before, after, toastText };
   })()`);
   results.push({
-    name: '0.10.0：连续同步两次不会重复建任务（按 github_issue_id 去重）',
-    ok: ghSync2.before === ghSync2.after && ghSync2.toastText.includes('新增 0 条任务'),
-    detail: '第一次=' + ghSync2.before + ' 第二次=' + ghSync2.after + ' toast=' + (ghSync2.toastText || '').slice(0, 60)
+    name: '0.11.0：仓库不存在/没权限时提示 404 中文错误（不说「解析失败」）',
+    ok: String(repo404.error || '').includes('404') && String(repo404.error || '').match(/不存在|没有权限/),
+    detail: (repo404.error || '').slice(0, 100)
   });
 
-  /* 分页：octo/many 第一页正好 100 条，应该继续请求 page=2 */
-  const ghPage = await cdp.eval(`(async () => {
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const inv = (ch, p) => window.api.invoke(ch, p);
-    await inv('github:config:set', { repos: ['octo/many'] });
-    location.hash = '/tasks';
-    await sleep(600);
-    const btn = document.querySelector('.github-sync-btn');
-    btn.click();
-    for (let i = 0; i < 160; i += 1) {
-      await sleep(150);
-      if (!btn.classList.contains('loading')) break;
-    }
-    await sleep(900);
-    const toastText = ((Array.from(document.querySelectorAll('.toast-wrap .toast')).pop() || {}).innerText || '').replace(/\s+/g, ' ');
-    return { toastText };
-  })()`);
-  results.push({
-    name: '0.10.0：分页真的翻了页（per_page=100，第一页满 100 条会继续请求 page=2）',
-    ok:
-      githubCalls.some((u) => u.includes('per_page=100')) &&
-      githubCalls.some((u) => u.includes('page=2')) &&
-      ghPage.toastText.includes('新增 100 条任务'),
-    detail: '请求 ' + githubCalls.length + ' 次，示例=' + (githubCalls[0] || '')
-  });
-
-  /* 401：授权过期 → 中文提示 + 自动回设置页 */
-  const ghAuth = await cdp.eval(`(async () => {
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const inv = (ch, p) => window.api.invoke(ch, p);
-    await inv('github:config:set', { repos: ['octo/expired'] });
-    location.hash = '/tasks';
-    await sleep(700);
-    const btn = document.querySelector('.github-sync-btn');
-    if (btn) btn.click();
-    await sleep(1600);
-    const toastText = ((Array.from(document.querySelectorAll('.toast-wrap .toast')).pop() || {}).innerText || '').replace(/\s+/g, ' ');
-    return { hash: location.hash, toastText };
-  })()`);
-  results.push({
-    name: '0.10.0：401 会提示「授权已过期」并自动回设置页',
-    ok: ghAuth.hash.includes('/settings') && ghAuth.toastText.includes('授权已过期'),
-    detail: 'hash=' + ghAuth.hash + ' toast=' + (ghAuth.toastText || '').slice(0, 80)
-  });
-
-  /* 设置页：连接状态 / Token 打码 / 仓库列表（截图后再解绑） */
   const ghSettings = await cdp.eval(`(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     location.hash = '/settings';
@@ -5944,43 +6057,53 @@ try {
     const card = document.querySelector('.github-card');
     if (card) card.scrollIntoView({ block: 'center' });
     await sleep(500);
-    return { cardText: card ? card.innerText.replace(/\s+/g, ' ') : '' };
+    return { text: card ? card.innerText.replace(/\\s+/g, ' ') : '' };
   })()`);
   await sleep(300);
   await cdp.shot('github-settings');
   results.push({
-    name: '0.10.0：设置页显示授权状态（已连接 + Token 打码 + 仓库列表）',
+    name: '0.11.0：设置页只保留授权（已连接 + Token 打码 + Client ID），没有同步按钮',
     ok:
-      ghSettings.cardText.includes('已连接') &&
-      ghSettings.cardText.includes('gho…3456') &&
-      ghSettings.cardText.includes('octo/expired') &&
-      !ghSettings.cardText.includes('gho_e2e_token_123456'),
-    detail: (ghSettings.cardText || '').slice(0, 120)
+      ghSettings.text.includes('已连接') &&
+      ghSettings.text.includes('gho…3456') &&
+      ghSettings.text.includes('Client ID') &&
+      !ghSettings.text.includes('同步'),
+    detail: (ghSettings.text || '').slice(0, 120)
   });
 
-  /* 解绑：只清 Token，本地任务一条不动 */
   const ghLogout = await cdp.eval(`(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const inv = (ch, p) => window.api.invoke(ch, p);
-    const before = (await inv('task:list', {})).length;
-    const logoutBtn = document.querySelector('.github-logout-btn');
-    if (logoutBtn) logoutBtn.click();
-    await sleep(1300);
+    const before = (await inv('inbox:list', {})).length;
+    const btn = [...document.querySelectorAll('.github-card button')].find((b) => (b.textContent || '').includes('断开连接'));
+    if (btn) btn.click();
+    await sleep(1200);
     const status = await inv('github:status');
-    const after = (await inv('task:list', {})).length;
+    const after = (await inv('inbox:list', {})).length;
     const card = document.querySelector('.github-card');
-    const text = card ? card.innerText.replace(/\s+/g, ' ') : '';
-    return { before, after, connected: status.connected, text };
+    return { before, after, connected: status.connected, text: card ? card.innerText.replace(/\\s+/g, ' ') : '' };
   })()`);
   results.push({
-    name: '0.10.0：解绑 GitHub 只清 Token，本地任务一条不动',
+    name: '0.11.0：解绑 GitHub 只清 Token，收集箱里导入的条目一条不动',
     ok: ghLogout.connected === false && ghLogout.before === ghLogout.after && ghLogout.text.includes('未连接'),
     detail: '解绑前=' + ghLogout.before + ' 解绑后=' + ghLogout.after + ' connected=' + ghLogout.connected
   });
-  await cdp.eval(`(async () => {
-    await window.api.invoke('github:config:set', { repos: [] });
-    return true;
+
+  const tasksUi = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    location.hash = '/tasks';
+    await sleep(800);
+    return {
+      syncBtn: !!document.querySelector('.github-sync-btn'),
+      text: (document.body.innerText || '').includes('同步 GitHub')
+    };
   })()`);
+  results.push({
+    name: '0.11.0：任务页的旧「同步 GitHub」入口已经移除',
+    ok: tasksUi.syncBtn === false && tasksUi.text === false,
+    detail: '按钮=' + tasksUi.syncBtn + ' 文案=' + tasksUi.text
+  });
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {

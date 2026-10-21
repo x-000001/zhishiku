@@ -80,9 +80,9 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 | 命令 | 做什么 | 坑 |
 |---|---|---|
 | `npm run typecheck` | `tsc --noEmit`，必须 0 错 | — |
-| `npm run test:unit` | Vitest 24 个文件（含真临时库） | 用 `tests/stubs/electron.ts` 顶替 electron（`vitest.config.ts:9`） |
+| `npm run test:unit` | Vitest 27 个文件（含真临时库） | 用 `tests/stubs/electron.ts` 顶替 electron（`vitest.config.ts:9`） |
 | `npm run build` | 产出 `out/` | **`test:e2e` 不会自动 build**，跑 e2e 前必须先 `build` |
-| `npm run test:e2e` | 真启动 Electron + CDP 驱动（293 条） | 需要能创建命名管道（沙箱要放宽） |
+| `npm run test:e2e` | 真启动 Electron + CDP 驱动（305 条） | 需要能创建命名管道（沙箱要放宽） |
 | `npm run test:kill` | 写数据后强杀、重启校验（6 条） | 同上 |
 | `npm run test:all` | 上述按序全跑 | 最稳的一键验收 |
 | `npm run dist` | 打安装包 + 绿色版到 `C:\JwKB` | 见 §10 |
@@ -144,7 +144,7 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 - 实现：`Result<T> = {ok:true,data}|{ok:false,error}`（`src/main/ipc/common.ts:5`）；`wrap()` 统一 try/catch 并 `console.error('[IPC] 处理失败：')`（`src/main/ipc/common.ts:20-29`）；所有域在 `src/main/ipc/index.ts:16-49` 里一次性注册；preload 把 `invoke` 解包成「成功返回 data、失败 throw Error」（`src/preload/index.ts:13-23`）。
 - 为什么：渲染层永远不用判断两套错误形态；`ipcMain.removeHandler(channel)` 让重复注册幂等（`src/main/ipc/index.ts:18-21`），e2e 多次启动不冲突；错误文案能直接给用户看。
 - 代价：错误没有结构化 error code（只有中文 message），需要分类时靠文案前缀（如 AI 配置错误，`src/shared/ai.ts:221` 的 `classifyAiConfigError`）。
-- 通道规模（机器统计）：**133** 个；按域：notes 25、goals 20、review 15、tasks 15、system 15、plans 11、focus 7、update 6、ai 5、core 3、export 2、github 9。
+- 通道规模（机器统计）：**134** 个；按域：notes 25、goals 20、review 15、tasks 15、system 15、plans 11、focus 7、update 6、ai 5、core 3、github 10、export 2。
 
 ### ADR-7 e2e 用「自写 CDP 客户端」驱动真 Electron，不用 Playwright
 
@@ -171,7 +171,7 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 | **安装包图标 / 应用名 / 安装行为** | `electron-builder.yml:32`（ico）、`:50`（artifactName）、`:38-53`（NSIS）；图标生成脚本 `.tools/gen-icon.mjs`；NSIS 定制 `resources/installer.nsh` | 改完要 `npm run dist` 重打 |
 | **数据表结构** | `src/main/schema.ts:9`（`SCHEMA`）、`:245`（`FOCUS_SCHEMA` 是「加表」的最好范例） | 别忘了 `db.ts:156` 的版本号和迁移分支 |
 | **新增 IPC 通道** | 域文件 `src/main/ipc/*.ts` + 注册 `src/main/ipc/index.ts:37-47` + 渲染层封装 `src/renderer/src/api.ts:111` | 事件型通道还要加 `src/preload/index.ts:3-11` 白名单 |
-| **改 GitHub 同步 / 授权** | 主进程 `src/main/github.ts`（请求/分页/映射）、`src/main/github-sync.ts`（串行+事务）、`src/main/ipc/github.ts`（Device Flow/Token/锁）、渲染层 `src/renderer/src/github.tsx`（设置卡）、`src/renderer/src/pages/Tasks.tsx`（同步按钮） | 同步语义见 §5.5；Token 加密见 ADR-3 |
+| **改 GitHub 项目导入 / 授权** | 主进程 `src/main/github.ts`（fetchRepoInfo、Device Flow）、`src/main/repo-extract.ts`（AI 提炼 + 并发限流）、`src/main/ipc/github.ts`（通道）、渲染层 `src/renderer/src/pages/Inbox.tsx`（导入弹窗 + 卡片）与 `src/renderer/src/github.tsx`（授权卡） | 提炼链路见 §5.5；Token 加密见 ADR-3 |
 | **导出为 Markdown** | HTML→MD：`src/main/html-to-md.ts:313`；目录/文件名/图片拷贝：`src/main/export.ts:109`；IPC：`src/main/ipc/export.ts:26`；UI：`Settings.tsx:313`、`:435` | e2e 用 `JWKB_EXPORT_DIR` 跳过系统对话框 |
 | **备份 / 恢复 / 数据库自检** | `src/main/backup.ts:29`（列表）、`:53`（备份）、`:94`（每日）、`:111`（恢复）、`:136`（删除）；IPC `src/main/ipc/system.ts:39-52` | 恢复前自动备份当前库，可反悔 |
 | **检查更新 / 下载安装包** | 检查：`src/main/update.ts:132`；下载+SHA256：`src/main/updater.ts:78`；IPC：`src/main/ipc/update.ts`；URL 白名单 `:31-45` | 测试用 `JWKB_UPDATE_URL` / `JWKB_UPDATE_DRYRUN` |
@@ -311,14 +311,14 @@ stateDiagram-v2
 
 笔记正文里 `<img src="jw-att://attachments/2026-10/a.png">`，主进程把它映射到数据目录真实文件，并做「只在数据目录内」的越界检查（`src/main/index.ts:40-61`）。改附件路径逻辑要同时动 `src/shared/html.ts:22-49`（`attachmentUrl/attachmentRelFromUrl`）。
 
-### 5.5 GitHub 同步的游标、锁与增量语义
+### 5.5 GitHub 项目导入的清洗、提炼与并发锁
 
-- 游标按仓库存在 `github_sync_meta.last_synced_at`；每次成功同步该仓库后推进，失败只写 `last_error` 并继续下一个仓库（`src/main/github-sync.ts`）。
-- 同步锁是主进程模块级开关（`src/main/ipc/github.ts`）：正在同步时再次 `github:sync` 直接失败，文案「同步正在进行中，请稍候」。
-- 去重键 `task.github_issue_id`（唯一部分索引）+ `upsertGithubTask`；已软删的任务不会被复活。
-- PR 混在 Issues API 里：任何带 `pull_request` 字段的对象都必须过滤，并计入 `pruned`。
-- `since` 必须 ISO 8601（`toSinceIso()` 负责转换），GitHub 会拒绝其它格式。
-- Issue 正文写成**纯文本**进 `note`，不要直接渲染 Markdown/HTML；确实要渲染时必须先过 `sanitizeHtml()`（§8.5）。
+- 地址清洗是**入口唯一闸门**：`parseRepoUrl()`（`src/shared/github.ts`）把脏 URL 收成 `owner/repo`；非法地址抛中文错误，**不发任何请求**。
+- 拉取只走主进程：`fetchRepoInfo()`（`src/main/github.ts`）拿仓库元信息 + README（截 `GITHUB_README_LIMIT = 8000` 字符）；README 404 不算失败。
+- AI 提炼是**非流式**一次性返回（`src/main/repo-extract.ts` 的 `extractRepoNote`），Prompt 在 `src/main/ai.ts` 的 `buildRepoExtractMessages()`，含「严禁编造 README 中未提及的技术栈」与字数硬限。
+- 并发锁是**计数限流器**（`RepoExtractLimiter`，上限 `GITHUB_MAX_EXTRACT_JOBS = 2`）：`acquire()` 满了抛「同时最多提炼 2 个项目，请等待当前任务完成」，`release()` 必须在 `finally` 里调。
+- 失败降级：先落 `inbox_item` 再提炼；AI 报错时 `extract_status = ai_failed`，条目与 Markdown 都保留，卡片给「重试提炼」（`github:retry-extract`）。
+- 转笔记：`github:convert-note` 用 `db.createNote({ plain })` 把完整 YAML + Markdown 存进 `note.content`，正文 HTML 走 `renderRepoNoteHtml()` + `sanitizeHtml()`。
 
 ---
 
@@ -413,7 +413,7 @@ try {
 }
 ```
 
-同类实现：标签重命名合并 `src/main/db.ts:877-911`、标签删除 `src/main/db.ts:912-933`、迁移 v3 批量回填 `src/main/db.ts:244-252`、GitHub 单仓库同步写入（`src/main/github-sync.ts` 的 `runInTransaction`）。**新写多语句操作时照抄这个形状**，不要指望 `DatabaseSync` 自动事务。
+同类实现：标签重命名合并 `src/main/db.ts:877-911`、标签删除 `src/main/db.ts:912-933`、迁移 v3 批量回填 `src/main/db.ts:244-252`、GitHub 项目落库（`src/main/ipc/github.ts` 里的 `db.addGithubInbox` / `db.updateGithubInboxExtract`）。**新写多语句操作时照抄这个形状**，不要指望 `DatabaseSync` 自动事务。
 
 ### 8.5 其它硬规矩
 
@@ -421,7 +421,7 @@ try {
 - 全仓 `as any` 命中数为 **0**（机器统计）；不要开这个口子。
 - 用户可见文案一律中文、不吞异常（`src/renderer/src/errors.ts:11-21`）。
 - 笔记 HTML 必须过 `sanitizeHtml()`（`src/shared/html.ts:201`），渲染时禁止直接 `dangerouslySetInnerHTML` 未经清洗的内容。
-- GitHub 同步是**单向**的：只允许「远端 → 本地」，不给渲染层任何回写远端 Issue 的通道；Token 只以密文存 `meta`（§ADR-3），不要把 token 放进 IPC 返回值。
+- GitHub 项目导入是**只读**的：只从 GitHub 拉仓库信息与 README，不给渲染层任何回写远端的通道；Token 只以密文存 `meta`（§ADR-3），不要把 token 放进 IPC 返回值。
 
 ---
 
@@ -552,7 +552,7 @@ flowchart TD
 
 源码总量：58 个 TS/TSX 文件、17,237 行；测试：单测 24 文件 4,605 行、e2e 2 文件 5,918 行。
 
-## 附录 B：IPC 通道按域（133 个）
+## 附录 B：IPC 通道按域（134 个）
 
 | 域 | 数量 | 文件 |
 |---|---|---|
@@ -567,6 +567,6 @@ flowchart TD
 | ai（配置/运行/取消） | 5 | `src/main/ipc/ai.ts` |
 | core（app:info / settings） | 3 | `src/main/ipc/core.ts` |
 | export（导出 Markdown） | 2 | `src/main/ipc/export.ts` |
-| github（授权/配置/同步/解绑） | 9 | `src/main/ipc/github.ts` |
+| github（授权/导入/重试提炼/转笔记/解绑） | 10 | `src/main/ipc/github.ts` |
 
 **文档维护**：改完代码顺手改这里的行号；提交前跑 `node .tools/check-guide.cjs`，它会校验本文引用的每个路径与行号是否仍然存在。

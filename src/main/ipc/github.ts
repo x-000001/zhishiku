@@ -1,50 +1,52 @@
 /**
- * GitHub 集成的 IPC 层：认证（Device Flow）、配置、同步编排。
+ * GitHub 集成的 IPC 层：认证（Device Flow）+ 「收集箱导入开源项目」编排。
  *
  * 红线（DEVELOPER_GUIDE.md）：
  * - ADR-3：Token 只在主进程出现，用 safeStorage 加密后进 meta 表；渲染层只看打码信息。
  * - ADR-4：所有网络请求走主进程 `net.fetch`（这里是唯一实现）。
  * - ADR-6：通道注册集中在 ipc/index.ts，事件通道要登记 preload 白名单。
+ *
+ * 和 0.10.0 的区别：不再同步 Issues 到待办，而是「一个仓库 → 一条收集箱条目 + AI 提炼」。
  */
-import { net, safeStorage, shell, BrowserWindow } from 'electron';
+import { net, safeStorage, shell } from 'electron';
 import {
   GITHUB_AUTH_TIMEOUT_MS,
   GITHUB_DEFAULT_API_BASE,
   GITHUB_DEFAULT_CLIENT_ID,
   GITHUB_DEFAULT_OAUTH_BASE,
-  GITHUB_PROGRESS_CHANNEL,
-  GITHUB_SYNC_PAGE_SIZE,
-  formatSyncProgress,
-  githubIssueKey,
-  normalizeRepoName,
-  parseRepoList,
+  GITHUB_MAX_EXTRACT_JOBS,
+  formatImportResult,
+  parseRepoUrl,
   type GithubDeviceCode,
-  type GithubRepoMeta,
+  type GithubRepoInfo,
   type GithubStatus,
-  type GithubSyncProgress,
-  type GithubSyncResult
+  type RepoConvertInput,
+  type RepoImportInput
 } from '../../shared/github';
 import * as db from '../db';
 import {
-  GithubError,
   describeGithubError,
   fetchAuthenticatedUser,
-  fetchRepoIssues,
+  fetchRepoInfo,
   pollAccessToken,
   requestDeviceCode,
-  type GithubFetcher,
-  type GithubIssue
+  type GithubFetcher
 } from '../github';
-import { syncGithubIssues } from '../github-sync';
+import { aiChatOnce } from './ai';
+import {
+  RepoExtractLimiter,
+  buildLinkOnlyNote,
+  extractRepoNote,
+  renderRepoNoteHtml,
+  type RepoExtractDeps
+} from '../repo-extract';
 import type { Handle } from './common';
 
 const KEY_TOKEN_ENC = 'github.tokenEnc';
 const KEY_TOKEN_PLAIN = 'github.token';
 const KEY_LOGIN = 'github.login';
 const KEY_AVATAR = 'github.avatar';
-const KEY_REPOS = 'github.repos';
 const KEY_CLIENT_ID = 'github.clientId';
-const KEY_LAST_SYNC = 'github.lastSyncAt';
 
 // ---------------------------------------------------------------- 环境与网络
 
@@ -79,6 +81,9 @@ const netFetcher: GithubFetcher = async (url, init) => {
     text: () => res.text()
   };
 };
+
+/** 主进程里唯一的并发闸：同时最多 2 个 AI 提炼（超出直接中文报错）。 */
+const extractLimiter = new RepoExtractLimiter(GITHUB_MAX_EXTRACT_JOBS);
 
 // ---------------------------------------------------------------- Token 存取
 
@@ -120,10 +125,6 @@ function clearToken(): void {
   db.setSetting(KEY_AVATAR, '');
 }
 
-function repos(): string[] {
-  return parseRepoList(db.getSetting(KEY_REPOS) || '');
-}
-
 export function githubStatus(): GithubStatus {
   const token = readToken();
   const clientId = clientIdOf();
@@ -133,8 +134,6 @@ export function githubStatus(): GithubStatus {
     avatarUrl: db.getSetting(KEY_AVATAR) || null,
     tokenHint: maskToken(token),
     encrypted: Boolean(db.getSetting(KEY_TOKEN_ENC)),
-    repos: repos(),
-    lastSyncAt: db.getSetting(KEY_LAST_SYNC) || null,
     clientId: clientId.source === 'none' ? null : clientId.value,
     clientIdSource: clientId.source
   };
@@ -161,83 +160,39 @@ function cancelPendingAuth(): void {
   pendingAuth = null;
 }
 
-function broadcast(channel: string, payload: unknown): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send(channel, payload);
-  }
+// ---------------------------------------------------------------- 拉取 + 提炼
+
+/**
+ * 拉一个仓库的元信息与 README。公开仓库不带 Token 也能拉（但限流很低），
+ * 所以「仅保存链接」在未授权时也能用；Token 失效（401）会如实报错。
+ */
+async function loadRepoInfo(url: string): Promise<GithubRepoInfo> {
+  return fetchRepoInfo(
+    {
+      fetcher: netFetcher,
+      token: readToken(),
+      apiBase: apiBase(),
+      timeoutMs: 25_000
+    },
+    { url }
+  );
 }
 
-function emitProgress(progress: GithubSyncProgress): void {
-  broadcast(GITHUB_PROGRESS_CHANNEL, progress);
-}
-
-// ---------------------------------------------------------------- 同步锁
-
-let isSyncing = false;
-
-async function runSync(): Promise<GithubSyncResult> {
-  if (isSyncing) throw new Error('同步正在进行中，请稍候');
-  const token = readToken();
-  if (!token) throw new Error('还没连接 GitHub：请到设置页点「连接 GitHub」');
-  const list = repos();
-  if (list.length === 0) throw new Error('还没配置仓库：请到设置页填 owner/repo');
-
-  isSyncing = true;
-  const startedAt = new Date().toISOString();
-  let lastProgress: GithubSyncProgress = {
-    phase: 'start',
-    repoIndex: 0,
-    repoTotal: list.length,
-    repo: null,
-    fetched: 0
+function extractDeps(): RepoExtractDeps {
+  return {
+    chat: (messages, options) => aiChatOnce(messages, options.maxTokens)
   };
-  emitProgress(lastProgress);
-  try {
-    const result = await syncGithubIssues(
-      {
-        fetchIssues: async (repo, since) => {
-          const client = { fetcher: netFetcher, token, apiBase: apiBase(), timeoutMs: 25_000 };
-          return fetchRepoIssues(client, {
-            repo,
-            since,
-            perPage: GITHUB_SYNC_PAGE_SIZE,
-            onPage: (info) => {
-              lastProgress = {
-                phase: 'repo',
-                repoIndex: lastProgress.repoIndex,
-                repoTotal: list.length,
-                repo,
-                fetched: info.fetched
-              };
-              emitProgress(lastProgress);
-            }
-          });
-        },
-        getMeta: (repo) => db.githubRepoMeta(repo),
-        transaction: (fn) => db.runInTransaction(fn),
-        upsertTask: (issue: GithubIssue, repo: string) => db.upsertGithubTask(issue, repo),
-        saveMeta: (repo, patch) => db.saveGithubRepoMeta(repo, patch),
-        now: () => new Date(),
-        onProgress: (progress) => {
-          lastProgress = progress;
-          emitProgress(progress);
-        }
-      },
-      list
-    );
+}
 
-    if (result.succeeded > 0) {
-      db.setSetting(KEY_LAST_SYNC, new Date().toISOString());
-    } else if (result.failed.length > 0 && result.failed.every((f) => f.kind === 'unauthorized')) {
-      // 所有仓库都是 401：Token 已经不认了，通知前端回设置页重新连接（保留本地任务）。
-      throw new GithubError('unauthorized', 'GitHub 授权已失效（HTTP 401），请重新连接 GitHub', 401);
-    }
-    emitProgress({ phase: 'done', repoIndex: list.length, repoTotal: list.length, repo: null, fetched: 0 });
-    return result;
-  } finally {
-    isSyncing = false;
-    void startedAt;
-  }
+/** 把一个条目替换成「AI 提炼后的内容」，返回给前端的统一形状。 */
+async function runExtract(url: string): Promise<{ repo: string; status: 'done' | 'ai_failed'; items: ReturnType<typeof buildLinkOnlyNote> }> {
+  const info = await loadRepoInfo(url);
+  const outcome = await extractRepoNote(extractDeps(), info);
+  return {
+    repo: info.repo,
+    status: outcome.status === 'done' ? 'done' : 'ai_failed',
+    items: outcome
+  };
 }
 
 // ---------------------------------------------------------------- 注册
@@ -245,12 +200,8 @@ async function runSync(): Promise<GithubSyncResult> {
 export function registerGithub(handle: Handle): void {
   handle('github:status', () => githubStatus());
 
-  handle('github:config:set', (payload: { repos?: string[] | string; clientId?: string }) => {
-    if (payload.repos !== undefined) {
-      const list = parseRepoList(payload.repos);
-      db.setSetting(KEY_REPOS, list.join('\n'));
-    }
-    if (payload.clientId !== undefined) {
+  handle('github:config:set', (payload: { clientId?: string }) => {
+    if (payload?.clientId !== undefined) {
       db.setSetting(KEY_CLIENT_ID, String(payload.clientId ?? '').trim());
     }
     return githubStatus();
@@ -321,7 +272,7 @@ export function registerGithub(handle: Handle): void {
   handle('github:logout', () => {
     cancelPendingAuth();
     clearToken();
-    // 本地任务保留：单向同步的语义是「断开连接，不回删已经落下来的待办」。
+    // 收集箱里已经导入的条目保留：断开的是授权，不是本地数据。
     return githubStatus();
   });
 
@@ -333,40 +284,103 @@ export function registerGithub(handle: Handle): void {
     } catch {
       throw new Error('这个链接不合法');
     }
-    if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') {
+    if (parsed.protocol !== 'https:' || (parsed.hostname !== 'github.com' && parsed.hostname !== 'www.github.com')) {
       throw new Error('只能打开 github.com 的链接');
     }
     await shell.openExternal(url);
     return true;
   });
 
-  handle('github:sync', async (): Promise<GithubSyncResult> => {
+  /** 导入一个 GitHub 项目到收集箱：仅保存链接 / 保存并 AI 提炼。 */
+  handle('github:import', async (payload: RepoImportInput) => {
+    const url = String(payload?.url ?? '');
+    const repo = parseRepoUrl(url); // 严格清洗：非法地址这里就抛中文错误
+    if (!payload?.extract) {
+      const info = await loadRepoInfo(repo);
+      const outcome = buildLinkOnlyNote(info);
+      const itemId = db.addGithubInbox({
+        content: outcome.markdown,
+        repo: info.repo,
+        url: info.htmlUrl,
+        stars: info.stars,
+        language: info.language,
+        status: 'link_only',
+        meta: outcome.meta
+      });
+      return { itemId, repo: info.repo, status: 'link_only' as const, warning: null };
+    }
+
+    const release = extractLimiter.acquire(); // 满了直接抛「请等待当前任务完成」
     try {
-      return await runSync();
-    } catch (err) {
-      if (err instanceof GithubError) {
-        const wrapped = new Error(err.message);
-        (wrapped as Error & { kind?: string }).kind = err.kind;
-        throw wrapped;
-      }
-      throw err;
+      const { repo: cleanRepo, status, items } = await runExtract(repo);
+      const itemId = db.addGithubInbox({
+        content: items.markdown,
+        repo: cleanRepo,
+        url: `https://github.com/${cleanRepo}`,
+        stars: items.meta.stars ?? 0,
+        language: items.meta.language ?? null,
+        status,
+        meta: items.meta
+      });
+      return {
+        itemId,
+        repo: cleanRepo,
+        status,
+        warning: status === 'ai_failed' ? (items.meta.error ?? 'AI 提炼失败') : null
+      };
+    } finally {
+      release();
     }
   });
 
-  handle('github:repos', () => db.githubRepoMetaAll());
+  /** 重试提炼（卡片上的「重试提炼」按钮）。 */
+  handle('github:retry-extract', async (payload: { itemId: number }) => {
+    const item = db.inboxItem(Number(payload?.itemId ?? 0));
+    if (!item) throw new Error('这条收集箱条目已经不在了');
+    if (item.kind !== 'github') throw new Error('这条不是 GitHub 项目，不能提炼');
+    const url = item.github_url || item.github_repo;
+    if (!url) throw new Error('这条条目没有保存仓库地址，删掉重新导入吧');
+    if (item.extract_status === 'done') {
+      return { itemId: item.id, repo: item.github_repo ?? '', status: 'done' as const, warning: null };
+    }
+    const release = extractLimiter.acquire();
+    try {
+      const { repo: cleanRepo, status, items } = await runExtract(url);
+      db.updateGithubInboxExtract(item.id, {
+        content: items.markdown,
+        status,
+        meta: items.meta
+      });
+      return {
+        itemId: item.id,
+        repo: cleanRepo,
+        status,
+        warning: status === 'ai_failed' ? (items.meta.error ?? 'AI 提炼失败') : null
+      };
+    } finally {
+      release();
+    }
+  });
+
+  /** 转成知识库笔记：内容里 YAML 原文完整进 content（plain），富文本只做展示。 */
+  handle('github:convert-note', (payload: RepoConvertInput) => {
+    const id = Number(payload?.itemId ?? 0);
+    const item = db.inboxItem(id);
+    if (!item) throw new Error('这条收集箱条目已经不在了');
+    if (item.kind !== 'github') throw new Error('这条不是 GitHub 项目，不能用这个按钮转笔记');
+    const title = (item.github_repo || 'GitHub 项目').trim();
+    const noteId = db.createNote({
+      categoryId: payload?.categoryId ?? null,
+      title,
+      plain: item.content,
+      html: renderRepoNoteHtml(item.content)
+    });
+    db.setInboxStatus(item.id, 'processed', `note:${noteId}`);
+    return { noteId };
+  });
 }
 
-/** 预留给单测/排障：把当前进度文案打出来。 */
-export function describeProgress(progress: GithubSyncProgress): string {
-  return formatSyncProgress(progress);
+/** 给设置页/排障用：导入结果文案（避免前端各处重复拼）。 */
+export function describeImport(repo: string, status: 'done' | 'ai_failed' | 'link_only', warning: string | null): string {
+  return formatImportResult({ repo, status, warning });
 }
-
-/** 供后续版本清理：把某仓库的同步游标重置（下拉刷新语义）。 */
-export function resetRepoCursor(repo: string): GithubRepoMeta {
-  const clean = normalizeRepoName(repo);
-  db.saveGithubRepoMeta(clean, { lastSyncedAt: null, lastError: null });
-  return db.githubRepoMeta(clean) ?? { repo: clean, lastSyncedAt: null, lastError: null };
-}
-
-/** 导出给单测用：从 issue 生成唯一键。 */
-export { githubIssueKey };

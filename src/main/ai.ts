@@ -3,6 +3,7 @@
  * 网络通过注入的 fetcher 走（真实实现是主进程的 net.fetch），单测里换成假的，
  * 不启动 Electron、不真联网。渲染层永远拿不到 Key，也永远不直接发请求。
  */
+import type { GithubRepoInfo } from '../shared/github';
 import {
   AI_ACTION_LABELS,
   clampAiText,
@@ -739,3 +740,129 @@ export function plainForAi(text: string): string {
 }
 
 export type { AiTagSuggestion, AiRelatedItem };
+
+// ---------------------------------------------------------------- GitHub 项目提炼
+//
+// 一次静默的非流式请求：把 README 交给模型，换回「总结 / 亮点 / 适用场景」三段。
+// 约束文案写死在 Prompt 里：不许编造 README 没提过的技术栈，字数也有硬上限；
+// 返回解析做了容错（换行、代码块、标题写法不一致都能吃下来）。
+
+/** 提炼结果的字数上限，模型不听话时在这里二次截断。 */
+export const REPO_SUMMARY_LIMIT = 100;
+export const REPO_HIGHLIGHT_LIMIT = 30;
+export const REPO_HIGHLIGHT_COUNT = 5;
+
+export interface RepoExtractDraft {
+  summary: string;
+  highlights: string[];
+  scenes: string;
+}
+
+const REPO_EXTRACT_SYSTEM =
+  '你是资深开源项目研究员，负责把仓库 README 变成别人能快速判断“要不要用”的笔记。' +
+  '必须遵守：只根据 README 里写到的内容作答，严禁编造 README 中未提及的技术栈、性能数字或功能；' +
+  '拿不准就写“README 未提及”。输出必须是纯 Markdown，不要开场白、不要解释。';
+
+/** 拼 GitHub 项目提炼的对话消息。 */
+export function buildRepoExtractMessages(info: GithubRepoInfo): AiMessage[] {
+  const readme = clampAiText(info.readme ?? '', 8000).trim();
+  const head = [
+    `仓库：${info.repo}`,
+    `简介：${info.description ?? '（README 里没有简介）'}`,
+    `主语言：${info.language ?? '未知'}`,
+    `Star：${info.stars}`,
+    `Topics：${info.topics.length ? info.topics.join(', ') : '（无）'}`
+  ].join('\n');
+  const user = [
+    '请阅读下面这个 GitHub 仓库的 README，提炼成三段，严格按以下 Markdown 格式输出（不要加代码块围栏）：',
+    '### 项目总结',
+    '（不超过 100 字，一句话说清它是什么、解决什么问题）',
+    '### 核心亮点',
+    '- （3 到 5 条，每条不超过 30 字，只写 README 里明确提到的能力）',
+    '### 适用场景',
+    '（一句话：什么情况下值得用，什么情况下不建议用）',
+    '',
+    '硬性要求：',
+    '1. 严禁编造 README 中未提及的技术栈、数据或功能；',
+    '2. 项目总结不超过 100 字；核心亮点 3 到 5 条，每条不超过 30 字；',
+    '3. 不要在正文里重复仓库名，不要输出“以下是”之类的开场白。',
+    '',
+    '仓库信息：',
+    head,
+    '',
+    'README（已截断到 8000 字）：',
+    readme || '（这个仓库没有 README，请只根据上面的仓库信息谨慎作答，并明确写“README 未提及”。）'
+  ].join('\n');
+  return [
+    { role: 'system', content: REPO_EXTRACT_SYSTEM },
+    { role: 'user', content: user }
+  ];
+}
+
+function clip(text: string, max: number): string {
+  const value = text.replace(/\s+/g, ' ').trim();
+  return value.length > max ? value.slice(0, max).replace(/[，,、；;：:\s]+$/, '') + '…' : value;
+}
+
+function cleanLine(line: string): string {
+  return line
+    .replace(/^[\s>*_`#-]+/, '')
+    .replace(/^[\u2460-\u2473\d]+[.、)]\s*/, '')
+    .replace(/[*_`]+/g, '')
+    .trim();
+}
+
+/**
+ * 解析模型返回的三段 Markdown。容错策略：
+ * - 去掉 ``` 代码块围栏；
+ * - 标题写法不固定（## / ### / **加粗** / “项目总结：”）都能认；
+ * - 缺字段时用空串（调用方会降级保存），整段为空才抛错。
+ */
+export function parseRepoExtract(text: string): RepoExtractDraft {
+  const raw = String(text ?? '').replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '');
+  const lines = raw.split(/\r?\n/);
+  let section: 'summary' | 'highlights' | 'scenes' | '' = '';
+  const summary: string[] = [];
+  const highlights: string[] = [];
+  const scenes: string[] = [];
+  const detect = (line: string): typeof section => {
+    const value = cleanLine(line);
+    if (/项目总结|一句话总结|^总结$/.test(value)) return 'summary';
+    if (/核心亮点|主要亮点|亮点|核心特性/.test(value)) return 'highlights';
+    if (/适用场景|使用场景|适合谁|适用/.test(value)) return 'scenes';
+    return '';
+  };
+  for (const line of lines) {
+    // 列表条目本身可能含「亮点」「适用」字样，不能当小节标题
+    const bullet = /^\s*[-*•·]\s+/.test(line) || /^\s*\d+[.、)]\s+/.test(line);
+    const heading = bullet ? '' : detect(line.replace(/^#+\s*/, '').replace(/\*\*/g, ''));
+    if (heading) {
+      section = heading;
+      continue;
+    }
+    const value = cleanLine(line);
+    if (!value) continue;
+    if (!section) {
+      summary.push(value);
+      continue;
+    }
+    if (section === 'summary') summary.push(value);
+    else if (section === 'scenes') scenes.push(value);
+    else if (/^[-•·]\s*/.test(line.trim()) || highlights.length < 1) highlights.push(value);
+    else highlights.push(value);
+  }
+  const draft: RepoExtractDraft = {
+    summary: clip(summary.join(' '), REPO_SUMMARY_LIMIT),
+    highlights: Array.from(new Set(highlights.filter(Boolean)))
+      .slice(0, REPO_HIGHLIGHT_COUNT)
+      .map((item) => clip(item, REPO_HIGHLIGHT_LIMIT)),
+    scenes: clip(scenes.join(' '), 200)
+  };
+  if (!draft.summary && draft.highlights.length === 0 && !draft.scenes) {
+    throw new Error('AI 没有返回能看的提炼结果，可以稍后在卡片上点“重试提炼”');
+  }
+  return draft;
+}
+
+/** 提炼请求用的最大 token（三段文字不短，留 900 足够）。 */
+export const REPO_EXTRACT_MAX_TOKENS = 900;
