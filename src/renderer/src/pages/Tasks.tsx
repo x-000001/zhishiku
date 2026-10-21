@@ -27,6 +27,14 @@ function isOverdue(task: Task): boolean {
   return task.due_at.slice(0, 10) < todayLocal();
 }
 
+/** 列表空态文案：四档视图各说一句人话（逐条提前返回，不在 JSX 里数括号）。 */
+function emptyTextFor(view: NonNullable<TaskFilter['view']>): string {
+  if (view === 'today') return '今天没有到期任务，松一口气。';
+  if (view === 'done') return '还没有完成的任务。';
+  if (view === 'overdue') return '没有逾期任务，很好。';
+  return '这里还没有任务，在下面输入框敲一条。';
+}
+
 export default function Tasks(props: { refreshCount: () => void }): ReactNode {
   const [view, setView] = useState<NonNullable<TaskFilter['view']>>('today');
   const [status, setStatus] = useState<NonNullable<TaskFilter['status']>>('all');
@@ -333,15 +341,7 @@ export default function Tasks(props: { refreshCount: () => void }): ReactNode {
           {loading ? (
             <Empty>正在读取…</Empty>
           ) : tasks.length === 0 ? (
-            <Empty>
-              {view === 'today'
-                ? '今天没有到期任务，松一口气。'
-                : view === 'done'
-                  ? '还没有完成的任务。'
-                  : view === 'overdue'
-                    ? '没有逾期任务，很好。'
-                    : '这里还没有任务，在下面输入框敲一条。'}
-            </Empty>
+            <Empty>{emptyTextFor(view)}</Empty>
           ) : (
             tasks.map((task) => (
               <div key={task.id}>
