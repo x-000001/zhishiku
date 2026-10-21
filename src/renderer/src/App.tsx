@@ -33,6 +33,9 @@ const NAV = [
   { route: '/settings', icon: '⚙️', label: '设置' }
 ];
 
+/** 侧栏收起/展开那一下的收尾时长（毫秒）：样式里过渡 0.38s，这里多留一点尾巴再摘 class。 */
+const SIDEBAR_ANIMATE_MS = 440;
+
 function useHashRoute(): [string, (route: string) => void] {
   const [route, setRoute] = useState(() => window.location.hash.replace(/^#/, '') || '/');
   useEffect(() => {
@@ -197,7 +200,7 @@ export default function App(): ReactNode {
       window.clearTimeout(sidebarTimer.current);
       sidebarTimer.current = window.setTimeout(() => {
         root.classList.remove('sidebar-animating');
-      }, 440);
+      }, SIDEBAR_ANIMATE_MS);
     }
     setCollapsed((c) => !c);
   }, []);
