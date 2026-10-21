@@ -159,7 +159,7 @@ npm run test:all       # 上面全部按顺序跑一遍
 
 - 单元测试和端到端测试的细节、最近一次结果：`tests\unit\`、`tests\e2e\last-result.txt`、`tests\e2e\last-kill-result.txt`
 - 端到端测试会给十几个关键界面截图，放在 `tests\e2e\shots\`
-- 现在这一版：单测 **395** 项（27 个文件）、e2e **305** 项、强杀 **6** 项全过；打完包再跑 `node .tools\check-packaged.mjs` 验交付目录里的 exe（**23** 项）
+- 现在这一版：单测 **404** 项（29 个文件）、e2e **305** 项、强杀 **6** 项全过；打完包再跑 `node .tools\check-packaged.mjs` 验交付目录里的 exe（**23** 项）
 - **接手/深入开发**：先读 [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) —— 含 Day-1 SOP、7 条 ADR（为什么这么设计）、代码导航地图、IPC 流式与番茄钟状态图、工程红线、加表/加通道/加页面 Recipe、发版 SOP 与技术债清单；想先快速摸清「项目是什么 + 第一刀往哪切」，读 [TECH_REPORT.md](TECH_REPORT.md)（含架构拓扑与时序图、核心难点剖析、First PR 实操）。两份文档里的路径行号可用 `node .tools\check-doc.cjs DEVELOPER_GUIDE.md TECH_REPORT.md` 一键核对
 
 ### 打包
@@ -339,7 +339,7 @@ C:\JwKB\使用说明.txt
 
 **新功能 · 一键下载并安装更新（2026-10-18，0.5.0 已发布）**：在「检查更新」的基础上，发现新版本后的弹窗里多了主按钮 **「下载并安装」**，不用再去网页手动下载。点了以后：① 主进程流式下载安装包到系统临时目录（`JWKB_UPDATE_DIR` 可改），进度条 + 百分比 + 「已下载 / 总大小」，随时能点「取消下载」（主进程 abort、半成品自动删掉）；② 下完再用 **大小 + SHA256 双校验**（对 GitHub Release 附件的 digest），对不上就删文件并报中文错；③ 显示安装包大小和「打开文件位置 / 立即安装」；点「立即安装」后静默运行安装程序（`/S`）、本应用自动退出，NSIS 装完自动打开新版本，数据目录不变。**便携版（绿色版）没法自己覆盖正在运行的 exe**，所以这种安装形态会改成「下载完打开文件夹，你手动替换」。安全边界：下载地址只从本仓库 Release 的附件里取、只放行 `github.com` / `api.github.com`（测试用 `JWKB_UPDATE_URL` 例外），渲染层传不进任意 URL；测试用 `JWKB_UPDATE_DRYRUN=1` 走「不真执行安装程序」的分支。零新增依赖；CSS 只加了 `.update-progress` / `.update-progress-meta` 两个类，其他页面与既有样式一行没动。验证：typecheck 0 错、单测 **207**（新增 `tests/unit/updater.test.ts` 9 条 + `update.test.ts` 扩到 17 条）、e2e **222/222**（新增 3 条：下载中能取消、落盘文件大小与 SHA256 和附件一致、DRYRUN 下「立即安装」不真装且应用不退出）。
 
-**发布记录**：0.11.0 已发到 [GitHub Release v0.11.0](https://github.com/x-000001/zhishiku/releases/tag/v0.11.0)，附带 JwKB-Setup-0.11.0.exe（112,594,298 字节）；装 0.10.0 的机器点「检查更新」会看到「发现新版本 0.11.0」（这一版把旧的 Issues 同步换成收集箱项目导入 + AI 提炼，并修好了 Device Flow 授权一直「未连接」）。
+**发布记录**：0.11.0 已发到 [GitHub Release v0.11.0](https://github.com/x-000001/zhishiku/releases/tag/v0.11.0)，附带 JwKB-Setup-0.11.0.exe（112,595,649 字节）；装 0.10.0 的机器点「检查更新」会看到「发现新版本 0.11.0」（这一版把旧的 Issues 同步换成收集箱项目导入 + AI 提炼，并修好了 Device Flow 授权一直「未连接」；安装包已于 10-21 更新，修掉 AI 提炼把 Prompt 模板回显成正文的问题）。
 
 **发布记录**：0.10.0 已发到 [GitHub Release v0.10.0](https://github.com/x-000001/zhishiku/releases/tag/v0.10.0)，附带 JwKB-Setup-0.10.0.exe（112,589,040 字节）；装 0.9.2 的机器点「检查更新」会看到「发现新版本 0.10.0」。
 

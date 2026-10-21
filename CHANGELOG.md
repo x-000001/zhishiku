@@ -6,7 +6,7 @@
 
 ## [0.11.0] - 2026-10-19
 
-发布：[GitHub Release v0.11.0](https://github.com/x-000001/zhishiku/releases/tag/v0.11.0)（附件 JwKB-Setup-0.11.0.exe，112,594,298 字节）
+发布：[GitHub Release v0.11.0](https://github.com/x-000001/zhishiku/releases/tag/v0.11.0)（附件 JwKB-Setup-0.11.0.exe，112,595,649 字节）
 
 ### 变更（重构）
 
@@ -31,13 +31,15 @@
 - **`npm run diag:github` 一键诊断**（`.tools/diag-github.js`）：在真实 Electron 主进程里检查代理环境变量、`api.github.com` / `github.com/login/device` 的可达延迟与状态码、当前 Client ID 能否拿到 `device_code`（拿不到 = OAuth App 没勾 Enable Device Flow 或 ID 填错）、未授权时是否按协议回 `authorization_pending`。不再靠人肉试。
 - **修掉「浏览器里授权成功、软件里一直未连接」**：授权轮询从渲染层搬回主进程（`src/main/github-auth.ts`）。单实例锁（轮询中再点直接抛「授权正在进行中」）、`Accept: application/json` + `User-Agent: JwKB-App`、以收到响应瞬间推算 900 秒有效期、每轮 10 秒 `AbortSignal.timeout` 熔断、`slow_down` 固定 +5 秒、Token 日志一律打码（`gho…3456`）、换机器解密失败自动清空旧 Token 静默回「未连接」、`app.whenReady` 恢复登录态、登出彻底清 DB/内存/定时器。前端只负责展示验证码、**剩余有效期倒计时**，并靠 `webContents.send('github:auth')` 收结果（`github:poll-token` 通道删除，`github:cancel-auth` 保留）。
 
+- **修掉 AI 提炼「指令回显」**：模型偶尔会把 Prompt 里的格式要求原样抄进正文（项目总结变成「我们需要回答用户……」，亮点变成「（3 到 5 条，每条不超过 30 字…」），而旧解析只要正文非空就算成功。现在 ①`buildRepoExtractMessages()` 改成「你是一个 JSON 提取器」的 System Prompt，只输出 `{"summary","highlights","scenes"}` 纯 JSON，不再用括号占位写格式要求；②`parseRepoExtract()` 先按 `indexOf('{') / lastIndexOf('}')` 抠 JSON 主体（带围栏、「结果如下：」前缀、字段别名都能吃），坏 JSON 直接判失败，不再退化成 Markdown 垃圾，仍兼容旧的三段 Markdown；③两段都过「整句特征串」回显检测（`我们需要回答用户`、`严格按格式输出纯 Markdown` 等 7 条），普通含「回答用户」的正常描述不会被误杀；④README 截断改成按字符 `Array.from(text).slice(0, 8000).join('')`，不会把 emoji / 生僻字切成半个。历史脏数据用 `src/main/migrations/cleanGithubBug.ts` 在 DB 初始化后独立清理：事务里把命中模板串的 `done` 条目改判 `ai_failed`（卡片出现「↻ 重试提炼」），整体 try/catch，清理失败只打 `console.error`，绝不阻断启动，且幂等。
+
 ### 重构（外科手术，外观/交互零变更）
 
 - **番茄钟拖动不再残留监听器**（`src/renderer/src/focus.tsx`）：拖动时挂到 `window` 的 5 个监听器与 pointer capture 改为组件自己持有（`dragDetachRef` + 卸载兜底 effect），拖动中卸载会立刻解绑；原来只有松手（`pointerup` / `pointercancel`）时才会解绑。
 - **「已保存」闪标定时器归组件所有**（`src/renderer/src/pages/Knowledge.tsx`）：连点保存先清掉上一个定时器，卸载时清理，避免对已卸载组件 `setState`。
 - **任务页空态文案扁平化**（`src/renderer/src/pages/Tasks.tsx`）：4 层嵌套三元提成文件顶部纯函数 `emptyTextFor(view)`，逐条提前返回；文案、DOM、类名一字未动。
 - **侧栏收展时长不再裸写魔法数**（`src/renderer/src/App.tsx`）：`440` 提成文件顶部 `SIDEBAR_ANIMATE_MS`，仍是同一个数值。
-- 不碰 CSS / class / DOM / 快捷键 / 动画，不动 IPC 契约、数据库事务、`useEffect` 依赖数组；typecheck 0 错、单测 395、e2e 305/305、`npm run build` 通过。
+- 不碰 CSS / class / DOM / 快捷键 / 动画，不动 IPC 契约、数据库事务、`useEffect` 依赖数组；typecheck 0 错、单测 404、e2e 305/305、`npm run build` 通过。
 
 ### 数据层
 
@@ -45,7 +47,7 @@
 
 ### 验证
 
-- typecheck 0 错；单测 **395** 项（27 个文件，新增 `repo-url.test.ts` / `repo-extract.test.ts`，重写 `github-client.test.ts`）；e2e **305/305**（新增 12 条 GitHub 项目搜集断言，原有 293 条原样全过）；强杀 **6/6**；打包自检 **23/23**。
+- typecheck 0 错；单测 **404** 项（29 个文件，新增 `repo-url.test.ts` / `repo-extract.test.ts` / `repo-extract-echo.test.ts` / `clean-github-bug.test.ts`，重写 `github-client.test.ts`）；e2e **305/305**（新增 12 条 GitHub 项目搜集断言，原有 293 条原样全过）；强杀 **6/6**；打包自检 **23/23**。
 - 测试全程 mock（本地 stub 服务器 + 假 `GithubFetcher` / 假 AI），不连真 GitHub、不花 AI 额度。
 
 ## [0.10.0] - 2026-10-19

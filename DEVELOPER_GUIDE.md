@@ -80,7 +80,7 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 | 命令 | 做什么 | 坑 |
 |---|---|---|
 | `npm run typecheck` | `tsc --noEmit`，必须 0 错 | — |
-| `npm run test:unit` | Vitest 27 个文件（含真临时库） | 用 `tests/stubs/electron.ts` 顶替 electron（`vitest.config.ts:9`） |
+| `npm run test:unit` | Vitest 29 个文件（含真临时库） | 用 `tests/stubs/electron.ts` 顶替 electron（`vitest.config.ts:9`） |
 | `npm run build` | 产出 `out/` | **`test:e2e` 不会自动 build**，跑 e2e 前必须先 `build` |
 | `npm run test:e2e` | 真启动 Electron + CDP 驱动（305 条） | 需要能创建命名管道（沙箱要放宽） |
 | `npm run test:kill` | 写数据后强杀、重启校验（6 条） | 同上 |
