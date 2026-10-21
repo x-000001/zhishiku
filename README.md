@@ -159,7 +159,7 @@ npm run test:all       # 上面全部按顺序跑一遍
 
 - 单元测试和端到端测试的细节、最近一次结果：`tests\unit\`、`tests\e2e\last-result.txt`、`tests\e2e\last-kill-result.txt`
 - 端到端测试会给十几个关键界面截图，放在 `tests\e2e\shots\`
-- 现在这一版：单测 **389** 项（27 个文件）、e2e **305** 项、强杀 **6** 项全过；打完包再跑 `node .tools\check-packaged.mjs` 验交付目录里的 exe（**23** 项）
+- 现在这一版：单测 **395** 项（27 个文件）、e2e **305** 项、强杀 **6** 项全过；打完包再跑 `node .tools\check-packaged.mjs` 验交付目录里的 exe（**23** 项）
 - **接手/深入开发**：先读 [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) —— 含 Day-1 SOP、7 条 ADR（为什么这么设计）、代码导航地图、IPC 流式与番茄钟状态图、工程红线、加表/加通道/加页面 Recipe、发版 SOP 与技术债清单；想先快速摸清「项目是什么 + 第一刀往哪切」，读 [TECH_REPORT.md](TECH_REPORT.md)（含架构拓扑与时序图、核心难点剖析、First PR 实操）。两份文档里的路径行号可用 `node .tools\check-doc.cjs DEVELOPER_GUIDE.md TECH_REPORT.md` 一键核对
 
 ### 打包

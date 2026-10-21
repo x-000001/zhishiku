@@ -7,6 +7,7 @@ const ALLOWED_EVENTS = new Set([
   'update:progress',
   'focus:state',
   'github:progress',
+  'github:auth',
   'ai:stream',
   'export:progress'
 ]);

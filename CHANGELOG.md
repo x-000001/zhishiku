@@ -27,6 +27,7 @@
 - 并发锁：主进程 `RepoExtractLimiter` 限制同时最多 **2** 个提炼任务，超出直接中文提示「等待当前任务完成」，连点不会堆任务。
 - AI 提炼走**非流式**一次性返回，避免收集箱列表逐字重渲染卡顿。
 - 安全：导入的 Markdown 渲染前统一 `sanitizeHtml()`；所有 GitHub/AI 请求仍只在主进程 `net.fetch`，渲染层零网络；Token 仍 `safeStorage` 加密进 `meta`。
+- **修掉「浏览器里授权成功、软件里一直未连接」**：授权轮询从渲染层搬回主进程（`src/main/github-auth.ts`）。单实例锁（轮询中再点直接抛「授权正在进行中」）、`Accept: application/json` + `User-Agent: JwKB-App`、以收到响应瞬间推算 900 秒有效期、每轮 10 秒 `AbortSignal.timeout` 熔断、`slow_down` 固定 +5 秒、Token 日志一律打码（`gho…3456`）、换机器解密失败自动清空旧 Token 静默回「未连接」、`app.whenReady` 恢复登录态、登出彻底清 DB/内存/定时器。前端只负责展示验证码、**剩余有效期倒计时**，并靠 `webContents.send('github:auth')` 收结果（`github:poll-token` 通道删除，`github:cancel-auth` 保留）。
 
 ### 数据层
 
@@ -34,7 +35,7 @@
 
 ### 验证
 
-- typecheck 0 错；单测 **389** 项（27 个文件，新增 `repo-url.test.ts` / `repo-extract.test.ts`，重写 `github-client.test.ts`）；e2e **305/305**（新增 12 条 GitHub 项目搜集断言，原有 293 条原样全过）；强杀 **6/6**；打包自检 **23/23**。
+- typecheck 0 错；单测 **395** 项（27 个文件，新增 `repo-url.test.ts` / `repo-extract.test.ts`，重写 `github-client.test.ts`）；e2e **305/305**（新增 12 条 GitHub 项目搜集断言，原有 293 条原样全过）；强杀 **6/6**；打包自检 **23/23**。
 - 测试全程 mock（本地 stub 服务器 + 假 `GithubFetcher` / 假 AI），不连真 GitHub、不花 AI 额度。
 
 ## [0.10.0] - 2026-10-19

@@ -55,7 +55,8 @@ import type {
   UpdateProgress
 } from '../../shared/types';
 import type {
-  GithubDeviceCode,
+  GithubAuthCode,
+  GithubAuthEvent,
   GithubStatus,
   RepoConvertInput,
   RepoImportInput,
@@ -80,11 +81,17 @@ export function onEvent(
     | 'notice:due'
     | 'update:progress'
     | 'focus:state'
+    | 'github:auth'
     | 'ai:stream'
     | 'export:progress',
   listener: (payload: unknown) => void
 ): () => void {
   return bridge.on(channel, listener);
+}
+
+/** GitHub Device Flow 事件：验证码 / 已连接 / 过期 / 拒绝（主进程后台轮询的结果）。 */
+export function onGithubAuth(listener: (event: GithubAuthEvent) => void): () => void {
+  return bridge.on('github:auth', (payload) => listener(payload as GithubAuthEvent));
 }
 
 /** 导出 Markdown 的进度：主进程每写完一篇推一次。 */
@@ -327,8 +334,8 @@ export const api = {
   // ---- GitHub 集成（授权 + 收集箱导入；网络全在主进程，见 ADR-4）----
   githubStatus: () => call<GithubStatus>('github:status'),
   githubSetConfig: (input: { clientId?: string }) => call<GithubStatus>('github:config:set', input),
-  githubRequestCode: () => call<GithubDeviceCode>('github:request-code'),
-  githubPollToken: () => call<GithubStatus>('github:poll-token'),
+  /** 发起授权：立即返回验证码；验证码/成功/过期结果全部走 onGithubAuth 事件。 */
+  githubRequestCode: () => call<GithubAuthCode>('github:request-code'),
   githubCancelAuth: () => call<boolean>('github:cancel-auth'),
   githubLogout: () => call<GithubStatus>('github:logout'),
   githubOpenUrl: (url: string) => call<boolean>('github:open-url', { url }),

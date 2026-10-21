@@ -11,7 +11,10 @@
 
 /** 固定请求头版本，GitHub 要求带 User-Agent 才给 200。 */
 export const GITHUB_API_VERSION = '2022-11-28';
-export const GITHUB_USER_AGENT = 'JwKB';
+/** 0.11.0 起统一用应用名：部分网关按 UA 区分客户端，裸 `JwKB` 会被当成脚本拦掉。 */
+export const GITHUB_USER_AGENT = 'JwKB-App';
+/** 每次轮询单独超时：网络卡住时不能把 15 分钟的授权窗口白白占死。 */
+export const GITHUB_DEVICE_POLL_TIMEOUT_MS = 10 * 1000;
 
 /** 生产环境的默认地址；测试通过环境变量换成本地 stub。 */
 export const GITHUB_DEFAULT_API_BASE = 'https://api.github.com';
@@ -62,10 +65,34 @@ export interface GithubDeviceCode {
   interval: number;
 }
 
+/**
+ * 给渲染层看的设备码：**不含 device_code**（那只留在主进程内存里）。
+ * `expiresAt` 是绝对时间戳（收到响应的那一刻 + expires_in），渲染层用它算倒计时。
+ */
+export interface GithubAuthCode {
+  userCode: string;
+  verificationUri: string;
+  interval: number;
+  expiresAt: number;
+}
+
+/**
+ * 主进程 → 渲染层的授权事件（事件通道 `github:auth`，已在 preload 白名单登记）。
+ *
+ * 0.11.0 的 Device Flow 改成「主进程后台轮询 + 事件推送」：
+ * 渲染层不再自己开定时器调 IPC 轮询，所以浏览器里点完授权后能立刻收到结果。
+ */
+export type GithubAuthEvent =
+  | { type: 'code'; code: GithubAuthCode }
+  | { type: 'authorized'; status: GithubStatus }
+  | { type: 'expired'; message: string }
+  | { type: 'denied'; message: string }
+  | { type: 'error'; message: string };
+
 /** Device Flow 轮询失败时抛给前端的稳定文案。 */
 export const GITHUB_AUTH_ERRORS = {
   denied: '你取消了 GitHub 授权，可以重新点「连接 GitHub」',
-  expired: '这次授权码过期了，请重新点「连接 GitHub」',
+  expired: '验证码已过期，请重新获取',
   clientId: 'GitHub OAuth App 的 Client ID 没配置：请让开发者在设置里填，或用 JWKB_GITHUB_CLIENT_ID 启动'
 } as const;
 

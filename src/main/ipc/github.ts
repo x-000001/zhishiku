@@ -8,16 +8,17 @@
  *
  * 和 0.10.0 的区别：不再同步 Issues 到待办，而是「一个仓库 → 一条收集箱条目 + AI 提炼」。
  */
-import { net, safeStorage, shell } from 'electron';
+import { net, safeStorage, shell, type BrowserWindow } from 'electron';
 import {
-  GITHUB_AUTH_TIMEOUT_MS,
   GITHUB_DEFAULT_API_BASE,
   GITHUB_DEFAULT_CLIENT_ID,
   GITHUB_DEFAULT_OAUTH_BASE,
+  GITHUB_DEVICE_POLL_TIMEOUT_MS,
   GITHUB_MAX_EXTRACT_JOBS,
   formatImportResult,
   parseRepoUrl,
-  type GithubDeviceCode,
+  type GithubAuthCode,
+  type GithubAuthEvent,
   type GithubRepoInfo,
   type GithubStatus,
   type RepoConvertInput,
@@ -32,6 +33,7 @@ import {
   requestDeviceCode,
   type GithubFetcher
 } from '../github';
+import { authFailureEvent, deviceCodeDeadline, maskSecret } from '../github-auth';
 import { aiChatOnce } from './ai';
 import {
   RepoExtractLimiter,
@@ -92,8 +94,13 @@ function writeToken(token: string): boolean {
   db.setSetting(KEY_TOKEN_PLAIN, '');
   if (!token) return false;
   if (safeStorage.isEncryptionAvailable()) {
-    db.setSetting(KEY_TOKEN_ENC, safeStorage.encryptString(token).toString('base64'));
-    return true;
+    try {
+      db.setSetting(KEY_TOKEN_ENC, safeStorage.encryptString(token).toString('base64'));
+      return true;
+    } catch (err) {
+      // 系统加密偶尔会抽风（比如钥匙串没解锁）：降级成明文，也不能让授权流程直接崩。
+      logAuth('系统加密失败，Token 改为明文保存：', describeGithubError(err));
+    }
   }
   // 没法加密时退化成明文（设置页会明确提示「未加密」）——与 AI Key 的做法一致。
   db.setSetting(KEY_TOKEN_PLAIN, token);
@@ -106,6 +113,9 @@ function readToken(): string {
     try {
       return safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
     } catch {
+      // 换了电脑/换了系统用户，旧的 DPAPI 密文解不开：清掉 Token，静默回到未连接，绝不闪退。
+      logAuth('旧 Token 解密失败（可能换了电脑），已自动清空，按未连接处理');
+      clearToken();
       return '';
     }
   }
@@ -113,9 +123,7 @@ function readToken(): string {
 }
 
 export function maskToken(token: string): string | null {
-  if (!token) return null;
-  if (token.length <= 8) return '…';
-  return `${token.slice(0, 3)}…${token.slice(-4)}`;
+  return maskSecret(token);
 }
 
 function clearToken(): void {
@@ -141,23 +149,160 @@ export function githubStatus(): GithubStatus {
 
 // ---------------------------------------------------------------- 授权会话
 
-interface PendingAuth {
+/** 主进程里的唯一授权会话（同一时间只允许一个，防并发轮询）。 */
+interface AuthSession {
   deviceCode: string;
   interval: number;
-  expiresIn: number;
+  /** 绝对截止时间：收到设备码响应那一刻 + expires_in。 */
+  expiresAt: number;
   controller: AbortController;
+  polling: boolean;
 }
 
-let pendingAuth: PendingAuth | null = null;
+let authSession: AuthSession | null = null;
+/** 设置页所在的窗口：授权事件与启动恢复都推给它。 */
+let authWindow: BrowserWindow | null = null;
 
-function cancelPendingAuth(): void {
-  if (!pendingAuth) return;
+/** 日志统一前缀；Token/设备码只允许打码后出现。 */
+function logAuth(...args: unknown[]): void {
+  console.log('[GitHub 授权]', ...args);
+}
+
+function pushAuthEvent(event: GithubAuthEvent): void {
+  const win = authWindow;
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send('github:auth', event);
+}
+
+/**
+ * 窗口创建后登记（由 src/main/index.ts 调用）。
+ *
+ * 顺手做「启动自动恢复登录态」：页面加载完推一次当前状态，渲染层不用额外等待；
+ * 加密数据解不开时 githubStatus() 内部已经静默清空并按未连接返回，不会白屏。
+ */
+export function attachGithubWindow(win: BrowserWindow | null): void {
+  authWindow = win;
+  if (!win) return;
+  win.webContents.on('did-finish-load', () => {
+    const status = githubStatus();
+    logAuth(
+      status.connected
+        ? `启动恢复：已读到加密 Token（${status.tokenHint ?? ''}），登录态 @${status.login ?? '未知用户'}`
+        : '启动恢复：没有已保存的 Token，按未连接处理'
+    );
+    pushAuthEvent({ type: 'authorized', status });
+  });
+}
+
+/** app.whenReady 时调用：读一遍 meta 表恢复登录态（失败只记日志，不影响启动）。 */
+export function restoreGithubLoginState(): void {
   try {
-    pendingAuth.controller.abort();
+    const status = githubStatus();
+    logAuth(status.connected ? `登录态可恢复：@${status.login ?? '未知用户'}` : '当前未连接 GitHub');
+  } catch (err) {
+    logAuth('恢复登录态失败（已忽略，不影响启动）：', describeGithubError(err));
+    clearToken();
+  }
+}
+
+/** 取消当前会话：清内存 + abort 网络请求（sleep 里的定时器随 abort 一起销毁）。 */
+function cancelPendingAuth(): void {
+  const session = authSession;
+  authSession = null;
+  if (!session) return;
+  try {
+    session.controller.abort();
   } catch {
     /* 忽略 */
   }
-  pendingAuth = null;
+  logAuth('已中止当前授权会话：轮询与网络请求一起取消');
+}
+
+/**
+ * 发起授权：拿设备码 → 立刻把验证码推给渲染层 → 主进程自己在后台轮询。
+ *
+ * 这样渲染层点完按钮马上就能看到验证码（不阻塞），浏览器里授权完成后又能立刻收到结果事件。
+ */
+async function startAuth(): Promise<GithubAuthCode> {
+  if (authSession?.polling) throw new Error('授权正在进行中，请等待当前验证码过期或取消');
+  const clientId = clientIdOf();
+  if (clientId.source === 'none') {
+    throw new Error(
+      '还没配置 GitHub OAuth App 的 Client ID：让开发者用 JWKB_GITHUB_CLIENT_ID 启动，或在这里填写'
+    );
+  }
+  cancelPendingAuth();
+  const controller = new AbortController();
+  const code = await requestDeviceCode({
+    fetcher: netFetcher,
+    oauthBase: oauthBase(),
+    clientId: clientId.value,
+    signal: controller.signal,
+    timeoutMs: 20_000
+  });
+  // 有效期以「收到响应的瞬间」为基准，而不是发起请求时。
+  const expiresAt = deviceCodeDeadline(Date.now(), code.expiresIn);
+  const session: AuthSession = {
+    deviceCode: code.deviceCode,
+    interval: code.interval,
+    expiresAt,
+    controller,
+    polling: true
+  };
+  authSession = session;
+  const publicCode: GithubAuthCode = {
+    userCode: code.userCode,
+    verificationUri: code.verificationUri,
+    interval: code.interval,
+    expiresAt
+  };
+  logAuth(
+    `设备码已获取：${code.userCode}（有效期约 ${Math.max(1, Math.round((expiresAt - Date.now()) / 1000))} 秒），开始轮询`
+  );
+  pushAuthEvent({ type: 'code', code: publicCode });
+  void runPollLoop(session);
+  return publicCode;
+}
+
+/** 后台轮询直到成功 / 过期 / 拒绝；整个过程不占用渲染层的任何调用。 */
+async function runPollLoop(session: AuthSession): Promise<void> {
+  const clientId = clientIdOf();
+  try {
+    const token = await pollAccessToken({
+      fetcher: netFetcher,
+      oauthBase: oauthBase(),
+      clientId: clientId.value,
+      deviceCode: session.deviceCode,
+      interval: session.interval,
+      deadline: session.expiresAt,
+      signal: session.controller.signal,
+      timeoutMs: GITHUB_DEVICE_POLL_TIMEOUT_MS
+    });
+    logAuth(`Token 到手（已打码：${maskSecret(token)}），正在验证用户`);
+    const user = await fetchAuthenticatedUser({
+      fetcher: netFetcher,
+      token,
+      apiBase: apiBase(),
+      timeoutMs: 20_000
+    });
+    logAuth(`验证用户成功：@${user.login}`);
+    writeToken(token);
+    db.setSetting(KEY_LOGIN, user.login);
+    db.setSetting(KEY_AVATAR, user.avatarUrl || '');
+    logAuth(`Token 已加密入库（${githubStatus().encrypted ? 'DPAPI' : '未加密'}），通知前端：已连接`);
+    pushAuthEvent({ type: 'authorized', status: githubStatus() });
+  } catch (err) {
+    // 用户取消 / 登出 / 新会话会先把 authSession 换掉：这种情况不再打扰前端。
+    if (authSession !== session) return;
+    const event = authFailureEvent(err);
+    if (event) {
+      logAuth('授权失败：', event.type === 'error' ? event.message : event.type);
+      pushAuthEvent(event);
+    }
+  } finally {
+    session.polling = false;
+    if (authSession === session) authSession = null;
+  }
 }
 
 // ---------------------------------------------------------------- 拉取 + 提炼
@@ -207,62 +352,9 @@ export function registerGithub(handle: Handle): void {
     return githubStatus();
   });
 
-  handle('github:request-code', async (): Promise<GithubDeviceCode> => {
-    const clientId = clientIdOf();
-    if (clientId.source === 'none') {
-      throw new Error(
-        '还没配置 GitHub OAuth App 的 Client ID：让开发者用 JWKB_GITHUB_CLIENT_ID 启动，或在这里填写'
-      );
-    }
-    cancelPendingAuth();
-    const controller = new AbortController();
-    const code = await requestDeviceCode({
-      fetcher: netFetcher,
-      oauthBase: oauthBase(),
-      clientId: clientId.value,
-      signal: controller.signal,
-      timeoutMs: 20_000
-    });
-    pendingAuth = {
-      deviceCode: code.deviceCode,
-      interval: code.interval,
-      expiresIn: code.expiresIn,
-      controller
-    };
-    return code;
-  });
-
-  handle('github:poll-token', async (): Promise<GithubStatus> => {
-    const pending = pendingAuth;
-    if (!pending) throw new Error('这次授权已经结束，请重新点「连接 GitHub」');
-    const clientId = clientIdOf();
-    try {
-      const token = await pollAccessToken({
-        fetcher: netFetcher,
-        oauthBase: oauthBase(),
-        clientId: clientId.value,
-        deviceCode: pending.deviceCode,
-        interval: pending.interval,
-        expiresIn: pending.expiresIn,
-        signal: pending.controller.signal,
-        maxWaitMs: GITHUB_AUTH_TIMEOUT_MS
-      });
-      const user = await fetchAuthenticatedUser({
-        fetcher: netFetcher,
-        token,
-        apiBase: apiBase(),
-        timeoutMs: 20_000
-      });
-      writeToken(token);
-      db.setSetting(KEY_LOGIN, user.login);
-      db.setSetting(KEY_AVATAR, user.avatarUrl || '');
-      pendingAuth = null;
-      return githubStatus();
-    } catch (err) {
-      pendingAuth = null;
-      throw new Error(describeGithubError(err));
-    }
-  });
+  // 0.11.0：发起授权后主进程自己后台轮询，渲染层只等 `github:auth` 事件；
+  // 轮询中再发起会抛「授权正在进行中」，防止开多个会话互相踩。
+  handle('github:request-code', () => startAuth());
 
   handle('github:cancel-auth', () => {
     cancelPendingAuth();
@@ -272,6 +364,7 @@ export function registerGithub(handle: Handle): void {
   handle('github:logout', () => {
     cancelPendingAuth();
     clearToken();
+    logAuth('已登出：数据库里的 Token/用户名已清空，内存会话与定时器已清理');
     // 收集箱里已经导入的条目保留：断开的是授权，不是本地数据。
     return githubStatus();
   });

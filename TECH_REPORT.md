@@ -1,6 +1,6 @@
 # 技术分析报告（TECH_REPORT）
 
-> 基线：版本 **0.11.0**、schema **v8**、`src/` 63 个 TS/TSX 文件 19,430 行、单测 **389**（27 文件）、e2e **305**、强杀 **6**、打包自检 **23**。
+> 基线：版本 **0.11.0**、schema **v8**、`src/` 63 个 TS/TSX 文件 19,430 行、单测 **395**（27 文件）、e2e **305**、强杀 **6**、打包自检 **23**。
 > 这份报告里的每个 `path:line` 都可以用 `.tools/check-doc.cjs TECH_REPORT.md` 复核（会逐条检查文件存在 + 行号不越界 + Mermaid 图数量）。
 > 想看更细的操作手册（Day-1 SOP、发版 10 步）去 [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)；这份只回答三个问题：**它是什么、底层怎么转、我第一刀往哪切**。
 
@@ -208,7 +208,7 @@ stateDiagram-v2
 | 装依赖 | `npm ci`（首次可 `npm install`） | 需要 Node ≥ 22（本机实测 v24.19.0） |
 | 起开发 | `npm run dev` | electron-vite 热更新（渲染层 HMR） |
 | 类型检查 | `npm run typecheck` | `tsc --noEmit`，要求 0 错 |
-| 单测 | `npm run test:unit` | vitest，当前 **389** 项 / 27 文件，约 7 秒 |
+| 单测 | `npm run test:unit` | vitest，当前 **395** 项 / 27 文件，约 7 秒 |
 | 构建 + e2e | `npm run build` **然后** `npm run test:e2e` | **`test:e2e` 不会自动 build**，不 build 就跑旧 `out/`（经典坑） |
 | 强杀（断电）测试 | `npm run test:kill` | 6 项，验证 WAL + 草稿恢复 |
 | 全量门槛 | `npm run test:all` | typecheck → unit → build → e2e → kill |
@@ -368,7 +368,7 @@ npm run test:e2e         # 期望仍是 305/305（这条改动不新增断言）
 
 1. 加 CI（只跑 typecheck + unit + build）——零业务风险，收益立刻有。
 2. 拆 `Knowledge.tsx` 的 hooks——e2e 305 条是安全网，先抽逻辑再抽视图。
-3. 拆 db.ts 按域 + 各域 index.ts 重导出——单测 389 条兜底。
+3. 拆 db.ts 按域 + 各域 index.ts 重导出——单测 395 条兜底。
 4. 拆 `styles.css`（先快照最终生效值，再按层拆）。
 5. 拆 e2e 成 specs（最后做，因为它是前面所有步骤的裁判）。
 

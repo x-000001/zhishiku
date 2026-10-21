@@ -144,7 +144,7 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 - 实现：`Result<T> = {ok:true,data}|{ok:false,error}`（`src/main/ipc/common.ts:5`）；`wrap()` 统一 try/catch 并 `console.error('[IPC] 处理失败：')`（`src/main/ipc/common.ts:20-29`）；所有域在 `src/main/ipc/index.ts:16-49` 里一次性注册；preload 把 `invoke` 解包成「成功返回 data、失败 throw Error」（`src/preload/index.ts:13-23`）。
 - 为什么：渲染层永远不用判断两套错误形态；`ipcMain.removeHandler(channel)` 让重复注册幂等（`src/main/ipc/index.ts:18-21`），e2e 多次启动不冲突；错误文案能直接给用户看。
 - 代价：错误没有结构化 error code（只有中文 message），需要分类时靠文案前缀（如 AI 配置错误，`src/shared/ai.ts:221` 的 `classifyAiConfigError`）。
-- 通道规模（机器统计）：**134** 个；按域：notes 25、goals 20、review 15、tasks 15、system 15、plans 11、focus 7、update 6、ai 5、core 3、github 10、export 2。
+- 通道规模（机器统计）：**133** 个；按域：notes 25、goals 20、review 15、tasks 15、system 15、plans 11、focus 7、update 6、ai 5、core 3、github 9、export 2。
 
 ### ADR-7 e2e 用「自写 CDP 客户端」驱动真 Electron，不用 Playwright
 
@@ -552,7 +552,7 @@ flowchart TD
 
 源码总量：58 个 TS/TSX 文件、17,237 行；测试：单测 24 文件 4,605 行、e2e 2 文件 5,918 行。
 
-## 附录 B：IPC 通道按域（134 个）
+## 附录 B：IPC 通道按域（133 个）
 
 | 域 | 数量 | 文件 |
 |---|---|---|
@@ -567,6 +567,6 @@ flowchart TD
 | ai（配置/运行/取消） | 5 | `src/main/ipc/ai.ts` |
 | core（app:info / settings） | 3 | `src/main/ipc/core.ts` |
 | export（导出 Markdown） | 2 | `src/main/ipc/export.ts` |
-| github（授权/导入/重试提炼/转笔记/解绑） | 10 | `src/main/ipc/github.ts` |
+| github（授权/导入/重试提炼/转笔记/解绑） | 9 | `src/main/ipc/github.ts` |
 
 **文档维护**：改完代码顺手改这里的行号；提交前跑 `node .tools/check-guide.cjs`，它会校验本文引用的每个路径与行号是否仍然存在。

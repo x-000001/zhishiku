@@ -71,6 +71,10 @@ function aiReplyFor(messages) {
 const stubInstaller = Buffer.alloc(384 * 1024, 0x5a);
 const stubInstallerSha = createHash('sha256').update(stubInstaller).digest('hex');
 const githubCalls = [];
+/* 0.11.0：GitHub 设备码轮询计数。前两次回 authorization_pending，
+   用来证明「浏览器授权成功后是主进程自己的轮询把 Token 拿回来的」，
+   而不是像旧实现那样靠前端 setInterval 反复调一个阻塞式 IPC。 */
+let githubTokenPolls = 0;
 let stubPort = 0;
 const stubServer = http.createServer((req, res) => {
   const url = req.url || '';
@@ -150,10 +154,18 @@ const stubServer = http.createServer((req, res) => {
       res.end(JSON.stringify(body));
     };
     if (req.method === 'POST' && url.startsWith('/github/oauth/login/device/code')) {
+      /* 每次重新发起授权都从 0 开始计：固定先回两次 authorization_pending，
+         让「主进程自动轮询」和「弹窗倒计时」都有稳定的观察窗口。 */
+      githubTokenPolls = 0;
       send({ device_code: 'e2e-device-code', user_code: 'E2E-1234', verification_uri: 'https://github.com/login/device', expires_in: 900, interval: 1 });
       return;
     }
     if (req.method === 'POST' && url.startsWith('/github/oauth/login/oauth/access_token')) {
+      githubTokenPolls += 1;
+      if (githubTokenPolls <= 2) {
+        send({ error: 'authorization_pending' });
+        return;
+      }
       send({ access_token: 'gho_e2e_token_123456', token_type: 'bearer', scope: 'repo' });
       return;
     }
@@ -5783,7 +5795,19 @@ try {
     await inv('ai:config:set', { baseUrl: goodBase, model: 'stub-model', apiKey: 'sk-e2e-secret-123456' });
     await inv('github:config:set', { clientId: 'e2e-client-id' });
     await inv('github:request-code');
-    await inv('github:poll-token');
+    /* 0.11.0：不再手动调 github:poll-token。Stub 先回两次 authorization_pending，
+       Token 必须由主进程自己的轮询拿回来 —— 这里只等着变成「已连接」。 */
+    let githubPolls = 0;
+    let githubConnected = false;
+    for (let i = 0; i < 80; i += 1) {
+      const st = await inv('github:status');
+      if (st.connected) {
+        githubConnected = true;
+        break;
+      }
+      githubPolls += 1;
+      await sleep(200);
+    }
 
     location.hash = '/inbox';
     await sleep(800);
@@ -5869,6 +5893,8 @@ try {
       aiCard,
       anyCardShowsYamlSeparator,
       diag,
+      autoPollConnected: githubConnected,
+      pollsBeforeReady: githubPolls,
       connected: (await inv('github:status')).connected
     };
   })()`);
@@ -6062,13 +6088,17 @@ try {
   await sleep(300);
   await cdp.shot('github-settings');
   results.push({
-    name: '0.11.0：设置页只保留授权（已连接 + Token 打码 + Client ID），没有同步按钮',
+    name: '0.11.0：设置页只保留授权（主进程自动轮询直到已连接 + Token 打码 + Client ID），没有同步按钮',
     ok:
       ghSettings.text.includes('已连接') &&
       ghSettings.text.includes('gho…3456') &&
       ghSettings.text.includes('Client ID') &&
-      !ghSettings.text.includes('同步'),
-    detail: (ghSettings.text || '').slice(0, 120)
+      !ghSettings.text.includes('同步') &&
+      repoFlow.autoPollConnected === true,
+    detail:
+      (ghSettings.text || '').slice(0, 120) +
+      ' 自动轮询等到已连接=' + repoFlow.autoPollConnected +
+      ' 轮询次数=' + repoFlow.pollsBeforeReady
   });
 
   const ghLogout = await cdp.eval(`(async () => {
@@ -6083,10 +6113,60 @@ try {
     const card = document.querySelector('.github-card');
     return { before, after, connected: status.connected, text: card ? card.innerText.replace(/\\s+/g, ' ') : '' };
   })()`);
+  const ghReconnect = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (ch, p) => window.api.invoke(ch, p);
+    const card = document.querySelector('.github-card');
+    const btn = card ? [...card.querySelectorAll('button')].find((b) => (b.textContent || '').includes('连接 GitHub')) : null;
+    if (!btn) return { clicked: false };
+    btn.click();
+    /* 弹窗必须立刻出来（不阻塞），并且带「剩余有效期」倒计时 */
+    let modalText = '';
+    for (let i = 0; i < 40; i += 1) {
+      await sleep(120);
+      const m = document.querySelector('.modal.github-device');
+      if (m) {
+        modalText = (m.innerText || '').replace(/\\s+/g, ' ');
+        if (modalText.includes('剩余有效期')) break;
+      }
+    }
+    const codeShown = modalText.includes('剩余有效期') && modalText.includes('有效期');
+    let connected = false;
+    for (let i = 0; i < 90; i += 1) {
+      await sleep(150);
+      const st = await inv('github:status');
+      if (st.connected) {
+        connected = true;
+        break;
+      }
+    }
+    await sleep(500);
+    const after = document.querySelector('.github-card');
+    return {
+      clicked: true,
+      codeShown,
+      connected,
+      modalGone: !document.querySelector('.modal.github-device'),
+      text: after ? after.innerText.replace(/\\s+/g, ' ') : ''
+    };
+  })()`);
   results.push({
-    name: '0.11.0：解绑 GitHub 只清 Token，收集箱里导入的条目一条不动',
-    ok: ghLogout.connected === false && ghLogout.before === ghLogout.after && ghLogout.text.includes('未连接'),
-    detail: '解绑前=' + ghLogout.before + ' 解绑后=' + ghLogout.after + ' connected=' + ghLogout.connected
+    name: '0.11.0：解绑只清 Token；重新连接走「验证码 + 剩余有效期倒计时」自动完成闭环',
+    ok:
+      ghLogout.connected === false &&
+      ghLogout.before === ghLogout.after &&
+      ghLogout.text.includes('未连接') &&
+      ghReconnect.clicked === true &&
+      ghReconnect.codeShown === true &&
+      ghReconnect.connected === true &&
+      ghReconnect.modalGone === true &&
+      ghReconnect.text.includes('已连接'),
+    detail:
+      '解绑前=' + ghLogout.before + ' 解绑后=' + ghLogout.after +
+      ' 倒计时=' + ghReconnect.codeShown +
+      ' 重连=' + ghReconnect.connected +
+      ' 弹窗自动关=' + ghReconnect.modalGone +
+      ' 卡片=' + String(ghReconnect.text || '').slice(0, 50)
   });
 
   const tasksUi = await cdp.eval(`(async () => {

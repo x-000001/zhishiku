@@ -348,6 +348,11 @@ export interface PollTokenOptions {
   timeoutMs?: number;
   /** 总等待上限，默认 15 分钟。 */
   maxWaitMs?: number;
+  /**
+   * 绝对截止时间戳（收到设备码响应的那一刻 + expires_in）。
+   * 传了它就以它为准：整个轮询生命周期绝不超过设备码本身的有效期。
+   */
+  deadline?: number;
   /** 注入时钟与睡眠，单测用假实现。 */
   now?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -378,13 +383,14 @@ export async function pollAccessToken(options: PollTokenOptions): Promise<string
   const now = options.now ?? (() => Date.now());
   const sleep = options.sleep ?? defaultSleep;
   const timeoutMs = options.timeoutMs ?? GITHUB_REQUEST_TIMEOUT_MS;
-  const deadline = now() + Math.min((options.expiresIn ?? 900) * 1000, options.maxWaitMs ?? 15 * 60 * 1000);
+  const deadline =
+    options.deadline ?? now() + Math.min((options.expiresIn ?? 900) * 1000, options.maxWaitMs ?? 15 * 60 * 1000);
   let interval = Math.max(1, options.interval);
 
   for (;;) {
     if (options.signal?.aborted) throw new GithubError('canceled', '已取消 GitHub 授权');
     if (now() >= deadline) {
-      throw new GithubError('timeout', '等了 15 分钟还没完成 GitHub 授权，请重新点「连接 GitHub」');
+      throw new GithubError('timeout', GITHUB_AUTH_ERRORS.expired);
     }
     const box = linkSignal(options.signal, timeoutMs);
     const body = new URLSearchParams({
@@ -431,7 +437,8 @@ export async function pollAccessToken(options: PollTokenOptions): Promise<string
       continue;
     }
     if (code === 'slow_down') {
-      interval = typeof data.interval === 'number' ? Math.max(1, data.interval) : interval + 5;
+      // GitHub 官方语义：被要求降速就固定再追加 5 秒，不要相信响应里的 interval（它可能更小）。
+      interval += 5;
       await sleep(interval * 1000, options.signal);
       continue;
     }

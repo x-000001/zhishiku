@@ -18,6 +18,7 @@ import { ensureDirs, resolveDataRoot, todayLocal, writeLocator, type DataPaths }
 import { maybeDailyBackup } from './backup';
 import { setBackgroundMaterialName } from './material';
 import { registerIpc } from './ipc';
+import { attachGithubWindow, restoreGithubLoginState } from './ipc/github';
 
 let mainWindow: BrowserWindow | null = null;
 let captureWindow: BrowserWindow | null = null;
@@ -182,6 +183,8 @@ function createMainWindow(): BrowserWindow {
   } else {
     void win.loadFile(path.join(__dirname, '../renderer/index.html'), { query: { theme: savedTheme() } });
   }
+  // GitHub 设备码授权事件（验证码 / 已连接 / 过期）要靠这个窗口推给渲染层。
+  attachGithubWindow(win);
   return win;
 }
 
@@ -322,6 +325,8 @@ if (!gotLock) {
     if (integrity !== 'ok') console.error('[数据] 完整性检查未通过：', integrity);
 
     registerIpc(() => dataPaths, sqliteVersion());
+    // 启动自动恢复 GitHub 登录态（只读 meta 表；解密失败自动清空，不阻塞启动）。
+    restoreGithubLoginState();
     registerAttachmentProtocol();
     Menu.setApplicationMenu(null);
 

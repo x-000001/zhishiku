@@ -7,54 +7,102 @@
  * 安全约定（DEVELOPER_GUIDE.md ADR-3 / ADR-4）：
  * - 这里永远拿不到完整 Token，只显示「是否已连接 + @login + 打码尾巴」；
  * - 所有 GitHub 网络请求都在主进程，本组件只调 api.githubXxx（IPC）。
+ *
+ * 0.11.0 重构（修「浏览器已授权但软件没反应」）：
+ * - 轮询改由**主进程**在后台做，渲染层不再开定时器反复调 IPC；
+ * - 结果通过 `github:auth` 事件推过来（验证码 / 已连接 / 过期 / 拒绝）；
+ * - 弹窗按 `expiresAt` 自己算「剩余有效期 X 分 Y 秒」，过期后按钮复位成「获取新验证码」；
+ * - 所有异步回调 setState 前都检查 isMounted，卸载时摘监听并取消授权。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { api } from './api';
+import { api, onGithubAuth } from './api';
 import { errText, toastError } from './errors';
 import { Modal, toast } from './ui';
-import type { GithubDeviceCode, GithubStatus } from '../../shared/github';
+import type { GithubAuthCode, GithubStatus } from '../../shared/github';
 
 export function GithubCard(): ReactNode {
   const [status, setStatus] = useState<GithubStatus | null>(null);
   const [clientId, setClientId] = useState('');
   const [busy, setBusy] = useState<'' | 'save' | 'connect' | 'logout'>('');
   const [error, setError] = useState('');
-  const [code, setCode] = useState<GithubDeviceCode | null>(null);
+  const [code, setCode] = useState<GithubAuthCode | null>(null);
   const [polling, setPolling] = useState(false);
-  const pollRef = useRef(false);
-  const timerRef = useRef<number | null>(null);
+  /** 验证码剩余秒数，每秒本地重算（主进程只给 expiresAt 绝对时间戳）。 */
+  const [remaining, setRemaining] = useState(0);
+  /** 组件是否还挂着：卸载后任何回调都不许 setState。 */
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    let alive = true;
+    mountedRef.current = true;
     void api
       .githubStatus()
       .then((next) => {
-        if (!alive) return;
+        if (!mountedRef.current) return;
         setStatus(next);
         setClientId(next.clientId ?? '');
       })
       .catch((err: Error) => {
-        if (alive) setError(errText(err));
+        if (mountedRef.current) setError(errText(err));
       });
+
+    const off = onGithubAuth((event) => {
+      if (!mountedRef.current) return;
+      if (event.type === 'code') {
+        setCode(event.code);
+        setPolling(true);
+        setError('');
+        return;
+      }
+      if (event.type === 'authorized') {
+        setStatus(event.status);
+        setCode(null);
+        setPolling(false);
+        setError('');
+        toast(`已连接：@${event.status.login ?? 'GitHub 用户'}`);
+        return;
+      }
+      // expired / denied / error：都收掉弹窗，把原因留给卡片里的红字。
+      setCode(null);
+      setPolling(false);
+      setError(event.message);
+    });
+
     return () => {
-      alive = false;
-      pollRef.current = false;
-      if (timerRef.current !== null) window.clearInterval(timerRef.current);
+      // 卸载：摘监听 + 取消还在等待的授权（主进程会 abort 网络与定时器）。
+      mountedRef.current = false;
+      off();
+      void api.githubCancelAuth().catch(() => undefined);
     };
   }, []);
+
+  // 倒计时：每秒刷新一次；到期后显示 0，等主进程推 expired 再复位按钮。
+  useEffect(() => {
+    if (!code) {
+      setRemaining(0);
+      return;
+    }
+    const tick = (): void => {
+      setRemaining(Math.max(0, Math.ceil((code.expiresAt - Date.now()) / 1000)));
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [code]);
 
   async function saveClientId(): Promise<void> {
     setBusy('save');
     setError('');
     try {
       const next = await api.githubSetConfig({ clientId: clientId.trim() });
+      if (!mountedRef.current) return;
       setStatus(next);
       toast('已保存 Client ID');
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(errText(err));
       toastError('保存 Client ID 失败：', err);
     } finally {
-      setBusy('');
+      if (mountedRef.current) setBusy('');
     }
   }
 
@@ -63,46 +111,22 @@ export function GithubCard(): ReactNode {
     setError('');
     try {
       const next = await api.githubRequestCode();
+      if (!mountedRef.current) return;
+      // 事件也会推一份；直接用返回值是为了点完立刻出弹窗，不等下一跳。
       setCode(next);
       setPolling(true);
-      pollRef.current = true;
-      let waited = 0;
-      const interval = Math.max(1, next.interval || 5) * 1000;
-      timerRef.current = window.setInterval(() => {
-        if (!pollRef.current) return;
-        waited += interval;
-        void api
-          .githubPollToken()
-          .then((state) => {
-            pollRef.current = false;
-            setPolling(false);
-            setStatus(state);
-            setCode(null);
-            if (timerRef.current !== null) window.clearInterval(timerRef.current);
-            toast(`已连接：@${state.login ?? 'GitHub 用户'}`);
-          })
-          .catch((err: Error) => {
-            const message = errText(err);
-            // 「等待中」不是错误，继续轮询；其它错误（过期/拒绝/取消）就收摊。
-            if (/等待|还没|pending|继续/i.test(message) && waited < 15 * 60 * 1000) return;
-            pollRef.current = false;
-            setPolling(false);
-            setError(message);
-          });
-      }, interval);
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(errText(err));
       toastError('发起 GitHub 授权失败：', err);
     } finally {
-      setBusy('');
+      if (mountedRef.current) setBusy('');
     }
   }
 
   async function cancelConnect(): Promise<void> {
-    pollRef.current = false;
-    setPolling(false);
     setCode(null);
-    if (timerRef.current !== null) window.clearInterval(timerRef.current);
+    setPolling(false);
     try {
       await api.githubCancelAuth();
     } catch {
@@ -115,17 +139,21 @@ export function GithubCard(): ReactNode {
     setError('');
     try {
       const next = await api.githubLogout();
+      if (!mountedRef.current) return;
       setStatus(next);
       toast('已断开 GitHub 连接（收集箱里已导入的条目还在）');
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(errText(err));
       toastError('断开连接失败：', err);
     } finally {
-      setBusy('');
+      if (mountedRef.current) setBusy('');
     }
   }
 
   const connected = Boolean(status?.connected);
+  /** 过期后按钮文案要变成「获取新验证码」，让用户知道下一步做什么。 */
+  const expiredHint = !connected && !code && /过期/.test(error);
 
   return (
     <div className="card github-card">
@@ -159,7 +187,7 @@ export function GithubCard(): ReactNode {
             disabled={busy === 'connect' || polling}
             onClick={() => void startConnect()}
           >
-            {busy === 'connect' || polling ? '等待授权…' : '连接 GitHub'}
+            {polling ? '等待授权…' : expiredHint ? '获取新验证码' : '连接 GitHub'}
           </button>
         )}
       </div>
@@ -229,10 +257,13 @@ export function GithubCard(): ReactNode {
             <p>在 GitHub 页面里输入这个验证码：</p>
             <div className="github-user-code">{code.userCode}</div>
             <p className="muted">
-              地址：{code.verificationUri} · 有效期约 {Math.round(code.expiresIn / 60)} 分钟
+              地址：{code.verificationUri} · 剩余有效期 {Math.floor(remaining / 60)} 分{' '}
+              {remaining % 60} 秒
             </p>
             <p className="muted">
-              {polling ? '正在等待你在浏览器里确认…' : '授权完成后窗口会自动关闭。'}
+              {polling
+                ? '正在等待你在浏览器里确认…（授权完成后会自动连上，不用点别的）'
+                : '授权完成后窗口会自动关闭。'}
             </p>
           </div>
         </Modal>
