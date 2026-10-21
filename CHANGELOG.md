@@ -4,6 +4,19 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 `主.次.修订`。
 
+## [0.11.1] - 2026-10-21
+
+发布：__REL_LINK__（附件 JwKB-Setup-0.11.1.exe，__BYTES__ 字节）
+
+### 修复
+
+- **AI 提炼不再「指令回显」**：模型偶尔会把 Prompt 里的格式要求原样抄进正文（项目总结变成「我们需要回答用户……」，亮点变成「（3 到 5 条，每条不超过 30 字…」），而旧解析只要正文非空就算成功。现在 ①`buildRepoExtractMessages()` 改成「你是一个 JSON 提取器」的 System Prompt，只输出 `{"summary","highlights","scenes"}` 纯 JSON，不再用括号占位写格式要求；②`parseRepoExtract()` 先按 `indexOf('{') / lastIndexOf('}')` 抠 JSON 主体（带围栏、「结果如下：」前缀、字段别名都能吃），坏 JSON 直接判失败，不再退化成 Markdown 垃圾，仍兼容旧的三段 Markdown；③两段都过「整句特征串」回显检测（`我们需要回答用户`、`严格按格式输出纯 Markdown` 等 7 条），普通含「回答用户」的正常描述不会被误杀；④README 截断改成按字符 `Array.from(text).slice(0, 8000).join('')`，不会把 emoji / 生僻字切成半个。
+- **历史脏数据无痛清理**：新增 `src/main/migrations/cleanGithubBug.ts`，DB 初始化后独立执行：一个事务里把命中模板串的 `done` 条目改判 `ai_failed`（卡片出现「↻ 重试提炼」），整体 `try...catch`，锁库/坏库只打 `console.error`，绝不阻断启动，且幂等（第二次跑返回 0）。
+
+### 验证
+
+- typecheck 0 错；单测 **404** 项（29 个文件，新增 `repo-extract-echo.test.ts` 5 条 / `clean-github-bug.test.ts` 4 条）；e2e **305/305**（AI 润色 / 摘要 / 翻译 / 分类整理与 GitHub 导入链路全过）；强杀 **6/6**；打包自检 **23/23**。
+
 ## [0.11.0] - 2026-10-19
 
 发布：[GitHub Release v0.11.0](https://github.com/x-000001/zhishiku/releases/tag/v0.11.0)（附件 JwKB-Setup-0.11.0.exe，112,595,649 字节）
