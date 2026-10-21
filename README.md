@@ -339,7 +339,7 @@ C:\JwKB\使用说明.txt
 
 **新功能 · 一键下载并安装更新（2026-10-18，0.5.0 已发布）**：在「检查更新」的基础上，发现新版本后的弹窗里多了主按钮 **「下载并安装」**，不用再去网页手动下载。点了以后：① 主进程流式下载安装包到系统临时目录（`JWKB_UPDATE_DIR` 可改），进度条 + 百分比 + 「已下载 / 总大小」，随时能点「取消下载」（主进程 abort、半成品自动删掉）；② 下完再用 **大小 + SHA256 双校验**（对 GitHub Release 附件的 digest），对不上就删文件并报中文错；③ 显示安装包大小和「打开文件位置 / 立即安装」；点「立即安装」后静默运行安装程序（`/S`）、本应用自动退出，NSIS 装完自动打开新版本，数据目录不变。**便携版（绿色版）没法自己覆盖正在运行的 exe**，所以这种安装形态会改成「下载完打开文件夹，你手动替换」。安全边界：下载地址只从本仓库 Release 的附件里取、只放行 `github.com` / `api.github.com`（测试用 `JWKB_UPDATE_URL` 例外），渲染层传不进任意 URL；测试用 `JWKB_UPDATE_DRYRUN=1` 走「不真执行安装程序」的分支。零新增依赖；CSS 只加了 `.update-progress` / `.update-progress-meta` 两个类，其他页面与既有样式一行没动。验证：typecheck 0 错、单测 **207**（新增 `tests/unit/updater.test.ts` 9 条 + `update.test.ts` 扩到 17 条）、e2e **222/222**（新增 3 条：下载中能取消、落盘文件大小与 SHA256 和附件一致、DRYRUN 下「立即安装」不真装且应用不退出）。
 
-**发布记录**：0.11.1 已发到 __REL_LINK__（附件 JwKB-Setup-0.11.1.exe，__BYTES__ 字节）：AI 提炼改成「JSON 提取器」Prompt + JSON 主体解析，修掉模型把 Prompt 模板当正文回显的 bug；启动时自动把历史回显条目改判 `ai_failed`，卡片点「↻ 重试提炼」即可补回。
+**发布记录**：0.11.1 已发到 [GitHub Release v0.11.1](https://github.com/x-000001/zhishiku/releases/tag/v0.11.1)（附件 JwKB-Setup-0.11.1.exe，112,595,690 字节）：AI 提炼改成「JSON 提取器」Prompt + JSON 主体解析，修掉模型把 Prompt 模板当正文回显的 bug；启动时自动把历史回显条目改判 `ai_failed`，卡片点「↻ 重试提炼」即可补回。
 
 **发布记录**：0.11.0 已发到 [GitHub Release v0.11.0](https://github.com/x-000001/zhishiku/releases/tag/v0.11.0)，附带 JwKB-Setup-0.11.0.exe（112,595,649 字节）；装 0.10.0 的机器点「检查更新」会看到「发现新版本 0.11.0」（这一版把旧的 Issues 同步换成收集箱项目导入 + AI 提炼，并修好了 Device Flow 授权一直「未连接」；安装包已于 10-21 更新，修掉 AI 提炼把 Prompt 模板回显成正文的问题）。
 
