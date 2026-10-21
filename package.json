@@ -16,7 +16,8 @@
     "test:kill": "node tests/e2e/kill-test.mjs",
     "test:all": "npm run typecheck && npm run test:unit && npm run build && npm run test:e2e && npm run test:kill",
     "pack": "electron-vite build && electron-builder --win --x64 --dir",
-    "dist": "electron-vite build && node .tools/build-installer.mjs"
+    "dist": "electron-vite build && node .tools/build-installer.mjs",
+    "diag:github": "electron --no-sandbox .tools/diag-github.js"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

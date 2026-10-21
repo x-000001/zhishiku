@@ -54,11 +54,20 @@ export function GithubCard(): ReactNode {
         return;
       }
       if (event.type === 'authorized') {
-        setStatus(event.status);
+        // 事件只是「状态可能变了」的信号：以主进程重新查一遍的结果为准，避免用过期快照。
         setCode(null);
         setPolling(false);
         setError('');
-        toast(`已连接：@${event.status.login ?? 'GitHub 用户'}`);
+        void api
+          .githubStatus()
+          .then((next) => {
+            if (!mountedRef.current) return;
+            setStatus(next);
+            if (next.connected) toast(`已连接：@${next.login ?? 'GitHub 用户'}`);
+          })
+          .catch((err: Error) => {
+            if (mountedRef.current) setError(errText(err));
+          });
         return;
       }
       // expired / denied / error：都收掉弹窗，把原因留给卡片里的红字。

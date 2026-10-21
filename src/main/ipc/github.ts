@@ -8,7 +8,7 @@
  *
  * 和 0.10.0 的区别：不再同步 Issues 到待办，而是「一个仓库 → 一条收集箱条目 + AI 提炼」。
  */
-import { net, safeStorage, shell, type BrowserWindow } from 'electron';
+import { net, safeStorage, shell, BrowserWindow } from 'electron';
 import {
   GITHUB_DEFAULT_API_BASE,
   GITHUB_DEFAULT_CLIENT_ID,
@@ -160,8 +160,6 @@ interface AuthSession {
 }
 
 let authSession: AuthSession | null = null;
-/** 设置页所在的窗口：授权事件与启动恢复都推给它。 */
-let authWindow: BrowserWindow | null = null;
 
 /** 日志统一前缀；Token/设备码只允许打码后出现。 */
 function logAuth(...args: unknown[]): void {
@@ -169,9 +167,11 @@ function logAuth(...args: unknown[]): void {
 }
 
 function pushAuthEvent(event: GithubAuthEvent): void {
-  const win = authWindow;
-  if (!win || win.isDestroyed()) return;
-  win.webContents.send('github:auth', event);
+  // 广播给所有窗口：授权是主进程后台跑完的，哪个窗口开着设置页都能立刻看到结果，
+  // 不再依赖任何一次 IPC 的返回值（也不会因为窗口重建/刷新而丢事件）。
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('github:auth', event);
+  }
 }
 
 /**
@@ -181,7 +181,6 @@ function pushAuthEvent(event: GithubAuthEvent): void {
  * 加密数据解不开时 githubStatus() 内部已经静默清空并按未连接返回，不会白屏。
  */
 export function attachGithubWindow(win: BrowserWindow | null): void {
-  authWindow = win;
   if (!win) return;
   win.webContents.on('did-finish-load', () => {
     const status = githubStatus();

@@ -27,6 +27,8 @@
 - 并发锁：主进程 `RepoExtractLimiter` 限制同时最多 **2** 个提炼任务，超出直接中文提示「等待当前任务完成」，连点不会堆任务。
 - AI 提炼走**非流式**一次性返回，避免收集箱列表逐字重渲染卡顿。
 - 安全：导入的 Markdown 渲染前统一 `sanitizeHtml()`；所有 GitHub/AI 请求仍只在主进程 `net.fetch`，渲染层零网络；Token 仍 `safeStorage` 加密进 `meta`。
+- **授权结果广播到所有窗口 + 回查最新状态**：主进程拿到结果后用 `BrowserWindow.getAllWindows()` 广播 `github:auth`（原来只推给发起时那一个窗口，窗口重建/刷新就丢事件）；渲染层收到事件后不直接吃事件里的快照，而是再调一次 `github:status` 拉最新状态再 `setState`（防过期快照）。
+- **`npm run diag:github` 一键诊断**（`.tools/diag-github.js`）：在真实 Electron 主进程里检查代理环境变量、`api.github.com` / `github.com/login/device` 的可达延迟与状态码、当前 Client ID 能否拿到 `device_code`（拿不到 = OAuth App 没勾 Enable Device Flow 或 ID 填错）、未授权时是否按协议回 `authorization_pending`。不再靠人肉试。
 - **修掉「浏览器里授权成功、软件里一直未连接」**：授权轮询从渲染层搬回主进程（`src/main/github-auth.ts`）。单实例锁（轮询中再点直接抛「授权正在进行中」）、`Accept: application/json` + `User-Agent: JwKB-App`、以收到响应瞬间推算 900 秒有效期、每轮 10 秒 `AbortSignal.timeout` 熔断、`slow_down` 固定 +5 秒、Token 日志一律打码（`gho…3456`）、换机器解密失败自动清空旧 Token 静默回「未连接」、`app.whenReady` 恢复登录态、登出彻底清 DB/内存/定时器。前端只负责展示验证码、**剩余有效期倒计时**，并靠 `webContents.send('github:auth')` 收结果（`github:poll-token` 通道删除，`github:cancel-auth` 保留）。
 
 ### 重构（外科手术，外观/交互零变更）
