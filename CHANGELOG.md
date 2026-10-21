@@ -29,6 +29,14 @@
 - 安全：导入的 Markdown 渲染前统一 `sanitizeHtml()`；所有 GitHub/AI 请求仍只在主进程 `net.fetch`，渲染层零网络；Token 仍 `safeStorage` 加密进 `meta`。
 - **修掉「浏览器里授权成功、软件里一直未连接」**：授权轮询从渲染层搬回主进程（`src/main/github-auth.ts`）。单实例锁（轮询中再点直接抛「授权正在进行中」）、`Accept: application/json` + `User-Agent: JwKB-App`、以收到响应瞬间推算 900 秒有效期、每轮 10 秒 `AbortSignal.timeout` 熔断、`slow_down` 固定 +5 秒、Token 日志一律打码（`gho…3456`）、换机器解密失败自动清空旧 Token 静默回「未连接」、`app.whenReady` 恢复登录态、登出彻底清 DB/内存/定时器。前端只负责展示验证码、**剩余有效期倒计时**，并靠 `webContents.send('github:auth')` 收结果（`github:poll-token` 通道删除，`github:cancel-auth` 保留）。
 
+### 重构（外科手术，外观/交互零变更）
+
+- **番茄钟拖动不再残留监听器**（`src/renderer/src/focus.tsx`）：拖动时挂到 `window` 的 5 个监听器与 pointer capture 改为组件自己持有（`dragDetachRef` + 卸载兜底 effect），拖动中卸载会立刻解绑；原来只有松手（`pointerup` / `pointercancel`）时才会解绑。
+- **「已保存」闪标定时器归组件所有**（`src/renderer/src/pages/Knowledge.tsx`）：连点保存先清掉上一个定时器，卸载时清理，避免对已卸载组件 `setState`。
+- **任务页空态文案扁平化**（`src/renderer/src/pages/Tasks.tsx`）：4 层嵌套三元提成文件顶部纯函数 `emptyTextFor(view)`，逐条提前返回；文案、DOM、类名一字未动。
+- **侧栏收展时长不再裸写魔法数**（`src/renderer/src/App.tsx`）：`440` 提成文件顶部 `SIDEBAR_ANIMATE_MS`，仍是同一个数值。
+- 不碰 CSS / class / DOM / 快捷键 / 动画，不动 IPC 契约、数据库事务、`useEffect` 依赖数组；typecheck 0 错、单测 395、e2e 305/305、`npm run build` 通过。
+
 ### 数据层
 
 - `SCHEMA_VERSION` 7→**8**：`inbox_item` 加 `github_repo / github_url / github_stars / github_language / extract_status / extract_meta` 六列；`InboxKind` 增加一个 github 取值。老表 `github_sync_meta` 保留但不再读写（历史数据不删）。

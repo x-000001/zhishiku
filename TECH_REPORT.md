@@ -1,6 +1,6 @@
 # 技术分析报告（TECH_REPORT）
 
-> 基线：版本 **0.11.0**、schema **v8**、`src/` 63 个 TS/TSX 文件 19,430 行、单测 **395**（27 文件）、e2e **305**、强杀 **6**、打包自检 **23**。
+> 基线：版本 **0.11.0**、schema **v8**、`src/` 64 个 TS/TSX 文件 19,291 行、单测 **395**（27 文件）、e2e **305**、强杀 **6**、打包自检 **23**。
 > 这份报告里的每个 `path:line` 都可以用 `.tools/check-doc.cjs TECH_REPORT.md` 复核（会逐条检查文件存在 + 行号不越界 + Mermaid 图数量）。
 > 想看更细的操作手册（Day-1 SOP、发版 10 步）去 [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)；这份只回答三个问题：**它是什么、底层怎么转、我第一刀往哪切**。
 
@@ -31,7 +31,7 @@
 - 主窗口（`src/main/index.ts:121` `createMainWindow`，`frame:false` 自绘标题栏、Windows 11 用 acrylic 材质）
   - 左侧固定侧栏：品牌区 + 9 个导航（首页 / 收集箱 / 知识库 / 任务待办 / 学习计划 / 当前目标 / 下一阶段目标 / 复习与复盘 / 设置）+ 底部折叠按钮。
   - 顶部工具条：搜索（Ctrl+K）、快速记录（Ctrl+Alt+Space）。
-  - 主区域：11 个页面组件（`src/renderer/src/pages/` 下 11 个文件），**没有路由库**，用 hash 路由手写：`src/renderer/src/App.tsx:36` 的 `useHashRoute()` + `NAV` 表。
+  - 主区域：11 个页面组件（`src/renderer/src/pages/` 下 11 个文件），**没有路由库**，用 hash 路由手写：`src/renderer/src/App.tsx:39` 的 `useHashRoute()` + `NAV` 表。
   - 右下角悬浮层：番茄钟 `FocusDock`（`src/renderer/src/App.tsx:16` import），全局常驻、可拖动/吸边。
   - 全局轻提示：`ToastHost`（同文件 `App.tsx` 底部），带「撤销」动作。
 - 快速记录小窗（`src/main/index.ts:188` `createCaptureWindow`，560×148、失焦自动隐藏）：不打断当前工作，先扔进收集箱。
@@ -134,9 +134,9 @@ flowchart TB
 
 问题不在「怎么存 HTML」，而在**怎么在高频输入下既不丢光标、不丢撤销栈，又能自动保存、版本回滚、AI 改写**。项目里三套状态彼此牵制：
 
-1. **正文只有一个真源**：`htmlRef`（`src/renderer/src/pages/Knowledge.tsx:46` 附近）。输入时 `onInput → touchBody()`（`Knowledge.tsx:153`）只做三件事：把 `el.innerHTML` 抄进 ref、标 `dirty`、触发草稿；**不 setState 正文**——否则每敲一个字 React 就重渲染，光标会跳。
-2. **只有「换文档」才允许把 HTML 推回 DOM**：`putIntoEditor()`（`Knowledge.tsx:144`）会 sanitize + setPreviewHtml + setWordCount + `setEditorEpoch(n+1)`，而真正写 `el.innerHTML` 的 effect 依赖 `[editorEpoch, openId]`——换笔记 / 恢复草稿 / 回滚版本 / 应用模板才触发。这是全项目最容易被新人破坏的约定：**随手改 effect 依赖 = 光标乱跳 + 撤销栈清空**。
-3. **保存分三档，节奏写在 `src/renderer/src/timing.ts`**：`TIMING.draftIdle = 1000`（停手 1 秒写草稿 `note:draft`，`Knowledge.tsx:136` 的 `scheduleDraft`）、`wordCountIdle = 300`（字数统计）、`manualSave`（`Knowledge.tsx:347`，Ctrl+S / 点保存，写正式版本 `note:save`）。
+1. **正文只有一个真源**：`htmlRef`（`src/renderer/src/pages/Knowledge.tsx:46` 附近）。输入时 `onInput → touchBody()`（`Knowledge.tsx:155`）只做三件事：把 `el.innerHTML` 抄进 ref、标 `dirty`、触发草稿；**不 setState 正文**——否则每敲一个字 React 就重渲染，光标会跳。
+2. **只有「换文档」才允许把 HTML 推回 DOM**：`putIntoEditor()`（`Knowledge.tsx:146`）会 sanitize + setPreviewHtml + setWordCount + `setEditorEpoch(n+1)`，而真正写 `el.innerHTML` 的 effect 依赖 `[editorEpoch, openId]`——换笔记 / 恢复草稿 / 回滚版本 / 应用模板才触发。这是全项目最容易被新人破坏的约定：**随手改 effect 依赖 = 光标乱跳 + 撤销栈清空**。
+3. **保存分三档，节奏写在 `src/renderer/src/timing.ts`**：`TIMING.draftIdle = 1000`（停手 1 秒写草稿 `note:draft`，`Knowledge.tsx:138` 的 `scheduleDraft`）、`wordCountIdle = 300`（字数统计）、`manualSave`（`Knowledge.tsx:349`，Ctrl+S / 点保存，写正式版本 `note:save`）。
 4. **服务端兜底**：主进程 `saveNoteHtml()`（`src/main/db.ts:685`）入口再 `sanitizeHtml(html)` 一次，然后写纯文本 `content` + 清洗后的 `content_html` + 一条 `note_version`（版本回滚数据源）。所以「前端不清洗」也不会把 XSS 存进去——但**别删这一层**，它是最后一道闸。
 5. **AI 改写为何能用 Ctrl+Z 撤销**：`insertAiSummary()` / `replaceSelectionWithAi()` 走 `document.execCommand('insertHTML')` 而不是重设 `innerHTML`，一次插入一个 `<blockquote class="ai-summary">`，浏览器把它记成一条 undo 记录。
 
@@ -238,7 +238,7 @@ e2e 自带隔离：脚本会创建 `.e2e-data/` 并通过 `JWKB_DATA_DIR` 传给
 | 我想改… | 去哪 | 关键位置 |
 |---|---|---|
 | 主题 / 颜色 / 圆角 | `src/renderer/src/styles.css` | `:root` 变量（`styles.css:6`）、暗色覆盖（`styles.css:100`）、玻璃拟态 `.glass`（`styles.css:2730`） |
-| 加一个页面 | `src/renderer/src/pages/` + `App.tsx` + 侧栏配置 | 新 `pages/<你的页面>.tsx` → `App.tsx:36` 的 `useHashRoute` 与 `NAV` 表 → 渲染分支（`App.tsx` 中 `switch/page` 处） |
+| 加一个页面 | `src/renderer/src/pages/` + `App.tsx` + 侧栏配置 | 新 `pages/<你的页面>.tsx` → `App.tsx:39` 的 `useHashRoute` 与 `NAV` 表 → 渲染分支（`App.tsx` 中 `switch/page` 处） |
 | 全局快捷键 | `src/main/index.ts` | `globalShortcut.register`（`src/main/index.ts:331`）；再改设置页说明 |
 | 本地热键（Ctrl+K 等） | `src/renderer/src/App.tsx` | 全局 keydown effect（`App.tsx` 中 `keydown` 监听） |
 | 笔记编辑器工具栏按钮 | `src/renderer/src/pages/Knowledge.tsx` | 工具栏 JSX（`Knowledge.tsx` 中 `.rt-toolbar`）；命令封装在 `rich.ts` |
@@ -305,7 +305,7 @@ npm run test:e2e         # 期望仍是 305/305（这条改动不新增断言）
 | 启动失败兜底 | `src/main/index.ts:350` `dialog.showErrorBox` | 建库/迁移/路径失败时提示后退出 | 无重启/回滚建议 |
 | 数据库完整性检查 | `src/main/db.ts:342` `integrityCheck()` | 设置页「数据库自检」、启动时 | 只报错不自修 |
 | 每日/手动备份 + 恢复 | `src/main/backup.ts`、设置页「备份与恢复」 | 数据库文件级快照 | 恢复需要重启应用 |
-| 草稿自动保存 | `note:draft`（`Knowledge.tsx:136` 触发） | 断电/强杀后能找回未保存正文 | 只覆盖笔记正文 |
+| 草稿自动保存 | `note:draft`（`Knowledge.tsx:138` 触发） | 断电/强杀后能找回未保存正文 | 只覆盖笔记正文 |
 | 事务回滚 | `src/main/db.ts:764` 等内联 `BEGIN`/`COMMIT` | 批量写要么全成要么全退 | 只在显式开事务的地方 |
 | 强杀测试 | `tests/e2e/kill-test.mjs:5` | 回归「写一半断电」 | 只覆盖极少数路径 |
 | **渲染层全局兜底** | **不存在** | — | 没有 ErrorBoundary、没有 `window.onerror`、没有 `unhandledrejection`（grep 0 命中）：某个组件渲染抛错 = 白屏且无处上报（P2 技术债） |
@@ -341,7 +341,7 @@ npm run test:e2e         # 期望仍是 305/305（这条改动不新增断言）
 
 | 优先级 | 问题 | 证据 | 建议 |
 |---|---|---|---|
-| **P0** | `Knowledge.tsx` 2,285 行单组件：编辑器 + AI + 标签 + 分类树 + 版本抽屉 + 拖拽全在一个文件 | `src/renderer/src/pages/Knowledge.tsx:42` 起 | 先抽 hooks（`useNoteEditor` / `useAiActions` / `useTagActions`）再抽子组件，**保持 DOM/类名不变**，每步用 e2e 305 条兜底 |
+| **P0** | `Knowledge.tsx` 2,294 行单组件：编辑器 + AI + 标签 + 分类树 + 版本抽屉 + 拖拽全在一个文件 | `src/renderer/src/pages/Knowledge.tsx:42` 起 | 先抽 hooks（`useNoteEditor` / `useAiActions` / `useTagActions`）再抽子组件，**保持 DOM/类名不变**，每步用 e2e 305 条兜底 |
 | **P0** | e2e 是 6,140 行单脚本、顺序强耦合、跑一轮数分钟 | `tests/e2e/cdp-check.mjs:421` | 拆成 specs/*.mjs + 共享的 e2e harness 模块（Cdp/stub/rec/shot），断言之间禁止共享状态 |
 | **P1** | `db.ts` 2,480 行巨型仓储（120 个 export，所有域混在一起） | `src/main/db.ts` 全文件 | 按域拆 db/{notes,tasks,goals,review,focus,github}.ts + 各域 index.ts 重导出；现有单测可当护栏 |
 | **P1** | `styles.css` 5,148 行，同一选择器多段重复、靠特异性互相覆盖，且有**两个** `:root` | `styles.css:6` 与 `styles.css:4259` | 按域拆文件 + `@layer`；拆前先把最终生效值写成快照测试 |
@@ -360,7 +360,7 @@ npm run test:e2e         # 期望仍是 305/305（这条改动不新增断言）
 2. **`saveNoteHtml()` 的清洗链**（`db.ts:685`）：`sanitizeHtml`（白名单）→ 纯文本 → 版本快照。删一层就是 XSS 或正文丢失。
 3. **`src/preload/index.ts` 的 `ALLOWED_EVENTS` 与 invoke 解包语义**（`src/preload/index.ts:3`）：事件名漏登记 = 功能静默失效（不报错，最难查）。
 4. **`src/main/focus.ts` 的定时器/`restore()` 语义**（`src/main/focus.ts:83` / `src/main/focus.ts:137`）：改完必须跑 `focus-engine` 单测 + 强杀测试，否则「关面板就丢计时 / 重启后幽灵会话」。
-5. **`src/renderer/src/pages/Knowledge.tsx` 的 `htmlRef` + `editorEpoch` 约定**（`Knowledge.tsx:144` / `:153`）：动 effect 依赖 = 光标跳、撤销栈清空、草稿覆盖正式内容。
+5. **`src/renderer/src/pages/Knowledge.tsx` 的 `htmlRef` + `editorEpoch` 约定**（`Knowledge.tsx:146` / `:153`）：动 effect 依赖 = 光标跳、撤销栈清空、草稿覆盖正式内容。
 6. **`styles.css` 的响应式与折叠态覆盖**：`.sidebar` / `.brand` / `.focus-dock` 有多段级联，删任意一段都可能让 60px 折叠态错位（e2e 里已有专门断言）。
 7. **e2e 既有 305 条断言**：它们不是「测试」，是**产品行为契约**（键盘、快捷键、空态文案、主题、拖拽区）。改 UI 时优先改实现去满足断言，而不是改断言。
 
@@ -381,7 +381,7 @@ npm run test:e2e         # 期望仍是 305/305（这条改动不新增断言）
 | `tests/e2e/cdp-check.mjs` | 6,140 |
 | `src/renderer/src/styles.css` | 5,148 |
 | `src/main/db.ts` | 2,480 |
-| `src/renderer/src/pages/Knowledge.tsx` | 2,285 |
+| `src/renderer/src/pages/Knowledge.tsx` | 2,294 |
 | `src/main/ai.ts` | 863 |
 | `src/renderer/src/pages/Settings.tsx` | 788 |
 | `src/renderer/src/ai.tsx` | 767 |

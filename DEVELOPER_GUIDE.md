@@ -106,12 +106,12 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 
 ### ADR-2 状态管理：不引 Redux/Zustand，用「hash 路由 + 页面自取数 + App 少量全局 state」
 
-- 实现：路由 `src/renderer/src/App.tsx:36-47`（监听 `hashchange`，`navigate()` 只改 hash）；页面切换在 `src/renderer/src/App.tsx:335-343`；全局只有 6 个 state：`route/collapsed/inboxCount/openNoteId/searchOpen/theme/drawerOpen`（`src/renderer/src/App.tsx:122-128`）。数据统一由页面在 `useEffect` 里 `api.xxx()` 拉取（如 `Knowledge.tsx:262` 的 `loadList`）。
+- 实现：路由 `src/renderer/src/App.tsx:39-50`（监听 `hashchange`，`navigate()` 只改 hash）；页面切换在 `src/renderer/src/App.tsx:338-346`；全局只有 6 个 state：`route/collapsed/inboxCount/openNoteId/searchOpen/theme/drawerOpen`（`src/renderer/src/App.tsx:125-131`）。数据统一由页面在 `useEffect` 里 `api.xxx()` 拉取（如 `Knowledge.tsx:264` 的 `loadList`）。
 - 为什么：
   1. 单窗口、9 个页面、页面间共享状态极少（只有主题、侧栏折叠、收集箱角标、跨页打开笔记）；
   2. 数据「真相」在 SQLite，前端缓存越多越容易和库里不一致（这个项目历史上踩过「改完不刷新」的坑）；
   3. 少一层依赖 = 少一次升级冲突，作者能读懂全部代码。
-- 代价：**prop drilling**（`navigate`/`refreshCount` 逐层传，`App.tsx:335-343`）；页面内大组件状态多（`Knowledge.tsx` 有 20+ 个 `useState`）。
+- 代价：**prop drilling**（`navigate`/`refreshCount` 逐层传，`App.tsx:338-346`）；页面内大组件状态多（`Knowledge.tsx` 有 20+ 个 `useState`）。
 - 什么时候该换：页面间需要共享「正在编辑的笔记」这类连续状态，或者出现三处以上 `refreshCount` 级联时，再引 Context/Zustand。
 
 ### ADR-3 API Key 用 `safeStorage` 加密存 SQLite，绝不明文进渲染层
@@ -131,10 +131,10 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 
 ### ADR-5 笔记正文用 `contenteditable + execCommand`，不用 CodeMirror/ProseMirror
 
-- 实现：编辑器容器 `src/renderer/src/pages/Knowledge.tsx:1629`；工具条 `Knowledge.tsx:1401-1600`；底层命令封装在 `src/renderer/src/rich.ts:24-72`（`exec/bold/italic/insertTable…`）。
+- 实现：编辑器容器 `src/renderer/src/pages/Knowledge.tsx:1639`；工具条 `Knowledge.tsx:1411-1610`；底层命令封装在 `src/renderer/src/rich.ts:24-72`（`exec/bold/italic/insertTable…`）。
 - 为什么：
   1. 需求是「所见即所得 + 粘图 + 表格 + 颜色高亮」，`contenteditable` 原生支持；
-  2. 原生撤销栈可用 → AI 摘要插入后一次 `Ctrl+Z` 能整块撤掉（`Knowledge.tsx:783-808`，依赖浏览器 undo）；
+  2. 原生撤销栈可用 → AI 摘要插入后一次 `Ctrl+Z` 能整块撤掉（`Knowledge.tsx:793-818`，依赖浏览器 undo）；
   3. 没有引入重型编辑器依赖（ProseMirror/TipTap 会显著增加包体和复杂度）。
 - 代价：必须自己洗 HTML —— 所有入库 HTML 都过 `sanitizeHtml()`（`src/shared/html.ts:201`，白名单在 `:86-124`）；`execCommand` 已被标准标为废弃但 Chromium 仍稳定支持。
 - 现状：`package.json:34-36` 仍声明了三个 CodeMirror 依赖，但 `src/` 里**没有任何 import**（实测 grep 0 命中）——属于历史遗留，见 §10 技术债。
@@ -158,11 +158,11 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 
 | 我想改… | 去这里 | 备注 |
 |---|---|---|
-| **配色/主题/圆角/字体** | `src/renderer/src/styles.css:6`（`:root` 令牌）、`:100`（`[data-theme='dark']`）；主题切换 `src/renderer/src/App.tsx:153-163` | 只吃 CSS 变量；不要硬编码颜色 |
+| **配色/主题/圆角/字体** | `src/renderer/src/styles.css:6`（`:root` 令牌）、`:100`（`[data-theme='dark']`）；主题切换 `src/renderer/src/App.tsx:156-166` | 只吃 CSS 变量；不要硬编码颜色 |
 | **毛玻璃质感** | `src/renderer/src/styles.css:2730` `.glass`；令牌 `:66-98` | 深色令牌在 `:100-160` |
 | **拖拽窗口的标题栏区域** | `src/renderer/src/styles.css:2757`（`-webkit-app-region: drag`）、`:2768`（no-drag 白名单） | 新按钮要显式加 `no-drag`，否则点不动（0.8.1 的番茄钟就是踩这个坑） |
-| **全局快捷键** | `Ctrl+K/N/1-9`：`src/renderer/src/App.tsx:205-224`；快速记录全局热键：`src/main/index.ts:331`；托盘菜单加速键：`src/main/index.ts:255` | Esc 关闭在 `src/renderer/src/ui.tsx` 的 Modal 内 |
-| **编辑器快捷键（Ctrl+B/Ctrl+S 等）** | 保存：`src/renderer/src/pages/Knowledge.tsx:377-384`；工具条按钮：`Knowledge.tsx:1401-1600` | 按钮用 `onMouseDown={e=>e.preventDefault()}` 防失焦 |
+| **全局快捷键** | `Ctrl+K/N/1-9`：`src/renderer/src/App.tsx:208-227`；快速记录全局热键：`src/main/index.ts:331`；托盘菜单加速键：`src/main/index.ts:255` | Esc 关闭在 `src/renderer/src/ui.tsx` 的 Modal 内 |
+| **编辑器快捷键（Ctrl+B/Ctrl+S 等）** | 保存：`src/renderer/src/pages/Knowledge.tsx:387-394`；工具条按钮：`Knowledge.tsx:1411-1610` | 按钮用 `onMouseDown={e=>e.preventDefault()}` 防失焦 |
 | **AI 的提示词（Prompt）** | `src/main/ai.ts:170`（`SYSTEM_PROMPT`）+ `:178-260`（每个动作的 user prompt） | 改完跑 `tests/unit/ai-client.test.ts` |
 | **AI 的模型参数（max_tokens/温度/超时）** | `src/shared/ai.ts:56`（`aiMaxTokens`）；超时 `src/main/ai.ts:22`（`AI_TIMEOUTS`）；请求体 `buildChatRequest` 在 `src/main/ai.ts` 内 | 3 道超时闸：响应头 10s / 空闲 60s / 总 180s |
 | **AI 的设置页 UI** | `src/renderer/src/pages/Settings.tsx:545`（`.ai-settings-card`）；保存/测试连接：`:241`、`:266` | Key 从不回填到输入框 |
@@ -272,7 +272,7 @@ stateDiagram-v2
   end note
 ```
 
-其余「跨页状态」都在渲染层 App：主题（`App.tsx:153`）、侧栏折叠（`:123`）、收集箱角标（`:124`，各页 save 后调 `refreshCount`）、跨页打开笔记（`:125`，首页/收集箱点笔记 → `navigate('/knowledge')` + `openNote`）。
+其余「跨页状态」都在渲染层 App：主题（`App.tsx:156`）、侧栏折叠（`:123`）、收集箱角标（`:124`，各页 save 后调 `refreshCount`）、跨页打开笔记（`:125`，首页/收集箱点笔记 → `navigate('/knowledge')` + `openNote`）。
 
 ---
 
@@ -293,10 +293,10 @@ stateDiagram-v2
 ### 5.2 设计令牌与 `.glass`
 
 - 浅色令牌：`src/renderer/src/styles.css:6-98`（`--bg/--text/--brand/--radius/--shadow/--spring-ease/--sidebar-w` 等）。
-- 深色令牌：`src/renderer/src/styles.css:100-160`（挂载在 `<html data-theme="dark">`，由 `App.tsx:153` 设置）。
+- 深色令牌：`src/renderer/src/styles.css:100-160`（挂载在 `<html data-theme="dark">`，由 `App.tsx:156` 设置）。
 - 毛玻璃：`src/renderer/src/styles.css:2730` `.glass`（配 `--glass-bg/--glass-border/--glass-blur`，`:78-81`）。
 - 时间常量与 CSS 对齐：`src/renderer/src/timing.ts:8-35`（改动画时长要两处一起改，注释里标了「跟 CSS 对齐」）。
-- 布局断点：`readLayout()` 返回 `wide|rail|drawer|single`（`src/renderer/src/App.tsx:54-62`），侧栏宽度令牌 `--sidebar-w: 232px` / `--rail-w: 60px`（`styles.css:60-64`）。
+- 布局断点：`readLayout()` 返回 `wide|rail|drawer|single`（`src/renderer/src/App.tsx:57-65`），侧栏宽度令牌 `--sidebar-w: 232px` / `--rail-w: 60px`（`styles.css:60-64`）。
 
 ### 5.3 环境变量怎么进来
 
@@ -328,7 +328,7 @@ stateDiagram-v2
 |---|---|---|
 | NSIS 安装包（`electron-builder --win`） | `package.json:19`、`electron-builder.yml:31-53` | `npm run dist` 直接失败；只能 `npm run build` 跑渲染层 |
 | DPAPI 加密 Key（`safeStorage`） | `src/main/ipc/ai.ts:38-70` | Linux 需要 libsecret，未装则 `isEncryptionAvailable=false` → 退化为明文（会显示「未加密」） |
-| 自绘标题栏 + 红黄绿灯 | `src/main/index.ts:135`、`src/renderer/src/App.tsx:93-120`、`styles.css:2757` | 行为可跑，但视觉与系统习惯不一致；`-webkit-app-region` 在 Linux 上表现不同 |
+| 自绘标题栏 + 红黄绿灯 | `src/main/index.ts:135`、`src/renderer/src/App.tsx:96-123`、`styles.css:2757` | 行为可跑，但视觉与系统习惯不一致；`-webkit-app-region` 在 Linux 上表现不同 |
 | Windows 11 亚克力材质 | `src/main/index.ts:115-119,149-159` | 自动退回 CSS 渐变，不报错 |
 | 托盘图标 16px 缩放 | `src/main/index.ts:75-78` | mac 菜单栏图标规范不同，需另出模板图 |
 | e2e/强杀/打包自检 | `tests/e2e/cdp-check.mjs:17`、`kill-test.mjs:16`、`.tools/check-packaged.mjs:11` | 硬编码 `node_modules/electron/dist/electron.exe`，mac 上要先改可执行名 |
@@ -394,7 +394,7 @@ git grep -n -I "sk-" -- . ':!*.md'       # 不应命中真实 Key
 
 - 侧栏收起/展开、悬浮球拖动都只动 `transform`/`opacity`，不碰 `left/top/width`（悬浮球：`styles.css:4590-4603` + `src/renderer/src/focus.tsx` 里写 `style.transform`）。目的：只触发合成层，不触发布局重排。
 - 拖动用 Pointer Events + `setPointerCapture`，松手/窗口失焦统一收尾（`src/renderer/src/focus.tsx` 里 `onFabPointerDown`）；位置记忆在 `localStorage` 键 `jw-focus-fab-pos`（`focus.tsx:49`），坐标换算与边界在纯函数 `src/renderer/src/fabPos.ts`（可单测）。
-- 长列表/编辑器：`htmlRef` 存正文、`editorEpoch` 控制何时回填 DOM（`Knowledge.tsx:143-160`），避免每敲一个字就 `setState` 大 HTML。
+- 长列表/编辑器：`htmlRef` 存正文、`editorEpoch` 控制何时回填 DOM（`Knowledge.tsx:145-162`），避免每敲一个字就 `setState` 大 HTML。
 
 ### 8.4 事务一致性
 
@@ -448,7 +448,7 @@ try {
 
 1. 新建 `src/renderer/src/pages/<你的页面>.tsx`（示例名 `YourPage`，按实际页面命名），签名 `export default function YourPage(props: RouteProps)`（`RouteProps` 在 `src/renderer/src/App.tsx:19-22`）。
 2. `src/renderer/src/App.tsx:24-34` 的 `NAV` 加一行（`Ctrl+1..9` 会自动按数组顺序生效，`:216-219`）。
-3. `App.tsx:335-343` 的路由渲染里加 `{route === '/your' && <YourPage … />}`，并在顶部 import。
+3. `App.tsx:338-346` 的路由渲染里加 `{route === '/your' && <YourPage … />}`，并在顶部 import。
 4. 样式只往 `styles.css` 末尾追加类（按现有「新增段」习惯），不要改既有类名。
 5. 需要侧栏角标就在 `refreshCount` 链路外单独取；页面内数据自己 `useEffect` 拉。
 
@@ -510,14 +510,14 @@ flowchart TD
 
 | 优先级 | 问题 | 证据 | 建议动作 |
 |---|---|---|---|
-| **P0** | `src/renderer/src/pages/Knowledge.tsx` 2331 行单组件：编辑器、AI、标签、分类树、版本抽屉、拖拽排序全在一个文件 | `Knowledge.tsx:42` 起；文件 85 KB | 先抽 hooks（`useNoteEditor` / `useAiActions` / `useTagActions`）+ 子组件，保持 DOM 与类名不变；每抽一步靠 e2e 305 条兜底 |
+| **P0** | `src/renderer/src/pages/Knowledge.tsx` 2294 行单组件：编辑器、AI、标签、分类树、版本抽屉、拖拽排序全在一个文件 | `Knowledge.tsx:42` 起；文件 85 KB | 先抽 hooks（`useNoteEditor` / `useAiActions` / `useTagActions`）+ 子组件，保持 DOM 与类名不变；每抽一步靠 e2e 305 条兜底 |
 | **P0** | `tests/e2e/cdp-check.mjs` 5711 行单脚本、顺序强耦合、跑一轮数分钟 | `:309` 的 `CHECK_SCRIPT` 巨串；`rec()` 追加式 | 拆成 `specs/*.mjs` + 共享的 e2e harness 模块（Cdp/stub/rec/shot），主入口按顺序 import；断言之间禁止共享状态 |
 | **P1** | `src/renderer/src/styles.css` 5149 行，同一选择器多段重复（`.sidebar` 4 段、`.modal-backdrop` 3 段），靠特异性互相覆盖 | `styles.css:222/1874/2845/3225`、`:1003/2521/3544` | 按域拆文件（tokens/base/sidebar/modal/editor/ai/focus）+ `@layer` 固定优先级；拆之前先把最终生效值写成快照测试 |
 | **P1** | `src/main/db.ts` 2400 行巨型仓储，所有域混在一起 | 241 个 `export`（`db.ts:124-2387`） | 按域拆 `db/{notes,tasks,goals,review,focus}.ts`，各域 index.ts 重导出；已有单测可作护栏 |
 | **P1** | GitHub 集成要用户自备 OAuth App 的 Client ID：`GITHUB_DEFAULT_CLIENT_ID` 默认空串（`src/shared/github.ts:19`），没配就报「还没配置 GitHub Client ID」 | `src/main/ipc/github.ts:59` `clientIdOf()`（env → setting → none） | 发行方注册一个公开 OAuth App 把 client id 内置（Device Flow 不需要 secret），或让用户自建 |
 | **P1** | 没有 CI：所有门槛只在本地跑 | 无 `.github/workflows/` | 加 Windows runner 跑 `typecheck + unit`；e2e 目前依赖图形环境，可先只跑单测 + build |
 | **P2** | 无 ErrorBoundary / 全局未捕获异常兜底 | §5.1，grep 0 命中 | 加 `ErrorBoundary` + `window.onerror/unhandledrejection` 上报到 toast + 写入 `.log`；主进程加 `process.on('uncaughtException')` 打日志后 `app.exit(1)` |
-| **P2** | `App.tsx` 用 prop drilling 传 `navigate/refreshCount` 到 9 个页面 | `App.tsx:335-343` | 页面数不再增长就先不动；要加「跨页编辑态」时引一个轻 Context |
+| **P2** | `App.tsx` 用 prop drilling 传 `navigate/refreshCount` 到 9 个页面 | `App.tsx:338-346` | 页面数不再增长就先不动；要加「跨页编辑态」时引一个轻 Context |
 | **P2** | 3 个 CodeMirror 依赖（约 3 个包）声明但 `src/` 零 import | `package.json:34-36`；grep 0 命中；README:7 技术栈写得像在用 | 下一版移除依赖并修正 README 技术栈描述（会缩小安装包） |
 | **P3** | 时间比较用「带本地时区偏移的 ISO 字符串」做字符串比较 | 如 `src/main/ipc/focus.ts` 与 `src/main/db.ts:2344` 的统计 | 跨时区/夏令时边缘会错；统一转 epoch ms 或 UTC 再比 |
 | **P3** | e2e 多处靠 sleep/重试抗抖动（软件渲染下偶发丢点击） | `cdp-check.mjs:293-306`、首页可视化重测、导出重试 | 换成「等条件成立」的轮询式 helper（已有先例），逐步替换固定 sleep |
