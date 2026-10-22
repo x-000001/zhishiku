@@ -471,12 +471,12 @@ await cdp.shot('your-feature');                      // 截图落到 tests/e2e/s
 
 ### 9.5 测试准入（提 PR / 交付前必须全绿）
 
-| 门槛 | 命令 | 当前基线（0.9.2） |
+| 门槛 | 命令 | 当前基线（0.11.2） |
 |---|---|---|
 | 类型 | `npm run typecheck` | 0 错误 |
-| 单元 | `npm run test:unit` | 344 项 / 24 文件 |
+| 单元 | `npm run test:unit` | 404 项 / 29 文件 |
 | 构建 | `npm run build` | 成功 |
-| 端到端 | `npm run test:e2e` | 293/293 |
+| 端到端 | `npm run test:e2e` | 305/305 |
 | 强杀 | `npm run test:kill` | 6/6 |
 | 一键 | `npm run test:all` | 以上顺序全跑 |
 | 打包产物 | `npm run dist` 后 `node .tools/check-packaged.mjs` | 23/23 |

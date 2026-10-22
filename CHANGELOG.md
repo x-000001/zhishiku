@@ -4,6 +4,20 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 `主.次.修订`。
 
+## [0.11.2] - 2026-10-22
+
+发布：__REL_LINK__（附件 JwKB-Setup-0.11.2.exe，__BYTES__ 字节）
+
+### 修复
+
+- **「✨ AI」下拉菜单的悬停 / 键盘焦点 / 选中态重做**：这份菜单和分类 / 标签 / 任务的右键菜单共用 `.ctx-menu / .ctx-item`，原来悬停走 `.ctx-item:hover { background: var(--accent); color: #fff }`，但 `--accent` 在主题令牌里从未定义 —— `background` 整条失效、只剩白字，浅色下就是「透明底 + 白字」，右侧「自动识别」提示又靠 `opacity: 0.55 → 0.85` 压暗，深浅色下层级都不稳。现在 ①`src/renderer/src/menu.tsx` 的 `showContextMenu()` 多一个可选参数 `panelClass`，只有 AI 这一份菜单多挂 `.ai-dropdown` 类名（其它右键菜单完全不受影响；DOM 结构、`role`、`tabindex`、键盘上下选 / Enter / Esc 逻辑零改动）；②`styles.css` 新增 `.ctx-menu.ai-dropdown` 作用域样式：菜单项 `padding: 6px 12px` + `border-radius: 6px`、整行等宽，悬停 / `:focus-visible` / `.active` / `[data-highlighted="true"]` / `[aria-selected="true"]` 同一套底色（浅色 `#e5e7eb`、深色 `#374151`），`transition: background-color 0.15s, color 0.15s` 包在 `prefers-reduced-motion: no-preference` 里，另配 `will-change: background-color`；③右侧「自动识别」提示精确选中 `.hint` 子元素：`opacity: 1` + 颜色层级（浅色 `#4b5563` 对比 6.10:1、深色 `rgba(255,255,255,.9)` 对比 8.72:1，都低于主文字的 13.78:1 / 9.53:1）；④`<button>` 原生样式显式重置（`border: none` / `appearance: none` / 背景清零），横向间距只用 `padding` + `gap`（面板 `2px 8px`、菜单项 `6px 12px`），没有用任何 `margin`、没有用一个 `!important`、没有改 `:root` 令牌（面板上的内联样式只有 `left/top/visibility`，本层选择器 (0,3,0) 起步本来就高于原来的 `.ctx-item:hover` (0,2,0)）。
+- **补上缺失的 `--accent` 令牌**：其它右键菜单（任务 / 标签 / 分类 / 笔记行）的悬停一直是「透明底 + 白字」，根因就是这个变量没人定义。现在 `:root` 里定义 `--accent: var(--brand)`（浅色 `#0a72e8`、深色跟着 `--brand` 变 `#0a84ff`），和 `.btn.primary` 的品牌蓝底白字同一口径；AI 菜单因为上面那层作用域样式优先级更高，仍是契约要求的灰底。
+
+### 验证
+
+- typecheck 0 错；单测 **404** 项（29 个文件，本次未改任何测试）；e2e **305/305**；强杀 **6/6**；打包自检 **23/23**。
+- 探针实测计算样式：AI 菜单悬停浅色 `rgb(229,231,235)` / 深色 `rgb(55,65,81)`，主文字对比 13.78:1 / 9.53:1、右侧提示 6.10:1 / 8.72:1 且亮度不高于主文字；其它右键菜单悬停恢复品牌蓝 `rgb(10,114,232)` / `rgb(10,132,255)` + 白字（4.58:1 / 3.65:1，深色与 `.btn.primary` 同口径）；面板 `padding` / 圆角 / 过渡 / `will-change` 均符合契约。
+
 ## [0.11.1] - 2026-10-21
 
 发布：[GitHub Release v0.11.1](https://github.com/x-000001/zhishiku/releases/tag/v0.11.1)（附件 JwKB-Setup-0.11.1.exe，112,595,690 字节）
