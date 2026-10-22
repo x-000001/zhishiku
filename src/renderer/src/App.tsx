@@ -14,6 +14,8 @@ import Plans from './pages/Plans';
 import Review from './pages/Review';
 import QuickCapture from './pages/QuickCapture';
 import FocusDock from './focus';
+import CommandPalette from './CommandPalette';
+import { shouldIgnoreShortcut, type PaletteCommand } from './palette';
 import type { SearchHit } from '../../shared/types';import { toastError } from './errors';
 
 export interface RouteProps {
@@ -129,6 +131,12 @@ export default function App(): ReactNode {
   const [searchOpen, setSearchOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [drawerOpen, setDrawerOpen] = useState(false);
+  /* 0.12.0 阶段1：全局命令面板（Ctrl+Shift+P） */
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteNotes, setPaletteNotes] = useState<Array<{ id: number; title: string }>>([]);
+  const [paletteNotesLoading, setPaletteNotesLoading] = useState(false);
+  /** 每次打开/关闭自增：异步回调回来时序号不一致就丢弃（防串台） */
+  const paletteSeq = useRef(0);
   const layout = useLayout();
   const openNote = useCallback(
     (id: number) => {
@@ -140,6 +148,38 @@ export default function App(): ReactNode {
 
   const refreshCount = useCallback(() => {
     void api.listInbox('open').then((list) => setInboxCount(list.length));
+  }, []);
+
+  /**
+   * 打开命令面板：顺便异步拉一次笔记列表当「打开笔记」命令。
+   * 用自增序号做闭包防串台——面板关掉又重开时，上一次的 Promise 回来直接丢弃。
+   */
+  const openPalette = useCallback(() => {
+    const seq = paletteSeq.current + 1;
+    paletteSeq.current = seq;
+    setPaletteNotes([]);
+    setPaletteNotesLoading(true);
+    setPaletteOpen(true);
+    void api
+      .listNotes({})
+      .then((list) => {
+        if (paletteSeq.current !== seq) return;
+        setPaletteNotes(list.map((note) => ({ id: note.id, title: note.title || '无标题笔记' })));
+      })
+      .catch(() => {
+        if (paletteSeq.current !== seq) return;
+        setPaletteNotes([]);
+      })
+      .finally(() => {
+        if (paletteSeq.current === seq) setPaletteNotesLoading(false);
+      });
+  }, []);
+
+  /** 关闭命令面板：序号再 +1，作废所有在途回调。 */
+  const closePalette = useCallback(() => {
+    paletteSeq.current += 1;
+    setPaletteOpen(false);
+    setPaletteNotesLoading(false);
   }, []);
 
   useEffect(() => {
@@ -205,9 +245,93 @@ export default function App(): ReactNode {
     setCollapsed((c) => !c);
   }, []);
 
+  /**
+   * 命令面板的命令清单：页面跳转 + 全局动作 + 笔记（异步补进来）。
+   * 所有 run 都是 void | Promise<void>；耗时动作（备份/导出）由面板负责 Loading。
+   */
+  const paletteCommands = useMemo<PaletteCommand[]>(() => {
+    const pages: PaletteCommand[] = NAV.map((item) => ({
+      key: 'nav:' + item.route,
+      title: item.label,
+      group: '前往',
+      icon: item.icon,
+      run: () => navigate(item.route)
+    }));
+    const actions: PaletteCommand[] = [
+      {
+        key: 'action:theme',
+        title: theme === 'dark' ? '切换到浅色主题' : '切换到深色主题',
+        group: '外观',
+        icon: '🌗',
+        keywords: 'theme dark light 主题 深色 浅色',
+        run: () => changeTheme(theme === 'dark' ? 'light' : 'dark')
+      },
+      {
+        key: 'action:sidebar',
+        title: collapsed ? '展开侧栏' : '收起侧栏',
+        group: '外观',
+        icon: '🧭',
+        run: toggleSidebar
+      },
+      {
+        key: 'action:search',
+        title: '全局搜索笔记',
+        group: '工具',
+        icon: '🔍',
+        hint: 'Ctrl K',
+        run: () => setSearchOpen(true)
+      },
+      {
+        key: 'action:backup',
+        title: '立即备份数据库',
+        group: '工具',
+        icon: '💾',
+        keywords: 'backup 备份',
+        run: async () => {
+          const entry = await api.runBackup();
+          toast('备份完成：' + entry.name);
+        }
+      },
+      {
+        key: 'action:reveal',
+        title: '打开数据文件夹',
+        group: '工具',
+        icon: '📂',
+        run: () => api.revealData()
+      },
+      {
+        key: 'action:export',
+        title: '导出全部笔记为 Markdown',
+        group: '工具',
+        icon: '📤',
+        keywords: 'export markdown 导出',
+        run: async () => {
+          const result = await api.exportMarkdown();
+          toast('导出完成：' + result.notes + ' 篇笔记');
+        }
+      }
+    ];
+    const notes: PaletteCommand[] = paletteNotes.map((note) => ({
+      key: 'note:' + note.id,
+      title: '打开笔记：' + note.title,
+      group: '笔记',
+      icon: '📄',
+      keywords: 'note 笔记 ' + note.title,
+      run: () => openNote(note.id)
+    }));
+    return [...pages, ...actions, ...notes];
+  }, [navigate, theme, changeTheme, collapsed, toggleSidebar, openNote, paletteNotes]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key.toLowerCase() === 'k') {
+      // 红线：焦点在 input / contenteditable 里时，裸键（无 Ctrl/Alt/Meta）不抢；
+      // 应用级组合键（Ctrl+K / Ctrl+S …）照常可用。
+      if (shouldIgnoreShortcut({ target: e.target instanceof HTMLElement ? e.target : null, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey })) return;
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        if (paletteOpen) closePalette();
+        else openPalette();
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setSearchOpen(true);
       } else if (e.ctrlKey && e.key.toLowerCase() === 'n') {
@@ -224,7 +348,7 @@ export default function App(): ReactNode {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [navigate, openNote]);
+  }, [navigate, openNote, paletteOpen, openPalette, closePalette]);
 
   const title = useMemo(() => NAV.find((n) => n.route === route)?.label ?? 'Jw 知识库', [route]);
 
@@ -357,6 +481,9 @@ export default function App(): ReactNode {
       </main>
 
       {searchOpen ? <SearchModal onClose={() => setSearchOpen(false)} openNote={openNote} /> : null}
+      {paletteOpen ? (
+        <CommandPalette commands={paletteCommands} loading={paletteNotesLoading} onClose={closePalette} />
+      ) : null}
       <FocusDock />
       <ToastHost />
       <ContextMenuHost />

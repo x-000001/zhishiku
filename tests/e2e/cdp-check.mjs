@@ -6184,6 +6184,239 @@ try {
     detail: '按钮=' + tasksUi.syncBtn + ' 文案=' + tasksUi.text
   });
 
+  /* ================= 0.12.0 阶段1：全局命令面板（Ctrl+Shift+P） ================= */
+  const paletteOpenRaw = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    location.hash = '/';
+    await sleep(420);
+    const nav = document.querySelector('.nav-item');
+    if (nav) nav.focus();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, shiftKey: true, bubbles: true }));
+    await sleep(300);
+    const backdrop = document.querySelector('.cmd-palette-backdrop');
+    const input = document.querySelector('.cmd-palette-input');
+    const list = document.querySelector('.cmd-palette-list');
+    const activeRow = document.querySelector('.cmd-palette-row[aria-selected="true"]');
+    return {
+      open: !!document.querySelector('.cmd-palette'),
+      focused: document.activeElement === input,
+      z: backdrop ? getComputedStyle(backdrop).zIndex : '',
+      total: list ? Number(list.getAttribute('data-total')) : 0,
+      rendered: document.querySelectorAll('.cmd-palette-row').length,
+      activeText: activeRow ? activeRow.querySelector('.cmd-palette-row-title').textContent.trim() : ''
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：Ctrl+Shift+P 打开命令面板（输入框自动聚焦、层级 60、首行默认高亮）',
+    ok: paletteOpenRaw.open === true && paletteOpenRaw.focused === true && paletteOpenRaw.z === '60' &&
+      paletteOpenRaw.total > 0 && paletteOpenRaw.rendered > 0 && paletteOpenRaw.activeText.length > 0,
+    detail: '打开=' + paletteOpenRaw.open + ' 聚焦=' + paletteOpenRaw.focused + ' z=' + paletteOpenRaw.z +
+      ' 命令=' + paletteOpenRaw.total + ' 渲染=' + paletteOpenRaw.rendered + ' 高亮=' + paletteOpenRaw.activeText
+  });
+
+  // 真实 Tab 键（CDP 原生事件，会触发浏览器焦点移动）：面板必须把焦点留在里面
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
+  await sleep(140);
+  const paletteTab = await cdp.eval(`(() => {
+    const input = document.querySelector('.cmd-palette-input');
+    return {
+      open: !!document.querySelector('.cmd-palette'),
+      focused: !!input && document.activeElement === input
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：命令面板 Tab 不把焦点漏到背后的页面（焦点闭环）',
+    ok: paletteTab.open === true && paletteTab.focused === true,
+    detail: '打开=' + paletteTab.open + ' 焦点仍在输入框=' + paletteTab.focused
+  });
+
+  const paletteArrows = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const input = document.querySelector('.cmd-palette-input');
+    const activeText = () => {
+      const row = document.querySelector('.cmd-palette-row[aria-selected="true"]');
+      return row ? row.querySelector('.cmd-palette-row-title').textContent.trim() : '';
+    };
+    const start = activeText();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    await sleep(120);
+    const down = activeText();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    await sleep(120);
+    const up = activeText();
+    return { start: start, down: down, up: up };
+  })()`);
+  results.push({
+    name: '0.12.0：命令面板 ↑/↓ 切换高亮（上下都生效，回到原位）',
+    ok: paletteArrows.down !== paletteArrows.start && paletteArrows.up === paletteArrows.start && paletteArrows.down.length > 0,
+    detail: '起始=' + paletteArrows.start + ' 下移=' + paletteArrows.down + ' 上移回=' + paletteArrows.up
+  });
+
+  const paletteFilter = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const input = document.querySelector('.cmd-palette-input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, '任务待办');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(240);
+    const titles = [...document.querySelectorAll('.cmd-palette-row .cmd-palette-row-title')].map((e) => e.textContent.trim());
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    for (let i = 0; i < 40; i += 1) {
+      if (!document.querySelector('.cmd-palette')) break;
+      await sleep(50);
+    }
+    await sleep(260);
+    return { titles: titles.slice(0, 4), hash: location.hash, closed: !document.querySelector('.cmd-palette') };
+  })()`);
+  results.push({
+    name: '0.12.0：命令面板输入即过滤，Enter 执行跳转并关闭',
+    ok: paletteFilter.titles.length > 0 && String(paletteFilter.titles[0]).indexOf('任务待办') === 0 &&
+      paletteFilter.hash === '#/tasks' && paletteFilter.closed === true,
+    detail: '结果=' + paletteFilter.titles.join('|') + ' hash=' + paletteFilter.hash + ' 关闭=' + paletteFilter.closed
+  });
+
+  const paletteEsc = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    location.hash = '/';
+    await sleep(360);
+    const nav = document.querySelector('.nav-item');
+    if (nav) nav.focus();
+    const before = document.activeElement;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, shiftKey: true, bubbles: true }));
+    await sleep(300);
+    const opened = !!document.querySelector('.cmd-palette');
+    const focusedInput = document.activeElement === document.querySelector('.cmd-palette-input');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(220);
+    return {
+      opened: opened,
+      focusedInput: focusedInput,
+      closed: !document.querySelector('.cmd-palette'),
+      restored: document.activeElement === before
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：命令面板 Esc 关闭并把焦点还给打开前的元素（焦点闭环）',
+    ok: paletteEsc.opened === true && paletteEsc.focusedInput === true && paletteEsc.closed === true && paletteEsc.restored === true,
+    detail: '打开=' + paletteEsc.opened + ' 聚焦输入=' + paletteEsc.focusedInput + ' 关闭=' + paletteEsc.closed + ' 焦点归还=' + paletteEsc.restored
+  });
+
+  const paletteBusy = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, shiftKey: true, bubbles: true }));
+    await sleep(320);
+    const input = document.querySelector('.cmd-palette-input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, '导出全部');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(220);
+    let sawBusy = false;
+    let disabled = false;
+    // 用 MutationObserver 抓「Loading 出现过」：命令可能几十毫秒就跑完，定时轮询会漏；
+    // 观察器必须在按下 Enter 之前挂上，否则 React 同步 flush 的那次插入会漏掉。
+    const observer = new MutationObserver(() => {
+      const busy = document.querySelector('.cmd-palette-busy');
+      if (busy) {
+        sawBusy = true;
+        const box = document.querySelector('.cmd-palette-input');
+        if (box && box.disabled === true) disabled = true;
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    for (let i = 0; i < 120; i += 1) {
+      const busy = document.querySelector('.cmd-palette-busy');
+      const box = document.querySelector('.cmd-palette-input');
+      if (busy) {
+        sawBusy = true;
+        disabled = !!box && box.disabled === true;
+        break;
+      }
+      if (!document.querySelector('.cmd-palette')) break;
+      await sleep(10);
+    }
+    observer.disconnect();
+    for (let i = 0; i < 60; i += 1) {
+      if (!document.querySelector('.cmd-palette')) break;
+      await sleep(50);
+    }
+    await sleep(400);
+    const toasts = [...document.querySelectorAll('.toast')].map((t) => t.textContent.trim());
+    return {
+      sawBusy: sawBusy,
+      disabled: disabled,
+      closed: !document.querySelector('.cmd-palette'),
+      toast: toasts.join(' | ')
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：命令面板执行耗时动作时显示 Loading 并禁用输入，完成后关闭并提示',
+    ok: paletteBusy.sawBusy === true && paletteBusy.disabled === true && paletteBusy.closed === true &&
+      String(paletteBusy.toast).indexOf('导出完成') >= 0,
+    detail: '看到Loading=' + paletteBusy.sawBusy + ' 输入禁用=' + paletteBusy.disabled + ' 关闭=' + paletteBusy.closed +
+      ' 提示=' + String(paletteBusy.toast).slice(0, 40)
+  });
+
+  const paletteVirtual = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    for (let i = 1; i <= 60; i += 1) {
+      await window.api.invoke('note:create', {
+        title: 'zz虚拟列表 ' + String(i).padStart(3, '0'),
+        html: '<p>虚拟列表测试</p>'
+      });
+    }
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, shiftKey: true, bubbles: true }));
+    await sleep(460);
+    const input = document.querySelector('.cmd-palette-input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, 'zz虚拟列表');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(280);
+    const list = document.querySelector('.cmd-palette-list');
+    const total = Number(list ? list.getAttribute('data-total') : 0);
+    const renderedTop = document.querySelectorAll('.cmd-palette-row').length;
+    const firstRow = document.querySelector('.cmd-palette-row');
+    const firstIndex = firstRow ? Number(firstRow.getAttribute('data-index')) : -1;
+    if (list) {
+      list.scrollTop = list.scrollHeight;
+      list.dispatchEvent(new Event('scroll'));
+    }
+    await sleep(220);
+    const indexes = [...document.querySelectorAll('.cmd-palette-row')].map((r) => Number(r.getAttribute('data-index')));
+    // 指标必须在关闭面板之前读：关闭后元素会卸载，scrollHeight/scrollTop 都会变成 0
+    const listScrollTop = list ? Math.round(list.scrollTop) : -1;
+    const listScrollHeight = list ? list.scrollHeight : -1;
+    const listClientHeight = list ? list.clientHeight : -1;
+    const stateScrollTop = list ? Number(list.getAttribute('data-scroll-top')) : -1;
+    const stateStart = list ? Number(list.getAttribute('data-start')) : -1;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(200);
+    return {
+      total: total,
+      rendered: renderedTop,
+      firstIndex: firstIndex,
+      minAfterScroll: indexes.length ? Math.min.apply(null, indexes) : -1,
+      listScrollTop: listScrollTop,
+      listScrollHeight: listScrollHeight,
+      listClientHeight: listClientHeight,
+      stateScrollTop: stateScrollTop,
+      stateStart: stateStart,
+      closed: !document.querySelector('.cmd-palette')
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：命令面板超过 50 条走虚拟列表（只渲染视口附近，滚动后窗口跟着移动）',
+    ok: paletteVirtual.total === 60 && paletteVirtual.rendered < 60 && paletteVirtual.rendered <= 16 &&
+      paletteVirtual.firstIndex === 0 && paletteVirtual.listScrollHeight > paletteVirtual.listClientHeight &&
+      paletteVirtual.listScrollTop > 0 && paletteVirtual.minAfterScroll > 0 &&
+      paletteVirtual.stateScrollTop > 0 && paletteVirtual.stateStart > 0 && paletteVirtual.closed === true,
+    detail: '命中=' + paletteVirtual.total + ' 渲染=' + paletteVirtual.rendered + ' 首行=' + paletteVirtual.firstIndex +
+      ' 滚动后最小行=' + paletteVirtual.minAfterScroll + ' 滚动区=' + paletteVirtual.listClientHeight + '/' + paletteVirtual.listScrollHeight +
+      ' scrollTop=' + paletteVirtual.listScrollTop + ' 状态scroll=' + paletteVirtual.stateScrollTop +
+      ' 状态start=' + paletteVirtual.stateStart + ' 关闭=' + paletteVirtual.closed
+  });
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {

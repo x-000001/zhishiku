@@ -5272,3 +5272,220 @@ blockquote.ai-summary b {
     transition: none;
   }
 }
+
+/* ================= 0.12.0 阶段1：全局命令面板（Ctrl+Shift+P） =================
+   层级铁律：面板(40) < 番茄钟(55) < 弹窗/命令面板(60) < Toast(80)。
+   命令面板与弹窗同层（60）：比番茄钟高、被 Toast 压住；面板用 portal 挂 body，
+   不会被正文玻璃面板的 backdrop-filter 裁切。独立浮层，不改任何既有布局。 */
+
+.cmd-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: min(13vh, 110px) 24px 24px;
+  background: rgba(16, 18, 30, 0.42);
+  animation: jw-cmd-fade-in 140ms var(--smooth-ease) both;
+}
+
+.cmd-palette {
+  width: min(640px, 100%);
+  max-height: min(72vh, 620px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: jw-cmd-in 160ms var(--spring-ease) both;
+}
+
+@keyframes jw-cmd-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes jw-cmd-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cmd-palette-backdrop,
+  .cmd-palette {
+    animation: none;
+  }
+}
+
+.cmd-palette-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cmd-palette-icon {
+  flex: 0 0 auto;
+  font-size: 14px;
+  color: var(--text-faint);
+}
+
+.cmd-palette-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+
+.cmd-palette-input::placeholder {
+  color: var(--text-faint);
+}
+
+.cmd-palette-input:disabled {
+  cursor: progress;
+}
+
+.cmd-palette-kbd {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+
+.cmd-palette-busy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  color: var(--text-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+/* 虚拟列表：固定高度 = 8 行 × 44px，超出靠滚动；行绝对定位由 transform 摆位 */
+.cmd-palette-list {
+  position: relative;
+  height: 352px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 4px 6px;
+}
+
+.cmd-palette-canvas {
+  position: relative;
+}
+
+.cmd-palette-row {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cmd-palette-row.active {
+  background: var(--brand-soft);
+}
+
+.cmd-palette-row:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.cmd-palette-row-icon {
+  flex: 0 0 20px;
+  width: 20px;
+  text-align: center;
+}
+
+.cmd-palette-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+}
+
+.cmd-palette-mark {
+  background: transparent;
+  color: var(--brand);
+  font-weight: 650;
+}
+
+.cmd-palette-row-group {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.cmd-palette-row-hint {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--text-soft);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 5px;
+}
+
+.cmd-palette-empty {
+  padding: 26px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+.cmd-palette-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+@media (max-width: 767px) {
+  .cmd-palette-backdrop {
+    padding: 10vh 12px 12px;
+  }
+
+  .cmd-palette {
+    max-height: 78vh;
+  }
+
+  .cmd-palette-list {
+    height: 300px;
+  }
+}
