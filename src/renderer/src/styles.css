@@ -26,6 +26,11 @@
   --brand: #0a72e8;
   --brand-soft: rgba(0, 122, 255, 0.12);
   --brand-strong: #0059c8;
+  /* 菜单/列表的「选中底色」。0.11.2 之前 .ctx-item:hover 就引用了它，但一直没人定义，
+     于是 background 整条失效、只剩 color:#fff —— 浅色下等于「透明底 + 白字」，看起来像没样式。
+     这里统一挂到品牌色上，深色主题会跟着 [data-theme='dark'] 的 --brand（#0a84ff）一起变，
+     跟 .btn.primary（同样是品牌色底 + 白字）保持一致。 */
+  --accent: var(--brand);
   --ok: #1a8f45;
   --warn: #b26a00;
   --danger: #d92c25;
@@ -5145,4 +5150,125 @@ blockquote.ai-summary b {
 
 .sidebar.collapsed .brand-mark {
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.15);
+}
+
+/* ================= 0.11.2：✨ AI 助手下拉菜单（悬停 / 键盘焦点 / 选中态） =================
+   背景：这份菜单和分类 / 标签 / 任务的右键菜单共用 .ctx-menu / .ctx-item。原来悬停是
+   「品牌蓝底 + 白字」，提示文字又靠 opacity 压暗，深浅色下层级都不稳。
+
+   做法：menu.tsx 的 showContextMenu 多了第三个可选参数 panelClass，只有「✨ AI」这一份
+   传了 'ai-dropdown'，所以下面所有规则都收在 .ctx-menu.ai-dropdown 里 ——
+   其它右键菜单一个像素都不动，:root 令牌也一个字没改。
+   约束遵守情况：
+   · DOM 元素、tabindex、role、事件与业务逻辑全部原样，只多了一个类名；
+   · <button> 的原生样式（边框 / 背景 / 外观）在这里显式重置，不依赖浏览器默认；
+   · 横向间距只用 padding + gap，没有任何 margin；面板 2px 8px、菜单项 6px 12px、圆角 6px；
+   · 面板上只有 left / top / visibility 三个内联样式，没有内联背景色，
+     所以不需要 !important —— 本层选择器是 (0,3,0) 起步，本来就高于原来的
+     .ctx-item (0,1,0) / .ctx-item:hover (0,2,0)。
+   ============================================================================ */
+
+/* ---- 1. 面板：外容器只留 2px 8px 内边距，横向呼吸感交给 inner padding ---- */
+.ctx-menu.ai-dropdown {
+  padding: 2px 8px;
+}
+
+/* ---- 2. 菜单项：重置原生按钮样式；6px 圆角 + 6px 12px 内边距；单行不折行 ---- */
+.ctx-menu.ai-dropdown .ctx-item {
+  display: flex;
+  align-items: center;
+  /* 左侧主文字、右侧提示各靠一边：用 flex 分布，不用 margin 撑 */
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  /* 同时清掉 background-color 和原生 button 的渐变背景 */
+  background-color: transparent;
+  background-image: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: left;
+  /* 万一将来某个菜单项改成 <a>，也不带下划线 */
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: default;
+  /* 去掉 Windows / macOS 原生按钮的外观 */
+  -webkit-appearance: none;
+  appearance: none;
+  /* 悬停只改 background-color：提前提层，切背景色不触发重排 */
+  will-change: background-color;
+}
+
+/* ---- 3. 过渡：只在系统没开「减少动态效果」时生效 ---- */
+@media (prefers-reduced-motion: no-preference) {
+  .ctx-menu.ai-dropdown .ctx-item {
+    transition: background-color 0.15s, color 0.15s;
+  }
+}
+
+/* ---- 4. 悬停 / 键盘焦点 / 选中态：浅色统一 #e5e7eb ----
+   · :hover 与 :focus-visible 共用同一套底色，鼠标和键盘的高亮完全一致；
+   · .active 是菜单内部键盘高亮用的类名，一并覆盖；
+   · [data-highlighted="true"] / [aria-selected="true"] 是组件库常见的选中标记，
+     先用同一条规则兜住，将来接第三方菜单组件不用再改样式；
+   · 用 :not(.disabled) 把禁用项排除掉：没划词时前四项是灰的，鼠标扫过不能被点亮。 */
+.ctx-menu.ai-dropdown .ctx-item:not(.disabled):hover,
+.ctx-menu.ai-dropdown .ctx-item:not(.disabled):focus-visible,
+.ctx-menu.ai-dropdown .ctx-item:not(.disabled).active,
+.ctx-menu.ai-dropdown .ctx-item:not(.disabled)[data-highlighted='true'],
+.ctx-menu.ai-dropdown .ctx-item:not(.disabled)[aria-selected='true'] {
+  background-color: #e5e7eb;
+  color: var(--text);
+}
+
+/* ---- 5. 深色：同一套状态换成 #374151，主文字再提亮一档保证对比度 ---- */
+[data-theme='dark'] .ctx-menu.ai-dropdown .ctx-item:not(.disabled):hover,
+[data-theme='dark'] .ctx-menu.ai-dropdown .ctx-item:not(.disabled):focus-visible,
+[data-theme='dark'] .ctx-menu.ai-dropdown .ctx-item:not(.disabled).active,
+[data-theme='dark'] .ctx-menu.ai-dropdown .ctx-item:not(.disabled)[data-highlighted='true'],
+[data-theme='dark'] .ctx-menu.ai-dropdown .ctx-item:not(.disabled)[aria-selected='true'] {
+  background-color: #374151;
+  color: #f5f6f8;
+}
+
+/* ---- 6. 右侧提示（翻译那一行的「自动识别」）：精确选中子元素 ----
+   之前是 opacity: 0.55 → 悬停 0.85，提示会跟着整行一起「发灰/变白」，深浅色下都飘。
+   这里把 opacity 固定回 1，改用颜色做层级：
+   · 浅色 #4b5563（比主文字 #1a1a2e 暗，但对比度仍有 6:1 左右，不是灰到看不清）；
+   · 深色 rgba(255,255,255,0.9)（压在主文字 #f5f6f8 之下，亮度不会超过主文字）。 */
+.ctx-menu.ai-dropdown .ctx-item .hint {
+  margin: 0;
+  opacity: 1;
+  color: #4b5563;
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: inherit;
+  white-space: nowrap;
+}
+
+[data-theme='dark'] .ctx-menu.ai-dropdown .ctx-item .hint {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* ---- 7. 分隔线：去掉左右 margin，横向对齐交给面板 padding ---- */
+.ctx-menu.ai-dropdown .ctx-sep {
+  margin: 4px 0;
+}
+
+/* ---- 8. 键盘焦点环：底下多了一层浅灰后，焦点环仍要看得清 ---- */
+.ctx-menu.ai-dropdown .ctx-item:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+/* ---- 9. 减少动态效果：直接不给过渡（全局兜底之外再明确一次） ---- */
+@media (prefers-reduced-motion: reduce) {
+  .ctx-menu.ai-dropdown .ctx-item {
+    transition: none;
+  }
 }

@@ -22,11 +22,22 @@ export interface MenuItem {
   onSelect: () => void;
 }
 
+/** showContextMenu 的可选参数（不影响原有调用：不传就和以前一模一样）。 */
+export interface MenuOptions {
+  /**
+   * 额外挂在菜单面板上的 class，用来给「某一份菜单」单独换肤。
+   * 目前只有 ✨ AI 助手菜单用：传 'ai-dropdown'，样式收在 styles.css 的 .ctx-menu.ai-dropdown 里；
+   * 分类 / 标签 / 任务等其它右键菜单不传，保持原外观。
+   */
+  panelClass?: string;
+}
+
 interface MenuState {
   x: number;
   y: number;
   items: MenuItem[];
   seq: number;
+  panelClass?: string;
 }
 
 let pending: MenuState | null = null;
@@ -39,9 +50,13 @@ function emit(): void {
 }
 
 /** 在鼠标位置弹出菜单（坐标就是原生的 clientX / clientY） */
-export function showContextMenu(e: { clientX: number; clientY: number }, items: MenuItem[]): void {
+export function showContextMenu(
+  e: { clientX: number; clientY: number },
+  items: MenuItem[],
+  options: MenuOptions = {}
+): void {
   if (items.length === 0) return;
-  pending = { x: e.clientX, y: e.clientY, items, seq: ++seq };
+  pending = { x: e.clientX, y: e.clientY, items, seq: ++seq, panelClass: options.panelClass };
   emit();
 }
 
@@ -193,7 +208,7 @@ function MenuPanel({ state }: { state: MenuState }): ReactNode {
   return (
     <div
       ref={boxRef}
-      className={'ctx-menu' + (closing ? ' leaving' : '')}
+      className={['ctx-menu', state.panelClass ?? '', closing ? 'leaving' : ''].filter(Boolean).join(' ')}
       role="menu"
       style={{ left: pos.left, top: pos.top, visibility: pos.visible ? 'visible' : 'hidden' }}
       onContextMenu={(e) => e.preventDefault()}

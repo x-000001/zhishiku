@@ -34,6 +34,12 @@ import type { Attachment, Category, Id, Note, NoteListItem, NoteVersion, Tag } f
 type NoteDetail = Note & { tags: Tag[]; attachments: Attachment[] };
 type CatSel = Id | 'all' | 'unassigned' | 'trash';
 
+/**
+ * 「✨ AI」下拉菜单的换肤钩子：交给 menu.tsx 挂在菜单面板上，
+ * 对应的样式全部收在 styles.css 的 .ctx-menu.ai-dropdown 里（其它右键菜单不受影响）。
+ */
+const AI_MENU_CLASS = 'ai-dropdown';
+
 /** 字数按纯文字算：HTML 标签不算字。 */
 function countLocal(html: string): number {
   return htmlToPlainText(html).replace(/\s/g, '').length;
@@ -890,7 +896,7 @@ export default function Knowledge(props: {
     items.push({ label: '摘要（插到开头）', separator: true, onSelect: () => void startAiFull('summary') });
     items.push({ label: '分类整理', onSelect: () => void startAiFull('tags') });
     items.push({ label: '知识联想', onSelect: () => void startAiFull('related') });
-    showContextMenu(e, items);
+    showContextMenu(e, items, { panelClass: AI_MENU_CLASS });
   };
 
   const tree = useMemo(() => buildTree(cats), [cats]);
