@@ -76,6 +76,8 @@ const githubCalls = [];
    而不是像旧实现那样靠前端 setInterval 反复调一个阻塞式 IPC。 */
 let githubTokenPolls = 0;
 let stubPort = 0;
+/* 0.12.0 阶段5：WebDAV 灾备 stub 的内存存储（PUT 写、GET 读、MKCOL 建目录） */
+const webdavStore = new Map();
 const stubServer = http.createServer((req, res) => {
   const url = req.url || '';
   /* 第七版：AI（POST /ai/…/chat/completions）。流式 = SSE 一块一块发，
@@ -145,6 +147,56 @@ const stubServer = http.createServer((req, res) => {
         index += 1;
       }, chunkDelay);
     });
+    return;
+  }
+  /* 0.12.0 阶段5：WebDAV 灾备（Basic 认证必须正确，否则 401；PUT/GET 演示流式上传下载）。 */
+  if (url.startsWith('/webdav')) {
+    const expected = 'Basic ' + Buffer.from('e2e-user:e2e-pass').toString('base64');
+    if ((req.headers.authorization || '') !== expected) {
+      res.writeHead(401, { 'content-type': 'text/plain' });
+      res.end('unauthorized');
+      return;
+    }
+    const key = url.split('?')[0];
+    if (req.method === 'MKCOL') {
+      res.writeHead(webdavStore.has(key) ? 405 : 201);
+      res.end();
+      return;
+    }
+    if (req.method === 'PROPFIND') {
+      res.writeHead(webdavStore.has(key) ? 207 : 404);
+      res.end();
+      return;
+    }
+    if (req.method === 'PUT') {
+      const chunks = [];
+      req.on('data', (chunk) => chunks.push(chunk));
+      req.on('end', () => {
+        webdavStore.set(key, Buffer.concat(chunks));
+        res.writeHead(201);
+        res.end();
+      });
+      return;
+    }
+    if (req.method === 'GET') {
+      const buf = webdavStore.get(key);
+      if (!buf) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/octet-stream' });
+      res.end(buf);
+      return;
+    }
+    if (req.method === 'DELETE') {
+      webdavStore.delete(key);
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    res.writeHead(405);
+    res.end();
     return;
   }
   /* 0.11.0：GitHub 项目导入（仓库信息 / README / 401 / 404 / 500）。 */
@@ -6823,6 +6875,133 @@ try {
     name: '0.12.0：关闭 AI 抽屉后编辑区恢复原宽，焦点还给打开前的按钮',
     ok: chatClose.closed === true && parseFloat(String(chatClose.marginRight)) === 0 && chatClose.focusBack === true,
     detail: '关闭=' + chatClose.closed + ' 让位恢复=' + chatClose.marginRight + ' 焦点归还=' + chatClose.focusBack
+  });
+
+  /* ================= 0.12.0 阶段5：云端灾备（WebDAV 单向备份 + 高危恢复确认） ================= */
+  const cloud = await cdp.eval(`(async () => {
+    const inv = (channel, payload) => window.api.invoke(channel, payload);
+    const note = await inv('note:create', { title: '云端灾备自检', html: '<p>备份前的正文</p>' });
+    const cfg = await inv('cloud:config:set', {
+      provider: 'webdav',
+      webdavUrl: 'http://127.0.0.1:${stubPort}/webdav/',
+      webdavUser: 'e2e-user',
+      webdavPassword: 'e2e-pass',
+      githubRepo: ''
+    });
+    const test = await inv('cloud:test');
+    const backup = await inv('cloud:backup');
+    const info = await inv('cloud:info');
+    await inv('note:save', { id: note.id, title: '云端灾备自检-改过', html: '<p>改过的正文</p>', reason: '改名' });
+    const changed = await inv('note:get', { id: note.id });
+    let rejected = false;
+    try {
+      await inv('cloud:restore', { typed: 'WRONG', checked: false });
+    } catch {
+      rejected = true;
+    }
+    return {
+      hasPassword: cfg.hasPassword,
+      encrypted: cfg.passwordEncrypted,
+      leaksPassword: Object.prototype.hasOwnProperty.call(cfg, 'webdavPassword'),
+      testDetail: String(test.detail || ''),
+      backup: backup,
+      info: info,
+      changedTitle: changed.title,
+      rejected: rejected,
+      noteId: note.id
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：WebDAV 凭据加密保存（不泄露明文）+ 连接测试 + 流式备份数据库与附件',
+    ok:
+      cloud.hasPassword === true &&
+      cloud.encrypted === true &&
+      cloud.leaksPassword === false &&
+      String(cloud.testDetail).length > 0 &&
+      cloud.backup.provider === 'webdav' &&
+      cloud.backup.dbBytes > 0 &&
+      cloud.backup.attachmentCount >= 1 &&
+      cloud.backup.attachmentBytes > 0 &&
+      cloud.info &&
+      cloud.info.dbBytes === cloud.backup.dbBytes &&
+      cloud.info.attachmentCount === cloud.backup.attachmentCount,
+    detail:
+      '加密=' + cloud.encrypted + ' 泄露明文=' + cloud.leaksPassword + ' 测试=' + cloud.testDetail +
+      ' 数据库=' + (cloud.backup && cloud.backup.dbBytes) + ' 附件=' + (cloud.backup && cloud.backup.attachmentCount) +
+      ' 清单一致=' + (!!cloud.info && cloud.info.dbBytes === cloud.backup.dbBytes)
+  });
+  results.push({
+    name: '0.12.0：没输入 CONFIRM / 没勾选的云端恢复请求会被主进程直接拒绝',
+    ok: cloud.rejected === true,
+    detail: '拒绝=' + cloud.rejected
+  });
+
+  const cloudUi = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (channel, payload) => window.api.invoke(channel, payload);
+    location.hash = '/settings';
+    await sleep(700);
+    let btn = null;
+    for (let i = 0; i < 50; i += 1) {
+      btn = document.querySelector('.cloud-restore-btn');
+      if (btn && !btn.disabled) break;
+      await sleep(80);
+    }
+    if (!btn) return { error: 'no-restore-btn' };
+    const hasCard = !!document.querySelector('.cloud-card');
+    btn.click();
+    let modal = null;
+    for (let i = 0; i < 40; i += 1) {
+      modal = document.querySelector('.modal.cloud-restore-modal');
+      if (modal) break;
+      await sleep(80);
+    }
+    if (!modal) return { error: 'no-modal', hasCard: hasCard };
+    const setInput = (input, value) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const go = () => document.querySelector('.cloud-confirm-go');
+    const initiallyDisabled = go().disabled;
+    setInput(document.querySelector('.cloud-confirm-input'), 'WRONG');
+    await sleep(80);
+    const wrongDisabled = go().disabled;
+    setInput(document.querySelector('.cloud-confirm-input'), 'CONFIRM');
+    await sleep(80);
+    const typedEnabled = !go().disabled;
+    go().click();
+    let closed = false;
+    for (let i = 0; i < 80; i += 1) {
+      if (!document.querySelector('.modal.cloud-restore-modal')) {
+        closed = true;
+        break;
+      }
+      await sleep(100);
+    }
+    const note = await inv('note:get', { id: ${cloud.noteId} });
+    return {
+      hasCard: hasCard,
+      initiallyDisabled: initiallyDisabled,
+      wrongDisabled: wrongDisabled,
+      typedEnabled: typedEnabled,
+      closed: closed,
+      restoredTitle: note.title,
+      errorText: document.querySelector('.cloud-backup-status') ? '' : ''
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：云端恢复有红色高危确认框，必须输入 CONFIRM 才可点；确认后数据真的回滚',
+    ok:
+      cloudUi.hasCard === true &&
+      cloudUi.initiallyDisabled === true &&
+      cloudUi.wrongDisabled === true &&
+      cloudUi.typedEnabled === true &&
+      cloudUi.closed === true &&
+      cloudUi.restoredTitle === '云端灾备自检',
+    detail:
+      '卡片=' + cloudUi.hasCard + ' 初始禁用=' + cloudUi.initiallyDisabled + ' 输错仍禁用=' + cloudUi.wrongDisabled +
+      ' 输对可点=' + cloudUi.typedEnabled + ' 恢复后标题=' + cloudUi.restoredTitle
   });
 
   await cdp.eval("location.hash = '/'; true");

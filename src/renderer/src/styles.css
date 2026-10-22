@@ -5869,3 +5869,38 @@ blockquote.ai-summary b {
     animation: none;
   }
 }
+
+/* ================= 0.12.0 阶段5：云端灾备（WebDAV / GitHub 单向备份） ================= */
+.cloud-card .field {
+  min-width: 0;
+}
+
+.cloud-card select {
+  min-width: 150px;
+}
+
+.cloud-test-text {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+}
+
+.cloud-backup-status {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+}
+
+.cloud-danger-text {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
+}
+
+.cloud-confirm-input {
+  font-family: var(--mono, monospace);
+  letter-spacing: 0.08em;
+}

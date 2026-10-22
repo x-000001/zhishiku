@@ -122,6 +122,11 @@ function readToken(): string {
   return db.getSetting(KEY_TOKEN_PLAIN) || '';
 }
 
+/** 供云端灾备复用：拿已加密存储的 GitHub Token（没有就是空串）。 */
+export function readGithubToken(): string {
+  return readToken();
+}
+
 export function maskToken(token: string): string | null {
   return maskSecret(token);
 }

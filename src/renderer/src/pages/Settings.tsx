@@ -15,6 +15,7 @@ import type { AiConfigInput, AiConfigPublic } from '../../../shared/ai';
 import { classifyAiConfigError } from '../../../shared/ai';
 import { errText, toastError } from '../errors';
 import { GithubCard } from '../github';
+import CloudBackupCard from '../CloudBackupCard';
 
 /** 把字节数说成人话：安装包几十 MB，进度里只显示 MB 就够了。 */
 function fmtSize(bytes: number): string {
@@ -432,6 +433,8 @@ export default function Settings(props: {
           ))
         )}
       </div>
+
+      <CloudBackupCard />
 
       <div className="card export-card">
         <div className="card-head">

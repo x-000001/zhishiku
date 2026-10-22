@@ -3,6 +3,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import * as db from '../db';
 import * as backup from '../backup';
+import * as cloud from '../cloud';
+import { canConfirmRestore, type CloudConfigInput } from '../../shared/cloud';
 import type { Id } from '../../shared/types';
 import type { Handle, HandleWindow, IpcDeps } from './common';
 
@@ -46,6 +48,21 @@ export function registerSystem(handle: Handle, deps: IpcDeps): void {
     return true;
   });
   handle('backup:reveal', () => shell.openPath(deps.getPaths().backups));
+
+  /* ---------------- 0.12.0 阶段5：云端灾备（WebDAV / GitHub 单向备份） ---------------- */
+  handle('cloud:config:get', () => cloud.publicCloudConfig());
+  handle('cloud:config:set', (p: CloudConfigInput) => cloud.setCloudConfig(p));
+  handle('cloud:test', () => cloud.cloudTest());
+  handle('cloud:backup', () => cloud.runCloudBackup(deps.getPaths()));
+  handle('cloud:info', () => cloud.cloudBackupInfo());
+  /** 高危操作：主进程同样校验 CONFIRM / 勾选，不能只靠 UI 禁用按钮。 */
+  handle('cloud:restore', (p: { typed?: string; checked?: boolean }) => {
+    if (!canConfirmRestore(p)) {
+      throw new Error('从云端恢复会覆盖当前数据，必须输入 CONFIRM 或勾选「我已了解数据将被覆盖」');
+    }
+    return cloud.runCloudRestore(deps.getPaths());
+  });
+
   handle('data:reveal', () => shell.openPath(deps.getPaths().root));
   handle('data:integrity', () => db.integrityCheck());
 

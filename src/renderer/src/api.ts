@@ -7,6 +7,13 @@ import type {
 } from '../../shared/ai';
 import type { AiChatRequest, AiChatStreamEvent } from '../../shared/ai-chat';
 import type {
+  CloudBackupInfo,
+  CloudConfigInput,
+  CloudConfigPublic,
+  CloudRestoreResult,
+  CloudTestResult
+} from '../../shared/cloud';
+import type {
   AppInfo,
   AppSettings,
   Attachment,
@@ -316,6 +323,16 @@ export const api = {
   runBackup: () => call<BackupEntry>('backup:run'),
   restoreBackup: (name: string) => call<{ preRestore: string }>('backup:restore', { name }),
   deleteBackup: (name: string) => call<boolean>('backup:delete', { name }),
+
+  /* ---------------- 0.12.0 阶段5：云端灾备（WebDAV / GitHub 单向备份） ---------------- */
+  cloudConfigGet: () => call<CloudConfigPublic>('cloud:config:get'),
+  cloudConfigSet: (patch: CloudConfigInput) => call<CloudConfigPublic>('cloud:config:set', patch),
+  cloudTest: () => call<CloudTestResult>('cloud:test'),
+  cloudBackup: () => call<CloudBackupInfo>('cloud:backup'),
+  cloudInfo: () => call<CloudBackupInfo | null>('cloud:info'),
+  /** 高危：typed === 'CONFIRM' 或 checked === true 才会真正执行（主进程也会再校验一次）。 */
+  cloudRestore: (typed: string, checked: boolean) =>
+    call<CloudRestoreResult>('cloud:restore', { typed, checked }),
 
   /**
    * 设置页「检查更新」：主进程联网查一次 GitHub 的 latest Release。
