@@ -6,7 +6,7 @@
 - 装好以后能自己升级：设置页点「检查更新」→ 有新版本就点「下载并安装」，自动下载、校验、静默安装并重开新版（详见下面「怎么更新到新版本」）
 - 技术：Electron + React + TypeScript + SQLite（WAL）+ FTS5；笔记正文用轻量 `contenteditable` 富文本编辑器（不引重型编辑器依赖）
 - 数据：一个 SQLite 文件 + 一个附件文件夹 + 一个备份文件夹，都在 D 盘
-- 需求原文：[PRD.md](PRD.md)　开发过程：[开发计划.md](开发计划.md)　验收清单：[验收清单.md](验收清单.md)　版本变更：[CHANGELOG.md](CHANGELOG.md)　**接手开发先读：[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)（架构与开发者导航）**　技术分析：[TECH_REPORT.md](TECH_REPORT.md)（1 分钟全貌 / 5 分钟跑通 / 30 分钟首个 PR）
+- 需求原文：[PRD.md](PRD.md)　开发过程：[开发计划.md](开发计划.md)　验收清单：[验收清单.md](验收清单.md)　版本变更：[CHANGELOG.md](CHANGELOG.md)　**接手开发先读：[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)（10 章架构与开发者导航，含路径自检）**　技术分析：[TECH_REPORT.md](TECH_REPORT.md)（1 分钟全貌 / 5 分钟跑通 / 30 分钟首个 PR）
 
 ## 〇、30 秒极速上手
 
@@ -37,7 +37,7 @@ C:\JwKB\portable\Jw知识库.exe
 
 ### 办法二：安装版（会让桌面出现正式图标、可从控制面板卸载）
 
-安装包：`C:\JwKB\setup\Jw知识库-安装包-0.11.0.exe`（约 107 MB）。
+安装包：`C:\JwKB\setup\Jw知识库-安装包-0.12.0.exe`（约 107 MB）。
 
 1. 双击 → 可能先被 Windows SmartScreen 拦一下，显示「Windows 已保护你的电脑」：
    因为安装包没买代码签名证书，显示「发布者未知」是正常的。点 **「更多信息」→「仍要运行」**。
@@ -159,8 +159,8 @@ npm run test:all       # 上面全部按顺序跑一遍
 
 - 单元测试和端到端测试的细节、最近一次结果：`tests\unit\`、`tests\e2e\last-result.txt`、`tests\e2e\last-kill-result.txt`
 - 端到端测试会给十几个关键界面截图，放在 `tests\e2e\shots\`
-- 现在这一版：单测 **404** 项（29 个文件）、e2e **305** 项、强杀 **6** 项全过；打完包再跑 `node .tools\check-packaged.mjs` 验交付目录里的 exe（**23** 项）
-- **接手/深入开发**：先读 [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) —— 含 Day-1 SOP、7 条 ADR（为什么这么设计）、代码导航地图、IPC 流式与番茄钟状态图、工程红线、加表/加通道/加页面 Recipe、发版 SOP 与技术债清单；想先快速摸清「项目是什么 + 第一刀往哪切」，读 [TECH_REPORT.md](TECH_REPORT.md)（含架构拓扑与时序图、核心难点剖析、First PR 实操）。两份文档里的路径行号可用 `node .tools\check-doc.cjs DEVELOPER_GUIDE.md TECH_REPORT.md` 一键核对
+- 现在这一版：单测 **485** 项（35 个文件）、e2e **325** 项、强杀 **6** 项全过；打完包再跑 `node .tools\check-packaged.mjs` 验交付目录里的 exe（**23** 项）
+- **接手/深入开发**：先读 [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) —— 10 章交接手册：Day-1 SOP 与数据隔离/一键重置、6 条 ADR（为什么这么设计）、代码导航地图（「我想改 X 去哪」）、进程边界 + IPC 流式时序 + 番茄钟状态机 3 张 Mermaid 图、隐形全局逻辑（错误兜底/CSS 令牌/env 注入）、Windows 绑定与跨平台限制、排障现场地图、工程红线、加表/加通道/加页面/e2e 断言 Recipes、发版 SOP 与技术债优先级。文中每个 `路径:行号` 都可用 `node .tools\check-guide.cjs` 机器核对；想先快速摸清「项目是什么 + 第一刀往哪切」，读 [TECH_REPORT.md](TECH_REPORT.md)（含架构拓扑与时序图、核心难点剖析、First PR 实操），其路径引用用 `node .tools\check-doc.cjs TECH_REPORT.md README.md` 核对
 
 ### 打包
 
@@ -444,6 +444,17 @@ C:\JwKB\使用说明.txt
 **数据库**：`SCHEMA_VERSION` 7→**8**，`inbox_item` 加 6 列（`github_repo / github_url / github_stars / github_language / extract_status / extract_meta`）；老表 `github_sync_meta` 保留兼容，不再读写。
 
 **怎么验收这块**：见 [验收清单.md](验收清单.md) 的「第十一版」；单测 `repo-url.test.ts`（脏地址清洗）、`repo-extract.test.ts`（YAML 组装、AI 乱输出的容错、并发锁、降级）、`github-client.test.ts`（401/403 限流/404、README 截断）；e2e 用本地 stub 仓库把「导入 → 提炼 → 卡片 → 转笔记」跑一遍，并断言 AI 失败时出现「重试提炼」。
+
+
+### 0.12.0（五个横向功能：命令面板 / 高级检索 / 相关笔记 / AI 对话 / 云端灾备，2026-10-22）
+
+| 模块 | 做了什么 | 你实际会看到什么 |
+|---|---|---|
+| **全局命令面板** | 任意页面按 `Ctrl+Shift+P` 打开，模糊搜索「页面 + 全部笔记 + 动作」，↑↓ 选择、Enter 执行、Esc 关闭；超过 50 条走虚拟列表；导出/备份这类耗时动作执行时输入框禁用并显示 Loading。 | 想跳哪就按一下，打两个字母就能找到；执行导出时面板不会让你连点。 |
+| **高级检索语法** | 搜索框支持 `tag:工作`、`is:done` 这类语法；语法词不会拿去做全文匹配，而是走标签/状态索引过滤；标签不存在或 0 结果都有明确提示。 | 搜「tag:工作 复盘」只出工作标签下的复盘笔记；写错标签会提示去标签管理核对。 |
+| **智能上下文关联** | 编辑器底部新增「🧠 相关笔记」：从当前笔记正文提取关键词（先过滤「的/了/是」等停用词），用 FTS5 找同主题笔记，并**在 SQL 里排除当前笔记自己**。 | 写笔记时下面自动列出可互相引用的旧笔记，点一下就切过去。 |
+| **AI 对话侧边栏** | 编辑器头部「💬」打开右侧抽屉，基于当前笔记提问并流式回答；正文截 8000 字符、优先在换行处截断，并用 `<note_content>` 隔离防提示词注入；切笔记自动中止并清空历史；抽屉打开时编辑区用 `margin-right` 平滑让位。 | 写笔记卡住时直接在右边问「这篇讲了什么」，回答只参考当前笔记；切到别的笔记时历史自动清空。 |
+| **云端灾备** | 设置页新增「云端灾备」：WebDAV 或 GitHub 单向备份。WebDAV 密码用系统加密（DPAPI）保存，数据库快照用 `VACUUM INTO`，大附件流式上传，所有请求 30 秒硬超时；恢复前弹红色高危确认框，必须输入 `CONFIRM` 或勾选「我已了解数据将被覆盖」，主进程还会再校验一次。 | 换电脑或重装前点「立即备份到云端」；要回滚时点「从云端恢复」，按提示输入 CONFIRM 才会真的覆盖。 |
 
 逐条验收证据见 [验收清单.md](验收清单.md)，开发过程见 [开发计划.md](开发计划.md)，每个版本的变更见 [CHANGELOG.md](CHANGELOG.md)。
 
