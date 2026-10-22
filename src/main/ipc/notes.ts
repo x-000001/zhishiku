@@ -1,5 +1,6 @@
 import * as db from '../db';
-import type { Id, ListFilter } from '../../shared/types';
+import type { Id, ListFilter, SearchAdvancedRequest, SearchAdvancedResult, SearchHit } from '../../shared/types';
+import { parseSearchQuery } from '../../shared/search-query';
 import type { Handle } from './common';
 
 /** 分类、笔记、版本点、标签、搜索：知识库这一摊。 */
@@ -81,5 +82,37 @@ export function registerNotes(handle: Handle): void {
   /* ---------------- 搜索 ---------------- */
 
   handle('search:query', (p: { q: string; limit?: number }) => db.searchNotes(p.q, p.limit ?? 30));
+
+  /**
+   * 高级检索（0.12.0 阶段2）：渲染层会把 `tag:工作` / `is:pinned` 解析成结构化条件传过来，
+   * 但这里不信任渲染层的解析结果 —— 按 raw 原文用同一个 shared 解析器重新解析一次，
+   * 保证 `tag:` / `is:` 一定不会进 FTS5 的 MATCH 字符串（防绕过、防渲染层被改）。
+   */
+  handle('search:advanced', (p: SearchAdvancedRequest) => {
+    const parsed = parseSearchQuery(p?.raw ?? '');
+    const limit = Math.min(Math.max(Number(p?.limit ?? 30) || 30, 1), 100);
+    const existing = db.tagNamesIn(parsed.tags);
+    const unknownTags = parsed.tags.filter((tag) => existing.indexOf(tag) < 0);
+    const hasRule = parsed.text.length > 0 || parsed.tags.length > 0 || parsed.flags.length > 0;
+    // 不支持的 is: 状态不静默忽略：宁可返回空结果 + 提示，也不给人「过滤生效了」的错觉
+    let hits: SearchHit[] = [];
+    if (hasRule && parsed.unknownFlags.length === 0) {
+      hits = db.searchNotesAdvanced(parsed.text, limit, {
+        tags: parsed.tags,
+        pinned: parsed.flags.indexOf('pinned') >= 0,
+        trash: parsed.flags.indexOf('trash') >= 0
+      });
+    }
+    const result: SearchAdvancedResult = {
+      hits,
+      text: parsed.text,
+      tags: parsed.tags,
+      flags: parsed.flags,
+      unknownTags,
+      unknownFlags: parsed.unknownFlags
+    };
+    return result;
+  });
+
   handle('search:reindex', () => db.rebuildSearchIndex());
 }

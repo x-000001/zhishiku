@@ -843,6 +843,75 @@ export function searchNotes(query: string, limit = 30): SearchHit[] {
   }));
 }
 
+/** 高级检索的过滤条件（0.12.0 阶段2）：标签走 tag.name 唯一索引，状态走 note 列。 */
+export interface SearchNoteFilters {
+  tags?: string[];
+  pinned?: boolean;
+  trash?: boolean;
+}
+
+/** 这些标签名里哪些真的存在（一次 IN 查询，走 tag.name 唯一索引）。 */
+export function tagNamesIn(names: string[]): string[] {
+  const clean = [...new Set(names.map((n) => String(n ?? '').trim()).filter(Boolean))].slice(0, 5);
+  if (!clean.length) return [];
+  const marks = clean.map(() => '?').join(', ');
+  const rows = all<{ name: string }>(`select name from tag where name in (${marks})`, ...clean);
+  return rows.map((r) => r.name);
+}
+
+/**
+ * 高级检索：文字走 FTS5 MATCH（调用方保证已把 tag:/is: 语法剔掉），标签/状态走精准索引。
+ * 只有过滤语（没有文字）时退回「置顶优先 + 更新时间」的数据查询，全程不拼 LIKE '%…%'。
+ */
+export function searchNotesAdvanced(query: string, limit = 30, filters: SearchNoteFilters = {}): SearchHit[] {
+  const text = String(query ?? '').trim();
+  const match = toMatchQuery(text);
+  const tags = [...new Set((filters.tags ?? []).map((t) => String(t ?? '').trim()).filter(Boolean))].slice(0, 5);
+  const lim = Math.min(Math.max(limit, 1), 200);
+
+  const where: string[] = [];
+  const args: unknown[] = [];
+  where.push(filters.trash ? 'n.deleted_at is not null' : 'n.deleted_at is null');
+  if (filters.pinned) where.push('n.is_pinned = 1');
+  for (const tag of tags) {
+    // exists 子查询：note_tag 主键以 note_id 打头，tag.name 有唯一索引，两层都是精准索引查找
+    where.push(
+      'exists (select 1 from note_tag nt join tag t on t.id = nt.tag_id where nt.note_id = n.id and t.name = ?)'
+    );
+    args.push(tag);
+  }
+  const whereSql = where.join(' and ');
+  const columns = 'n.id, n.title, n.content, n.updated_at, c.name as category_name';
+  const joins = 'from note n left join category c on c.id = n.category_id';
+
+  const rows = match
+    ? all<{ id: Id; title: string; content: string; updated_at: string; category_name: string | null }>(
+        `select ${columns}
+         from note_fts f
+         join note n on n.id = f.rowid
+         left join category c on c.id = n.category_id
+         where note_fts match ? and ${whereSql}
+         order by rank
+         limit ?`,
+        match,
+        ...args,
+        lim
+      )
+    : all<{ id: Id; title: string; content: string; updated_at: string; category_name: string | null }>(
+        `select ${columns} ${joins} where ${whereSql} order by n.is_pinned desc, n.updated_at desc limit ?`,
+        ...args,
+        lim
+      );
+
+  return rows.map((r) => ({
+    note_id: r.id,
+    title: r.title || '(无标题)',
+    category_name: r.category_name,
+    snippet: snippetAround(r.content || r.title, text),
+    updated_at: r.updated_at
+  }));
+}
+
 /** 恢复备份或数据异常后重建索引。 */
 export function rebuildSearchIndex(): number {
   run('delete from note_fts');

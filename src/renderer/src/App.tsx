@@ -16,6 +16,8 @@ import QuickCapture from './pages/QuickCapture';
 import FocusDock from './focus';
 import CommandPalette from './CommandPalette';
 import { shouldIgnoreShortcut, type PaletteCommand } from './palette';
+import { parseSearchQuery, SEARCH_FLAG_LABELS, type ParsedSearchQuery } from '../../shared/search-query';
+import type { SearchAdvancedResult } from '../../shared/types';
 import type { SearchHit } from '../../shared/types';import { toastError } from './errors';
 
 export interface RouteProps {
@@ -498,43 +500,87 @@ export default function App(): ReactNode {
 function SearchModal({ onClose, openNote }: { onClose: () => void; openNote: (id: number) => void }): ReactNode {
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [meta, setMeta] = useState<SearchAdvancedResult | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const seqRef = useRef(0);
+
+  /** 渲染层即时解析：只用于 chip 与防呆提示；真正检索由主进程按 raw 再解析一遍。 */
+  const parsed = useMemo(() => parseSearchQuery(q), [q]);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
   useEffect(() => {
-    const text = q.trim();
-    if (!text) {
+    const parsedNow = parseSearchQuery(q);
+    const seq = seqRef.current + 1;
+    seqRef.current = seq;
+    if (parsedNow.empty) {
       setHits([]);
+      setMeta(null);
+      setBusy(false);
       return;
     }
     setBusy(true);
     const timer = window.setTimeout(() => {
       api
-        .search(text, 40)
-        .then(setHits)
-        .catch((err) => toastError('搜索失败：', err))
-        .finally(() => setBusy(false));
+        .searchAdvanced({ raw: q, limit: 40, text: parsedNow.text, tags: parsedNow.tags, flags: parsedNow.flags })
+        .then((result) => {
+          if (seqRef.current !== seq) return; // 防串台：输入早变了，旧结果直接丢
+          setHits(result.hits);
+          setMeta(result);
+        })
+        .catch((err) => {
+          if (seqRef.current !== seq) return;
+          toastError('搜索失败：', err);
+        })
+        .finally(() => {
+          if (seqRef.current === seq) setBusy(false);
+        });
     }, 160);
     return () => window.clearTimeout(timer);
   }, [q]);
 
+  const hints = searchHintLines(parsed, meta, busy);
+  const hasFilter = parsed.tags.length > 0 || parsed.flags.length > 0;
+
   return (
     <Modal title="全局搜索" variant="search-modal" onClose={onClose} width={640}>
-      <div className="row" style={{ marginBottom: 12 }}>
+      <div className="row" style={{ marginBottom: 10 }}>
         <input
           ref={inputRef}
           type="text"
           style={{ flex: 1 }}
-          placeholder="输入关键词，中文两个字也能搜到"
+          placeholder="搜索笔记；支持 tag:标签、is:pinned、is:trash"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
         {busy ? <span className="spin" /> : null}
       </div>
+      {hasFilter ? (
+        <div className="search-filters" aria-label="检索过滤条件">
+          {parsed.tags.map((tag) => (
+            <span key={'tag:' + tag} className="search-filter-chip">
+              tag:{tag}
+            </span>
+          ))}
+          {parsed.flags.map((flag) => (
+            <span key={'flag:' + flag} className="search-filter-chip">
+              is:{SEARCH_FLAG_LABELS[flag]}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {hints.length ? (
+        <div className="search-hints">
+          {hints.map((line) => (
+            <p key={line} className="search-hint">
+              {line}
+            </p>
+          ))}
+        </div>
+      ) : null}
       <div className="list">
         {hits.map((hit) => (
           <div
@@ -554,9 +600,32 @@ function SearchModal({ onClose, openNote }: { onClose: () => void; openNote: (id
             </div>
           </div>
         ))}
-        {q.trim() && !busy && hits.length === 0 ? <div className="empty">没有找到相关笔记</div> : null}
-        {!q.trim() ? <div className="empty">输入关键词开始搜索</div> : null}
       </div>
     </Modal>
   );
+}
+
+/**
+ * 搜索防呆提示（0.12.0 阶段2）：标签不存在、状态不支持、0 结果都要给人话，
+ * 不能只留一片空白。返回空数组表示没有额外提示（正常结果）。
+ */
+function searchHintLines(parsed: ParsedSearchQuery, meta: SearchAdvancedResult | null, busy: boolean): string[] {
+  const lines: string[] = [];
+  const unknownTags = meta ? meta.unknownTags : [];
+  const unknownFlags = meta ? meta.unknownFlags : parsed.unknownFlags;
+  if (unknownTags.length) lines.push('未找到标签：' + unknownTags.join('、') + '（去标签管理看看有没有重名/错字）');
+  if (unknownFlags.length) lines.push('不支持的状态：' + unknownFlags.join('、') + '（可用：pinned、trash）');
+  if (parsed.empty) {
+    if (unknownFlags.length === 0) lines.push('输入关键词开始搜索，支持 tag:标签、is:pinned、is:trash');
+    return lines;
+  }
+  if (busy || !meta) return lines;
+  if (meta.hits.length > 0) return lines;
+  if (unknownFlags.length > 0 || unknownTags.length > 0) return lines;
+  if (meta.tags.length > 0 && !meta.text) {
+    lines.push('「' + meta.tags.join('」「') + '」下没有找到笔记，试试更换关键词');
+  } else {
+    lines.push('没有找到匹配的笔记，试试更换关键词');
+  }
+  return lines;
 }

@@ -44,6 +44,8 @@ import type {
   ReviewLog,
   ReviewSource,
   SearchHit,
+  SearchAdvancedRequest,
+  SearchAdvancedResult,
   Tag,
   TagDeleteResult,
   TagRenameResult,
@@ -175,6 +177,8 @@ export const api = {
   deleteTag: (id: Id) => call<TagDeleteResult>('tag:delete', { id }),
 
   search: (q: string, limit?: number) => call<SearchHit[]>('search:query', { q, limit }),
+  /** 高级检索：tag: / is: 语法在渲染层先解析一遍用于 UI，主进程会按 raw 重新解析 */
+  searchAdvanced: (payload: SearchAdvancedRequest) => call<SearchAdvancedResult>('search:advanced', payload),
   reindex: () => call<number>('search:reindex'),
 
   addAttachment: (noteId: Id | null) => call<Attachment[]>('attach:add', { noteId }),

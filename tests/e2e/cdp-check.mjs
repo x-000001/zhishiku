@@ -6417,6 +6417,75 @@ try {
       ' 状态start=' + paletteVirtual.stateStart + ' 关闭=' + paletteVirtual.closed
   });
 
+  /* ================= 0.12.0 阶段2：高级检索语法（tag: / is:） ================= */
+  const advRaw = await cdp.eval(`(async () => {
+    const inv = (channel, payload) => window.api.invoke(channel, payload);
+    const tagged = await inv('note:create', { title: '阶段2-带标签检索', html: '<p>阶段2关键词 命中目标</p>' });
+    await inv('tag:set', { noteId: tagged.id, names: ['阶段2标签'] });
+    // 干扰项：正文里写死字面量 tag:阶段2标签，但没有真的打标签
+    const literal = await inv('note:create', { title: '阶段2-字面量检索', html: '<p>tag:阶段2标签 阶段2关键词</p>' });
+    const res = await inv('search:advanced', { raw: 'tag:阶段2标签 阶段2关键词', limit: 40 });
+    const miss = await inv('search:advanced', { raw: 'tag:阶段2不存在的标签', limit: 40 });
+    const unsupported = await inv('search:advanced', { raw: 'is:done 阶段2关键词', limit: 40 });
+    const pinned = await inv('search:advanced', { raw: 'is:pinned 阶段2关键词', limit: 40 });
+    return {
+      text: res.text,
+      titles: res.hits.map((h) => h.title),
+      unknownTags: res.unknownTags,
+      missUnknown: miss.unknownTags,
+      missHits: miss.hits.length,
+      unsupportedFlags: unsupported.unknownFlags,
+      unsupportedHits: unsupported.hits.length,
+      pinnedTitles: pinned.hits.map((h) => h.title),
+      literalId: literal.id
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：高级检索把 tag: 从 MATCH 剔除（正文写死 tag: 的干扰项不会误命中）',
+    ok: advRaw.text === '阶段2关键词' && advRaw.titles.length === 1 && advRaw.titles[0] === '阶段2-带标签检索' &&
+      advRaw.unknownTags.length === 0,
+    detail: 'text=' + advRaw.text + ' 命中=' + advRaw.titles.join('|') + ' 未知标签=' + advRaw.unknownTags.join(',')
+  });
+  results.push({
+    name: '0.12.0：不存在的标签返回 unknownTags；不支持的 is: 状态返回 unknownFlags 且不静默出结果',
+    ok: advRaw.missUnknown.length === 1 && advRaw.missHits === 0 &&
+      advRaw.unsupportedFlags.indexOf('done') >= 0 && advRaw.unsupportedHits === 0,
+    detail: '未知标签=' + advRaw.missUnknown.join(',') + ' 标签命中=' + advRaw.missHits +
+      ' 未知状态=' + advRaw.unsupportedFlags.join(',') + ' 状态命中=' + advRaw.unsupportedHits
+  });
+
+  const advUi = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+    await sleep(420);
+    const input = document.querySelector('.search-modal input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    const type = async (value) => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await sleep(800);
+    };
+    await type('tag:阶段2不存在的标签');
+    const unknownHint = document.querySelector('.search-hints') ? document.querySelector('.search-hints').textContent : '';
+    const chips = [...document.querySelectorAll('.search-filter-chip')].map((c) => c.textContent.trim());
+    await type('zzzz阶段2没有这个词');
+    const zeroHint = document.querySelector('.search-hints') ? document.querySelector('.search-hints').textContent : '';
+    await type('tag:阶段2标签 阶段2关键词');
+    const titles = [...document.querySelectorAll('.search-modal .modal-body .list-row .title')].map((e) => e.textContent.trim());
+    const closeBtn = document.querySelector('.modal-head .icon-btn');
+    if (closeBtn) closeBtn.click();
+    await sleep(320);
+    return { unknownHint, chips, zeroHint, titles, closed: !document.querySelector('.search-modal') };
+  })()`);
+  results.push({
+    name: '0.12.0：搜索防呆提示（未找到标签 / 0 结果给建议）且标签过滤在 UI 生效',
+    ok: advUi.unknownHint.indexOf('未找到标签') >= 0 && advUi.chips.indexOf('tag:阶段2不存在的标签') >= 0 &&
+      advUi.zeroHint.indexOf('试试更换关键词') >= 0 && advUi.titles.length === 1 &&
+      advUi.titles[0] === '阶段2-带标签检索' && advUi.closed === true,
+    detail: '未知提示=' + String(advUi.unknownHint).slice(0, 40) + ' chip=' + advUi.chips.join(',') +
+      ' 0结果提示=' + String(advUi.zeroHint).slice(0, 32) + ' UI命中=' + advUi.titles.join('|')
+  });
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {

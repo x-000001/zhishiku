@@ -1,4 +1,5 @@
 import type { RepoExtractStatus } from './github';
+import type { SearchFlag } from './search-query';
 
 /** 主进程与渲染进程共用的数据类型。字段命名与 SQLite 表列一一对应。 */
 
@@ -380,6 +381,31 @@ export interface SearchHit {
   category_name: string | null;
   snippet: string;
   updated_at: string;
+}
+
+/**
+ * 高级检索请求（0.12.0 阶段2）。
+ * `raw` 是用户原文；`text/tags/flags` 是渲染层用 shared/search-query 解析出来的结果，
+ * 只作对照——主进程会按 `raw` 再解析一遍，保证 `tag:`/`is:` 一定被剔除出 FTS MATCH。
+ */
+export interface SearchAdvancedRequest {
+  raw: string;
+  limit?: number;
+  text?: string;
+  tags?: string[];
+  flags?: SearchFlag[];
+}
+
+export interface SearchAdvancedResult {
+  hits: SearchHit[];
+  /** 实际用于 FTS 的检索词（已剔除 tag:/is: 语法词） */
+  text: string;
+  tags: string[];
+  flags: SearchFlag[];
+  /** 数据库里不存在的标签 → UI 提示「未找到标签：X」 */
+  unknownTags: string[];
+  /** 不支持的 is: 值 → UI 提示可用状态 */
+  unknownFlags: string[];
 }
 
 export interface AppInfo {

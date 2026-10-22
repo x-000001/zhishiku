@@ -5489,3 +5489,40 @@ blockquote.ai-summary b {
     height: 300px;
   }
 }
+
+/* ================= 0.12.0 阶段2：高级检索（tag: / is:）的过滤 chip 与防呆提示 =================
+   只在搜索面板里出现，不改动其它页面；颜色全部走主题令牌，深浅色自动跟随。 */
+
+.search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.search-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.search-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 10px;
+}
+
+.search-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-soft);
+}
