@@ -5526,3 +5526,87 @@ blockquote.ai-summary b {
   line-height: 1.55;
   color: var(--text-soft);
 }
+
+/* ================= 0.12.0 阶段3：编辑器底部「🧠 相关笔记」 =================
+   正常文档流里的一块（不是浮层、不是抽屉）：作为 .kb-editor 的最后一个 flex 子项，
+   .editor-body 的 flex:1 会自动让位，绝不会盖住工具条/保存按钮/正文。 */
+
+.related-notes {
+  flex: 0 0 auto;
+  max-height: 210px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--border);
+  padding: 10px 16px 12px;
+  background: color-mix(in srgb, var(--bg-panel) 44%, transparent);
+}
+
+.related-notes-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.related-notes-title {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.related-notes-status {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.related-notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.related-note {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.related-note:hover,
+.related-note:focus-visible {
+  background: var(--bg-hover);
+}
+
+.related-note-title {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.related-note-sub {
+  font-size: 11.5px;
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.related-notes-empty {
+  padding: 4px 2px 2px;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+@media (max-width: 767px) {
+  .related-notes {
+    max-height: 150px;
+    padding: 8px 12px 10px;
+  }
+}

@@ -6486,6 +6486,138 @@ try {
       ' 0结果提示=' + String(advUi.zeroHint).slice(0, 32) + ' UI命中=' + advUi.titles.join('|')
   });
 
+  /* ================= 0.12.0 阶段3：智能上下文关联（相关笔记） ================= */
+  const backlinks = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (channel, payload) => window.api.invoke(channel, payload);
+    const main = await inv('note:create', { title: '阶段3-主笔记', html: '<p>阶段3主题词 间隔重复 主动回忆 高效复习方法</p>' });
+    const linked = await inv('note:create', { title: '阶段3-关联笔记', html: '<p>间隔重复与主动回忆构成的高效复习方法，配套阶段3主题词。</p>' });
+    // 干扰项标题/正文都刻意不含「阶段」等共有词，避免因为共享词被合理命中
+    const unrelated = await inv('note:create', { title: '采购清单-对照', html: '<p>牛奶、面包、鸡蛋、咖啡豆。</p>' });
+    const viaIpc = await inv('note:related', { id: main.id, limit: 6 });
+
+    location.hash = '/knowledge';
+    await sleep(520);
+    let row = null;
+    for (let i = 0; i < 40; i += 1) {
+      row = [...document.querySelectorAll('.list-row')].find((r) => (r.textContent || '').includes('阶段3-主笔记'));
+      if (row) break;
+      await sleep(80);
+    }
+    if (!row) return { error: 'no-row' };
+    row.click();
+    let panel = null;
+    for (let i = 0; i < 50; i += 1) {
+      const el = document.querySelector('.related-notes');
+      if (el && el.querySelector('.related-note')) {
+        panel = el;
+        break;
+      }
+      await sleep(80);
+    }
+    panel = panel || document.querySelector('.related-notes');
+    const titles = [...document.querySelectorAll('.related-note-title')].map((e) => e.textContent.trim());
+    const header = panel ? panel.textContent : '';
+    const saveBtn = [...document.querySelectorAll('.editor-head .btn')].find((b) => (b.textContent || '').includes('保存'));
+    const saveRect = saveBtn ? saveBtn.getBoundingClientRect() : null;
+    const panelRect = panel ? panel.getBoundingClientRect() : null;
+    const saveVisible = !!saveBtn && saveBtn.offsetParent !== null && !!saveRect && saveRect.width > 0 && saveRect.height > 0;
+    const overlap = !!(saveRect && panelRect)
+      ? !(saveRect.bottom <= panelRect.top || saveRect.top >= panelRect.bottom)
+      : true;
+    const first = [...document.querySelectorAll('.related-note')].find((b) => (b.textContent || '').includes('阶段3-关联笔记')) ||
+      document.querySelector('.related-note');
+    if (first) first.click();
+    for (let i = 0; i < 40; i += 1) {
+      const el = document.querySelector('.editor-title');
+      if (el && el.value === '阶段3-关联笔记') break;
+      await sleep(80);
+    }
+    const opened = document.querySelector('.editor-title') ? document.querySelector('.editor-title').value : '';
+    return {
+      ipcIds: viaIpc.map((h) => h.note_id),
+      mainId: main.id,
+      linkedId: linked.id,
+      unrelatedId: unrelated.id,
+      panel: !!panel,
+      header: header,
+      titles: titles,
+      saveVisible: saveVisible,
+      overlap: overlap,
+      opened: opened
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：note:related 只回同主题笔记，且结果里绝不含当前笔记 ID',
+    ok:
+      Array.isArray(backlinks.ipcIds) &&
+      backlinks.ipcIds.indexOf(backlinks.linkedId) >= 0 &&
+      backlinks.ipcIds.indexOf(backlinks.mainId) < 0 &&
+      backlinks.ipcIds.indexOf(backlinks.unrelatedId) < 0,
+    detail: '当前=' + backlinks.mainId + ' 关联=' + backlinks.linkedId + ' 返回=' + (backlinks.ipcIds || []).join(',')
+  });
+  results.push({
+    name: '0.12.0：编辑器底部出现「🧠 相关笔记」，列出关联笔记（不含自己），点击可切换过去且不遮挡保存按钮',
+    ok:
+      backlinks.panel === true &&
+      String(backlinks.header).indexOf('相关笔记') >= 0 &&
+      backlinks.titles.indexOf('阶段3-关联笔记') >= 0 &&
+      backlinks.titles.indexOf('阶段3-主笔记') < 0 &&
+      backlinks.titles.indexOf('采购清单-对照') < 0 &&
+      backlinks.saveVisible === true &&
+      backlinks.overlap === false &&
+      backlinks.opened === '阶段3-关联笔记',
+    detail:
+      '面板=' + backlinks.panel + ' 标题=' + backlinks.titles.join('|') +
+      ' 保存按钮可见=' + backlinks.saveVisible + ' 与面板重叠=' + backlinks.overlap +
+      ' 点开后=' + backlinks.opened
+  });
+
+  const backlinksEmpty = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (channel, payload) => window.api.invoke(channel, payload);
+    // 标题和正文都只有停用词：提取不到关键词，related 必须为空
+    const plain = await inv('note:create', { title: '的了是', html: '<p>的 了 是 在 和 因为 所以 但是 我们 这个</p>' });
+    const relDirect = await inv('note:related', { id: plain.id, limit: 6 });
+    location.hash = '/';
+    await sleep(260);
+    location.hash = '/knowledge';
+    await sleep(520);
+    let row = null;
+    for (let i = 0; i < 40; i += 1) {
+      row = [...document.querySelectorAll('.list-row')].find((r) => (r.textContent || '').includes('的了是'));
+      if (row) break;
+      await sleep(80);
+    }
+    if (!row) return { error: 'no-row' };
+    row.click();
+    let empty = null;
+    for (let i = 0; i < 60; i += 1) {
+      const el = document.querySelector('.related-notes-empty');
+      // 加载中也会出现 .related-notes-empty（文案不同），要等到「加载完且没有相关笔记」那一刻
+      if (el && (el.textContent || '').indexOf('还没有找到相关笔记') >= 0) {
+        empty = el;
+        break;
+      }
+      await sleep(80);
+    }
+    return {
+      emptyText: empty ? empty.textContent.trim() : '',
+      panel: !!document.querySelector('.related-notes'),
+      directCount: relDirect.length,
+      id: plain.id
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：只有停用词的笔记显示「还没有找到相关笔记」，而不是瞎推荐/空白',
+    ok:
+      backlinksEmpty.panel === true &&
+      backlinksEmpty.directCount === 0 &&
+      String(backlinksEmpty.emptyText).indexOf('还没有找到相关笔记') >= 0,
+    detail: '面板=' + backlinksEmpty.panel + ' 直查=' + backlinksEmpty.directCount +
+      ' 空态=' + String(backlinksEmpty.emptyText).slice(0, 40)
+  });
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {

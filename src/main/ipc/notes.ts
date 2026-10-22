@@ -1,6 +1,7 @@
 import * as db from '../db';
 import type { Id, ListFilter, SearchAdvancedRequest, SearchAdvancedResult, SearchHit } from '../../shared/types';
 import { parseSearchQuery } from '../../shared/search-query';
+import { extractBacklinkKeywords } from '../../shared/backlinks';
 import type { Handle } from './common';
 
 /** 分类、笔记、版本点、标签、搜索：知识库这一摊。 */
@@ -115,4 +116,15 @@ export function registerNotes(handle: Handle): void {
   });
 
   handle('search:reindex', () => db.rebuildSearchIndex());
+
+  /**
+   * 相关笔记（0.12.0 阶段3）：主进程读当前笔记 → 提取关键词（过滤停用词）→ FTS5 检索。
+   * 排除当前笔记的 `and n.id != ?` 写死在 db.searchRelatedNotes 的 SQL 里。
+   */
+  handle('note:related', (p: { id: Id; limit?: number }) => {
+    const note = db.getNote(p.id);
+    if (!note) return [];
+    const terms = extractBacklinkKeywords({ title: note.title ?? '', text: note.content ?? '' });
+    return db.searchRelatedNotes(p.id, terms, p.limit ?? 6);
+  });
 }

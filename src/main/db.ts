@@ -912,6 +912,37 @@ export function searchNotesAdvanced(query: string, limit = 30, filters: SearchNo
   }));
 }
 
+/**
+ * 相关笔记检索（0.12.0 阶段3）：关键词之间是 OR（只要沾上一个就有机会），
+ * 但 SQL 里硬性 `and n.id != ?` —— 当前笔记永远不能出现在「相关笔记」里。
+ * 关键词由调用方用 shared/backlinks 提取（已过滤停用词），这里只负责检索。
+ */
+export function searchRelatedNotes(noteId: Id, terms: string[], limit = 6): SearchHit[] {
+  const clean = [...new Set(terms.map((t) => String(t ?? '').trim()).filter(Boolean))].slice(0, 10);
+  if (!clean.length) return [];
+  const match = clean.map((t) => `"${expandCjk(t).replace(/"/g, '""')}"`).join(' OR ');
+  const lim = Math.min(Math.max(limit, 1), 20);
+  const rows = all<{ id: Id; title: string; content: string; updated_at: string; category_name: string | null }>(
+    `select n.id, n.title, n.content, n.updated_at, c.name as category_name
+     from note_fts f
+     join note n on n.id = f.rowid
+     left join category c on c.id = n.category_id
+     where note_fts match ? and n.deleted_at is null and n.id != ?
+     order by rank
+     limit ?`,
+    match,
+    noteId,
+    lim
+  );
+  return rows.map((r) => ({
+    note_id: r.id,
+    title: r.title || '(无标题)',
+    category_name: r.category_name,
+    snippet: snippetAround(r.content || r.title, clean[0] ?? ''),
+    updated_at: r.updated_at
+  }));
+}
+
 /** 恢复备份或数据异常后重建索引。 */
 export function rebuildSearchIndex(): number {
   run('delete from note_fts');

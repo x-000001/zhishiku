@@ -179,6 +179,8 @@ export const api = {
   search: (q: string, limit?: number) => call<SearchHit[]>('search:query', { q, limit }),
   /** 高级检索：tag: / is: 语法在渲染层先解析一遍用于 UI，主进程会按 raw 重新解析 */
   searchAdvanced: (payload: SearchAdvancedRequest) => call<SearchAdvancedResult>('search:advanced', payload),
+  /** 相关笔记（编辑器底部「🧠 相关笔记」）：主进程会排除当前笔记自身 */
+  relatedNotes: (id: Id, limit = 6) => call<SearchHit[]>('note:related', { id, limit }),
   reindex: () => call<number>('search:reindex'),
 
   addAttachment: (noteId: Id | null) => call<Attachment[]>('attach:add', { noteId }),

@@ -29,6 +29,8 @@ import {
 import * as rich from '../rich';
 import { describeSaveError, saveStamp } from '../save';
 import { applyOrder, moveWithinGroup } from '../reorder';
+import RelatedNotes from '../RelatedNotes';
+import type { SearchHit } from '../../../shared/types';
 import type { Attachment, Category, Id, Note, NoteListItem, NoteVersion, Tag } from '../../../shared/types';import { toastError, errText } from '../errors';
 
 type NoteDetail = Note & { tags: Tag[]; attachments: Attachment[] };
@@ -108,6 +110,14 @@ export default function Knowledge(props: {
   const [tagsOpen, setTagsOpen] = useState(false);
   const [tagRename, setTagRename] = useState<{ tag: Tag; value: string } | null>(null);
   const [tagDelete, setTagDelete] = useState<Tag | null>(null);
+
+  /* ---------------- 0.12.0 阶段3：编辑器底部「🧠 相关笔记」 ---------------- */
+  const [related, setRelated] = useState<SearchHit[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
+  /** 请求序号：切笔记/关笔记时作废旧请求，防止旧结果写进新笔记的面板 */
+  const relatedSeq = useRef(0);
+  /** 闭包防串台：回调里比对「当前打开的是不是发起请求时那篇」 */
+  const relatedNoteRef = useRef<Id | null>(null);
 
   /* ---------------- 第七版：AI 辅助（0.7.0） ----------------
    * 划词气泡只做「选动作 + 选目标语言」；真正的请求、对比、替换都交给弹窗。
@@ -338,6 +348,42 @@ export default function Knowledge(props: {
     if (openId != null) openNote(openId);
     else setNote(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId]);
+
+  /* 0.12.0 阶段3：切笔记就重新拉「相关笔记」；旧请求回来先比 noteId 再比序号，不一致直接丢弃。 */
+  useEffect(() => {
+    relatedNoteRef.current = openId;
+    if (openId == null) {
+      relatedSeq.current += 1;
+      setRelated([]);
+      setRelatedLoading(false);
+      return;
+    }
+    const seq = relatedSeq.current + 1;
+    relatedSeq.current = seq;
+    setRelated([]);
+    setRelatedLoading(true);
+    const timer = window.setTimeout(() => {
+      api
+        .relatedNotes(openId, 6)
+        .then((list) => {
+          if (relatedNoteRef.current !== openId) return;
+          if (relatedSeq.current !== seq) return;
+          setRelated(list);
+        })
+        .catch(() => {
+          if (relatedNoteRef.current !== openId) return;
+          if (relatedSeq.current !== seq) return;
+          setRelated([]);
+        })
+        .finally(() => {
+          if (relatedNoteRef.current === openId && relatedSeq.current === seq) setRelatedLoading(false);
+        });
+    }, 280);
+    return () => {
+      window.clearTimeout(timer);
+      if (relatedSeq.current === seq) relatedSeq.current += 1;
+    };
   }, [openId]);
 
   /* ---------------- 草稿与手动保存 ---------------- */
@@ -1730,6 +1776,17 @@ export default function Knowledge(props: {
                 </span>
               ))}
             </div>
+
+            {openId != null ? (
+              <RelatedNotes
+                items={related}
+                loading={relatedLoading}
+                onOpen={(id) => {
+                  setMode('edit');
+                  openNote(id);
+                }}
+              />
+            ) : null}
           </>
         )}
       </div>
