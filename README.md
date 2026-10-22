@@ -341,6 +341,8 @@ C:\JwKB\使用说明.txt
 
 **发布记录**：0.11.2 已发到 [GitHub Release v0.11.2](https://github.com/x-000001/zhishiku/releases/tag/v0.11.2)（附件 JwKB-Setup-0.11.2.exe，112,597,512 字节）：重做「✨ AI」下拉菜单的悬停 / 键盘焦点 / 选中态（整行浅灰底、`:focus-visible` 同底色、右侧「自动识别」改颜色层级），并补上其它右键菜单一直缺的 `--accent` 令牌（它们的悬停原来也是「透明底 + 白字」）；装 0.11.1 的机器点「检查更新」会看到「发现新版本 0.11.2」。
 
+**发布记录**：0.12.0 已发到 [GitHub Release v0.12.0](https://github.com/x-000001/zhishiku/releases/tag/v0.12.0)（附件 JwKB-Setup-0.12.0.exe，112,616,795 字节）：全局命令面板、高级检索语法、相关笔记、AI 对话侧边栏、云端灾备（WebDAV/GitHub 单向备份）五个阶段；装 0.11.2 的机器点「检查更新」会看到「发现新版本 0.12.0」。
+
 **发布记录**：0.11.1 已发到 [GitHub Release v0.11.1](https://github.com/x-000001/zhishiku/releases/tag/v0.11.1)（附件 JwKB-Setup-0.11.1.exe，112,595,690 字节）：AI 提炼改成「JSON 提取器」Prompt + JSON 主体解析，修掉模型把 Prompt 模板当正文回显的 bug；启动时自动把历史回显条目改判 `ai_failed`，卡片点「↻ 重试提炼」即可补回。
 
 **发布记录**：0.11.0 已发到 [GitHub Release v0.11.0](https://github.com/x-000001/zhishiku/releases/tag/v0.11.0)，附带 JwKB-Setup-0.11.0.exe（112,595,649 字节）；装 0.10.0 的机器点「检查更新」会看到「发现新版本 0.11.0」（这一版把旧的 Issues 同步换成收集箱项目导入 + AI 提炼，并修好了 Device Flow 授权一直「未连接」；安装包已于 10-21 更新，修掉 AI 提炼把 Prompt 模板回显成正文的问题）。
