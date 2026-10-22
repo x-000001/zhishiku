@@ -2,10 +2,11 @@
 /**
  * 发版脚本：把「建 GitHub Release + 上传安装包 + 回填发布链接/字节数」这三步自动化。
  *
- * 用法：
- *   npm run release                 # 预演（只读：核对版本/tag/安装包/Release 现状，不发写请求）
- *   npm run release -- --apply      # 真发：建（或更新）Release、上传/替换安装包、回填文档占位符
- *   npm run release -- --apply --asset "D:\\path\\Jw知识库-安装包-0.11.2.exe"
+ * 用法（Windows PowerShell 5.1 下 `npm run release -- --apply` 的 `--apply` 会被 npm 吞掉、只跑预演，
+ *      所以真发一律直接跑 node；cmd.exe 下两种写法都行）：
+ *   node .tools/release.mjs                 # 预演（只读：核对版本/tag/安装包/Release 现状，不发写请求）
+ *   node .tools/release.mjs --apply         # 真发：建（或更新）Release、上传/替换安装包、回填文档占位符
+ *   node .tools/release.mjs --apply --asset "D:\\path\\Jw知识库-安装包-0.11.2.exe"
  *
  * 前置条件（按 DEVELOPER_GUIDE.md §10.1 发版 SOP）：
  *   1. npm run dist 已经产出安装包到 C:\JwKB\setup\Jw知识库-安装包-<版本>.exe

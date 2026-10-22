@@ -6,7 +6,7 @@
 
 ## [0.11.2] - 2026-10-22
 
-发布：__REL_LINK__（附件 JwKB-Setup-0.11.2.exe，__BYTES__ 字节）
+发布：[GitHub Release v0.11.2](https://github.com/x-000001/zhishiku/releases/tag/v0.11.2)（附件 JwKB-Setup-0.11.2.exe，112,597,512 字节）
 
 ### 修复
 

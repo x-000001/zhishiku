@@ -86,7 +86,7 @@ npm run dev                          # electron-vite dev：主进程热重启 + 
 | `npm run test:kill` | 写数据后强杀、重启校验（6 条） | 同上 |
 | `npm run test:all` | 上述按序全跑 | 最稳的一键验收 |
 | `npm run dist` | 打安装包 + 绿色版到 `C:\JwKB` | 见 §10 |
-| `npm run release` | 发 GitHub Release：预演（只读）核对版本/tag/安装包；加 `-- --apply` 才建 Release、传安装包、回填文档 | 见 §10.1，脚本 `.tools/release.mjs` |
+| `npm run release` | 发 GitHub Release：预演（只读）核对版本/tag/安装包；真发用 `node .tools/release.mjs --apply`（Windows PowerShell 5.1 会把 `npm run release -- --apply` 里的 `--apply` 吞掉，只剩预演） | 见 §10.1，脚本 `.tools/release.mjs` |
 
 ---
 
@@ -497,14 +497,14 @@ flowchart TD
   D --> E["npm run dist（.tools/build-installer.mjs）"]
   E --> F["node .tools/check-packaged.mjs → 23/23"]
   F --> G["git commit + annotated tag + push main/tag"]
-  G --> H["npm run release（预演：核对版本 / tag / 安装包 / Release 现状）"]
-  H --> I["npm run release -- --apply（建 Release + 传安装包 + 回填链接）"]
+  G --> H["node .tools/release.mjs（预演：核对版本 / tag / 安装包 / Release 现状）"]
+  H --> I["node .tools/release.mjs --apply（建 Release + 传安装包 + 回填链接）"]
   I --> J["再 commit docs 并 push；清理临时文件"]
 ```
 
 - 版本号在 `package.json:3` 和 `package-lock.json` 顶层/`packages[""]` 共三处，漏一处会导致安装包名与界面显示不一致。
 - 安装包产物：`C:\JwKB\setup\Jw知识库-安装包-<版本>.exe`、绿色版 `C:\JwKB\portable\Jw知识库.exe`（`README.md:171-177`）。
-- 发 Release 别手敲 curl：`npm run release` 先预演（核对 package.json 版本、tag 是否已 push、安装包字节数与 SHA256、Release/附件现状、CHANGELOG 小节、文档占位符数量），确认后 `npm run release -- --apply` 一条命令完成「建/更新 Release（说明自动取 CHANGELOG 小节）+ 上传或替换 `JwKB-Setup-<版本>.exe` + 回填 `__REL_LINK__`/`__BYTES__`」，最后按提示 commit docs。已存在的 Release 默认**不覆盖**说明（保留手写的补丁段落），要覆盖加 `--update-body`；同名字节数一致的附件会跳过重传。脚本在 `.tools/release.mjs`，token 优先读 `GITHUB_TOKEN`，否则走 `git credential fill`；内部统一 `curl.exe --ssl-no-revoke`（本机证书吊销检查会失败）。
+- 发 Release 别手敲 curl：`npm run release` 先预演（核对 package.json 版本、tag 是否已 push、安装包字节数与 SHA256、Release/附件现状、CHANGELOG 小节、文档占位符数量），确认后 `node .tools/release.mjs --apply` 一条命令完成「建/更新 Release（说明自动取 CHANGELOG 小节）+ 上传或替换 `JwKB-Setup-<版本>.exe` + 回填 `__REL_LINK__`/`__BYTES__`」，最后按提示 commit docs。**注意**：Windows PowerShell 5.1 里 `npm run release -- --apply` 的 `--apply` 会被 npm 当自己的参数吞掉、只跑预演（cmd.exe 下正常）；所以真发一律用 `node .tools/release.mjs --apply`。已存在的 Release 默认**不覆盖**说明（保留手写的补丁段落），要覆盖加 `--update-body`；同名字节数一致的附件会跳过重传。脚本在 `.tools/release.mjs`，token 优先读 `GITHUB_TOKEN`，否则走 `git credential fill`；内部统一 `curl.exe --ssl-no-revoke`（本机证书吊销检查会失败）。
 - 发版后必跑一次安装包自检，它才是「用户真正拿到的东西」。
 
 ### 10.2 技术债直击（按优先级）
