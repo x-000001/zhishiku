@@ -6618,6 +6618,213 @@ try {
       ' 空态=' + String(backlinksEmpty.emptyText).slice(0, 40)
   });
 
+  /* ================= 0.12.0 阶段4：AI 对话侧边栏 ================= */
+  const chatLayout = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (channel, payload) => window.api.invoke(channel, payload);
+    await inv('ai:config:set', { baseUrl: 'http://127.0.0.1:${stubPort}/ai/v1' });
+    await inv('note:create', { title: '阶段4-对话主笔记', html: '<p>阶段4对话上下文：间隔重复与主动回忆是一套复习方法。</p>' });
+    await inv('note:create', { title: '阶段4-对话备笔记', html: '<p>备笔记用于验证切换上下文时会清空历史并中止生成。</p>' });
+    location.hash = '/';
+    await sleep(240);
+    location.hash = '/knowledge';
+    await sleep(520);
+    let row = null;
+    for (let i = 0; i < 40; i += 1) {
+      row = [...document.querySelectorAll('.list-row')].find((r) => (r.textContent || '').includes('阶段4-对话主笔记'));
+      if (row) break;
+      await sleep(80);
+    }
+    if (!row) return { error: 'no-row' };
+    row.click();
+    for (let i = 0; i < 40; i += 1) {
+      const ed = document.querySelector('.rt-editor');
+      if (ed && (ed.textContent || '').includes('阶段4对话上下文')) break;
+      await sleep(80);
+    }
+    const toggle = document.querySelector('.ai-chat-toggle');
+    if (!toggle) return { error: 'no-toggle' };
+    toggle.focus();
+    toggle.click();
+    await sleep(260);
+    // 让位是 0.24s 的过渡：轮询到 margin-right 稳定到位再量（软件渲染下过渡偶尔慢一点）
+    let marginSeen = 0;
+    for (let i = 0; i < 40; i += 1) {
+      const edNow = document.querySelector('.kb-editor');
+      marginSeen = edNow ? parseFloat(getComputedStyle(edNow).marginRight) || 0 : 0;
+      if (marginSeen >= 379) break;
+      await sleep(60);
+    }
+    await sleep(120);
+    const drawer = document.querySelector('.ai-chat-drawer');
+    const editor = document.querySelector('.kb-editor');
+    const saveBtn = [...document.querySelectorAll('.editor-head .btn')].find((b) => (b.textContent || '').includes('保存'));
+    const sb = saveBtn ? saveBtn.getBoundingClientRect() : null;
+    const db = drawer ? drawer.getBoundingClientRect() : null;
+    const ed = editor ? editor.getBoundingClientRect() : null;
+    const overlap = sb && db ? !(sb.right <= db.left || sb.left >= db.right || sb.bottom <= db.top || sb.top >= db.bottom) : true;
+    const panel = document.querySelector('.kb');
+    return {
+      drawer: !!drawer,
+      z: drawer ? getComputedStyle(drawer).zIndex : '',
+      editorClass: editor ? editor.className : '',
+      kbClass: panel ? panel.className : '',
+      varW: panel ? getComputedStyle(panel).getPropertyValue('--ai-drawer-w').trim() : '',
+      innerWidth: window.innerWidth,
+      marginRight: editor ? getComputedStyle(editor).marginRight : '',
+      editorRight: ed ? Math.round(ed.right) : 0,
+      drawerLeft: db ? Math.round(db.left) : 0,
+      drawerRight: db ? Math.round(db.right) : 0,
+      saveVisible: !!saveBtn && saveBtn.offsetParent !== null && !!sb && sb.width > 0,
+      overlap: overlap,
+      inputFocused: document.activeElement === document.querySelector('.ai-chat-input')
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：AI 对话抽屉从右侧打开，编辑区用 margin-right 让位（不遮挡保存按钮、输入框自动聚焦）',
+    ok:
+      chatLayout.drawer === true &&
+      chatLayout.z === '40' &&
+      parseFloat(String(chatLayout.marginRight)) >= 379 &&
+      chatLayout.editorRight <= chatLayout.drawerLeft + 1 &&
+      chatLayout.saveVisible === true &&
+      chatLayout.overlap === false &&
+      chatLayout.inputFocused === true,
+    detail:
+      '抽屉=' + chatLayout.drawer + ' z=' + chatLayout.z + ' 让位=' + chatLayout.marginRight +
+      ' 编辑区右=' + chatLayout.editorRight + ' 抽屉左=' + chatLayout.drawerLeft + ' 抽屉右=' + chatLayout.drawerRight +
+      ' 保存可见=' + chatLayout.saveVisible + ' 重叠=' + chatLayout.overlap + ' 聚焦=' + chatLayout.inputFocused +
+      ' 类=' + chatLayout.kbClass + '/' + chatLayout.editorClass + ' 变量=' + chatLayout.varW + ' 宽=' + chatLayout.innerWidth
+  });
+
+  const chatSend = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    let chatEvents = 0;
+    let selectionEvents = 0;
+    const offChat = window.api.on('ai:chat:stream', () => { chatEvents += 1; });
+    const offSel = window.api.on('ai:stream', () => { selectionEvents += 1; });
+    const input = document.querySelector('.ai-chat-input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(input, '这篇笔记主要讲了什么？');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(120);
+    const sendBtn = document.querySelector('.ai-chat-send');
+    if (sendBtn) sendBtn.click();
+    let answer = '';
+    for (let i = 0; i < 80; i += 1) {
+      const el = document.querySelector('.ai-chat-msg.assistant .ai-chat-msg-body');
+      answer = el ? el.textContent.trim() : '';
+      if (answer && !document.querySelector('.ai-chat-typing')) break;
+      await sleep(80);
+    }
+    await sleep(260);
+    offChat();
+    offSel();
+    return {
+      answer: answer,
+      userCount: document.querySelectorAll('.ai-chat-msg.user').length,
+      assistantCount: document.querySelectorAll('.ai-chat-msg.assistant').length,
+      typing: !!document.querySelector('.ai-chat-typing'),
+      error: document.querySelector('.ai-chat-error') ? document.querySelector('.ai-chat-error').textContent : '',
+      chatEvents: chatEvents,
+      selectionEvents: selectionEvents
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：AI 对话流式回答能显示（独立 ai:chat:stream 通道，不碰划词的 ai:stream）',
+    ok:
+      String(chatSend.answer).length > 0 &&
+      chatSend.userCount === 1 &&
+      chatSend.assistantCount === 1 &&
+      chatSend.typing === false &&
+      chatSend.error === '' &&
+      chatSend.chatEvents > 0 &&
+      chatSend.selectionEvents === 0,
+    detail:
+      '回答=' + String(chatSend.answer).slice(0, 30) + ' 消息数=' + chatSend.userCount + '/' + chatSend.assistantCount +
+      ' 打字中=' + chatSend.typing + ' chat事件=' + chatSend.chatEvents + ' 划词事件=' + chatSend.selectionEvents
+  });
+
+  const chatSwitch = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const inv = (channel, payload) => window.api.invoke(channel, payload);
+    // 换到慢接口：确保切换发生在「生成中」
+    await inv('ai:config:set', { baseUrl: 'http://127.0.0.1:${stubPort}/ai-slow/v1' });
+    const input = document.querySelector('.ai-chat-input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(input, '慢速问题：请详细说明。');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(120);
+    document.querySelector('.ai-chat-send').click();
+    let sawTyping = false;
+    for (let i = 0; i < 30; i += 1) {
+      if (document.querySelector('.ai-chat-typing')) { sawTyping = true; break; }
+      await sleep(50);
+    }
+    const beforeCount = document.querySelectorAll('.ai-chat-msg').length;
+    // 切到备笔记
+    const row = [...document.querySelectorAll('.list-row')].find((r) => (r.textContent || '').includes('阶段4-对话备笔记'));
+    if (row) row.click();
+    let notice = '';
+    for (let i = 0; i < 40; i += 1) {
+      const el = document.querySelector('.ai-chat-notice');
+      notice = el ? el.textContent : '';
+      if (notice.includes('已切换上下文')) break;
+      await sleep(80);
+    }
+    await sleep(900);
+    const after = {
+      notice: notice,
+      messages: document.querySelectorAll('.ai-chat-msg').length,
+      typing: !!document.querySelector('.ai-chat-typing'),
+      answer: document.querySelector('.ai-chat-msg.assistant .ai-chat-msg-body')
+        ? document.querySelector('.ai-chat-msg.assistant .ai-chat-msg-body').textContent.length
+        : 0
+    };
+    await inv('ai:config:set', { baseUrl: 'http://127.0.0.1:${stubPort}/ai/v1' });
+    return { sawTyping: sawTyping, beforeCount: beforeCount, after: after };
+  })()`);
+  results.push({
+    name: '0.12.0：切换笔记会中止在途生成 + 清空历史，并提示「已切换上下文」',
+    ok:
+      chatSwitch.sawTyping === true &&
+      chatSwitch.beforeCount >= 2 &&
+      String(chatSwitch.after.notice).indexOf('已切换上下文') >= 0 &&
+      chatSwitch.after.messages === 0 &&
+      chatSwitch.after.typing === false &&
+      chatSwitch.after.answer === 0,
+    detail:
+      '生成中=' + chatSwitch.sawTyping + ' 切换前消息=' + chatSwitch.beforeCount +
+      ' 提示=' + String(chatSwitch.after.notice).slice(0, 24) + ' 切换后消息=' + chatSwitch.after.messages +
+      ' 打字中=' + chatSwitch.after.typing
+  });
+
+  const chatClose = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const toggle = document.querySelector('.ai-chat-toggle');
+    const closeBtn = document.querySelector('.ai-chat-head .icon-btn');
+    if (closeBtn) closeBtn.click();
+    let marginNow = -1;
+    for (let i = 0; i < 40; i += 1) {
+      const editor = document.querySelector('.kb-editor');
+      marginNow = editor ? parseFloat(getComputedStyle(editor).marginRight) || 0 : 0;
+      if (marginNow <= 0.5) break;
+      await sleep(60);
+    }
+    await sleep(120);
+    const editor = document.querySelector('.kb-editor');
+    return {
+      closed: !document.querySelector('.ai-chat-drawer'),
+      marginRight: editor ? getComputedStyle(editor).marginRight : '',
+      focusBack: document.activeElement === toggle
+    };
+  })()`);
+  results.push({
+    name: '0.12.0：关闭 AI 抽屉后编辑区恢复原宽，焦点还给打开前的按钮',
+    ok: chatClose.closed === true && parseFloat(String(chatClose.marginRight)) === 0 && chatClose.focusBack === true,
+    detail: '关闭=' + chatClose.closed + ' 让位恢复=' + chatClose.marginRight + ' 焦点归还=' + chatClose.focusBack
+  });
+
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);
 } catch (err) {

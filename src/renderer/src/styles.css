@@ -5610,3 +5610,262 @@ blockquote.ai-summary b {
     padding: 8px 12px 10px;
   }
 }
+
+/* ================= 0.12.0 阶段4：AI 对话侧边栏（右侧 Drawer） =================
+   层级：面板(40) < 番茄钟(55) < 弹窗/命令面板(60) < Toast(80) → 抽屉 z-index:40。
+   关键：抽屉不是覆盖层 —— .kb-editor 用 margin-right（<768 用 margin-bottom）平滑让位，
+   工具条、保存按钮、正文阅读区都不会被挡住。 */
+
+.kb {
+  position: relative;
+  --ai-drawer-w: 380px;
+}
+
+.kb-editor {
+  transition:
+    margin-right 0.24s var(--smooth-ease),
+    margin-bottom 0.24s var(--smooth-ease);
+}
+
+.kb-editor.chat-open {
+  margin-right: var(--ai-drawer-w);
+}
+
+/* 窗口不够宽时（1279 这种三栏本来就紧），抽屉打开的同时把分类树平滑收起：
+   编辑器让位后仍有足够宽度放工具条/保存按钮，正文也不会被挤成一条线。 */
+.kb-tree {
+  transition:
+    width 0.24s var(--smooth-ease),
+    flex-basis 0.24s var(--smooth-ease),
+    padding 0.24s var(--smooth-ease);
+}
+
+.kb.chat-open .kb-tree {
+  width: 0;
+  flex-basis: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-right: none;
+  overflow: hidden;
+}
+
+.ai-chat-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--ai-drawer-w);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -18px 0 44px -32px rgba(15, 23, 42, 0.55);
+  animation: jw-ai-chat-in 200ms var(--smooth-ease) both;
+}
+
+@keyframes jw-ai-chat-in {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ai-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ai-chat-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.ai-chat-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.ai-chat-notice {
+  margin: 8px 12px 0;
+  padding: 6px 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-soft);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+}
+
+.ai-chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-chat-empty {
+  margin: auto 0;
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-soft);
+}
+
+.ai-chat-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 92%;
+}
+
+.ai-chat-msg.user {
+  align-self: flex-end;
+}
+
+.ai-chat-msg.assistant {
+  align-self: flex-start;
+}
+
+.ai-chat-msg-role {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.ai-chat-msg.user .ai-chat-msg-role {
+  text-align: right;
+}
+
+.ai-chat-msg-body {
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+}
+
+.ai-chat-msg.user .ai-chat-msg-body {
+  background: var(--brand-soft);
+  border-color: transparent;
+}
+
+.ai-chat-typing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.ai-chat-error {
+  margin: 0 12px 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.ai-chat-compose {
+  border-top: 1px solid var(--border);
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-chat-input {
+  width: 100%;
+  resize: none;
+  min-height: 64px;
+  max-height: 160px;
+}
+
+.ai-chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-chat-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+@media (max-width: 1199px) {
+  .kb {
+    --ai-drawer-w: 340px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .kb {
+    --ai-drawer-w: 300px;
+  }
+}
+
+/* <768 单栏：抽屉改到底部，编辑区用 margin-bottom 让位（顶部工具条/保存按钮永远可见） */
+@media (max-width: 767px) {
+  .kb {
+    --ai-drawer-w: 0px;
+  }
+
+  .kb-editor.chat-open {
+    margin-right: 0;
+    margin-bottom: 46vh;
+  }
+
+  .ai-chat-drawer {
+    top: auto;
+    left: 0;
+    width: 100%;
+    height: 46vh;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -18px 44px -32px rgba(15, 23, 42, 0.55);
+    animation: jw-ai-chat-up 200ms var(--smooth-ease) both;
+  }
+}
+
+@keyframes jw-ai-chat-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kb-editor {
+    transition: none;
+  }
+
+  .ai-chat-drawer {
+    animation: none;
+  }
+}

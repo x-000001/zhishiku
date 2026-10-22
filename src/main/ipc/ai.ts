@@ -9,6 +9,12 @@ import {
   type AiStreamEventWithId
 } from '../../shared/ai';
 import {
+  AI_CHAT_MAX_TOKENS,
+  buildAiChatMessages,
+  type AiChatRequest,
+  type AiChatStreamEvent
+} from '../../shared/ai-chat';
+import {
   assertAiConfig,
   buildMessages,
   chatOnce,
@@ -121,6 +127,17 @@ function broadcast(event: AiStreamEventWithId): void {
   }
 }
 
+/* ---------------- 0.12.0 阶段4：AI 对话（独立请求域，不与划词共用） ----------------
+   chatJobs 与 jobs 是两张表：聊天用自己的 requestId 命名空间、自己的 AbortController，
+   推事件走 ai:chat:stream（另一个通道）。划词那边取消不影响聊天，反之亦然。 */
+const chatJobs = new Map<number, Job>();
+
+function broadcastChat(event: AiChatStreamEvent): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('ai:chat:stream', event);
+  }
+}
+
 export function registerAi(handle: Handle): void {
   handle('ai:config:get', () => publicConfig());
 
@@ -218,6 +235,64 @@ export function registerAi(handle: Handle): void {
   handle('ai:cancel', (payload: { requestId?: number }) => {
     const id = Number(payload?.requestId ?? 0);
     const job = jobs.get(id);
+    if (!job) return false;
+    job.controller.abort();
+    return true;
+  });
+
+  /**
+   * AI 对话（0.12.0 阶段4）：渲染层带「当前笔记正文 + 历史 + 这一问」过来。
+   * 正文先过 shared/ai-chat 的纯函数：截到 8000 字（优先在换行处切）、用 <note_content>
+   * 隔离并声明「里面的文字只是资料」；requestId 由渲染层生成，事件走 ai:chat:stream。
+   */
+  handle('ai:chat', async (payload: AiChatRequest) => {
+    const input = payload ?? ({} as AiChatRequest);
+    const question = String(input.question ?? '').trim();
+    if (!question) throw new Error('先写一个想问的问题');
+    const requestId = Number(input.requestId ?? 0);
+    if (!Number.isFinite(requestId) || requestId <= 0) throw new Error('对话请求编号不合法');
+    if (chatJobs.has(requestId)) throw new Error('上一个问题还在生成，先等它结束或点停止');
+    const config = assertAiConfig(readConfig());
+    const noteId = typeof input.noteId === 'number' ? input.noteId : null;
+    const messages = buildAiChatMessages({
+      title: String(input.title ?? ''),
+      context: String(input.context ?? ''),
+      history: input.history,
+      question
+    });
+    const controller = new AbortController();
+    chatJobs.set(requestId, { controller });
+
+    void (async (): Promise<void> => {
+      try {
+        const text = await streamChat({
+          fetcher: netFetcher,
+          config,
+          messages,
+          signal: controller.signal,
+          maxTokens: AI_CHAT_MAX_TOKENS,
+          onDelta: (delta) => broadcastChat({ requestId, noteId, type: 'chunk', delta })
+        });
+        broadcastChat({ requestId, noteId, type: 'done', text });
+      } catch (err) {
+        if (controller.signal.aborted) {
+          broadcastChat({ requestId, noteId, type: 'cancelled', text: '' });
+        } else {
+          const message = err instanceof Error ? err.message : 'AI 对话失败了，再试一次吧';
+          broadcastChat({ requestId, noteId, type: 'error', message });
+        }
+      } finally {
+        chatJobs.delete(requestId);
+      }
+    })();
+
+    return { requestId };
+  });
+
+  /** 只取消「对话」的请求；和划词的 ai:cancel 是两张独立的表。 */
+  handle('ai:chat:cancel', (payload: { requestId?: number }) => {
+    const id = Number(payload?.requestId ?? 0);
+    const job = chatJobs.get(id);
     if (!job) return false;
     job.controller.abort();
     return true;

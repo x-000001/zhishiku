@@ -9,6 +9,7 @@ const ALLOWED_EVENTS = new Set([
   'github:progress',
   'github:auth',
   'ai:stream',
+  'ai:chat:stream',
   'export:progress'
 ]);
 

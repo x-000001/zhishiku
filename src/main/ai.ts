@@ -51,7 +51,8 @@ export interface AiConfig {
 }
 
 export interface AiMessage {
-  role: 'system' | 'user';
+  /** system/user 用于划词与提炼；assistant 只给「AI 对话」带历史用 */
+  role: 'system' | 'user' | 'assistant';
   content: string;
 }
 

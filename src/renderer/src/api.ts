@@ -5,6 +5,7 @@ import type {
   AiRunResult,
   AiStreamEventWithId
 } from '../../shared/ai';
+import type { AiChatRequest, AiChatStreamEvent } from '../../shared/ai-chat';
 import type {
   AppInfo,
   AppSettings,
@@ -104,6 +105,11 @@ export function onExportProgress(listener: (progress: ExportProgress) => void): 
 /** AI 流式输出：主进程把增量一段段推过来（渲染层从不自己发请求）。 */
 export function onAiStream(listener: (event: AiStreamEventWithId) => void): () => void {
   return bridge.on('ai:stream', (payload) => listener(payload as AiStreamEventWithId));
+}
+
+/** AI 对话的流式输出（独立通道，和划词的 ai:stream 互不干扰）。 */
+export function onAiChatStream(listener: (event: AiChatStreamEvent) => void): () => void {
+  return bridge.on('ai:chat:stream', (payload) => listener(payload as AiChatStreamEvent));
 }
 
 /** 番茄钟状态变化（主进程是唯一计时源，渲染层只镜像）。 */
@@ -360,6 +366,12 @@ export const api = {
   /** 发起一次 AI 请求：立刻拿 requestId，文字随后从 onAiStream 推来。 */
   aiRun: (payload: AiRunPayload) => call<AiRunResult>('ai:run', payload),
   aiCancel: (requestId: number) => call<boolean>('ai:cancel', { requestId }),
+  /**
+   * AI 对话（基于当前笔记提问）：requestId 由渲染层生成（与划词完全隔离），
+   * 正文由主进程统一截断 + <note_content> 隔离，增量从 onAiChatStream 推来。
+   */
+  aiChat: (payload: AiChatRequest) => call<{ requestId: number }>('ai:chat', payload),
+  aiChatCancel: (requestId: number) => call<boolean>('ai:chat:cancel', { requestId }),
 
   /* ---------------- 第八版：导出全库为 Markdown ---------------- */
   /** 主进程弹系统「选择文件夹」→ 按分类树写 .md 和 attachments，进度走 onExportProgress。 */

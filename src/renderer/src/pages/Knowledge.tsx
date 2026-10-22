@@ -30,6 +30,7 @@ import * as rich from '../rich';
 import { describeSaveError, saveStamp } from '../save';
 import { applyOrder, moveWithinGroup } from '../reorder';
 import RelatedNotes from '../RelatedNotes';
+import AiChatDrawer from '../AiChatDrawer';
 import type { SearchHit } from '../../../shared/types';
 import type { Attachment, Category, Id, Note, NoteListItem, NoteVersion, Tag } from '../../../shared/types';import { toastError, errText } from '../errors';
 
@@ -118,6 +119,9 @@ export default function Knowledge(props: {
   const relatedSeq = useRef(0);
   /** 闭包防串台：回调里比对「当前打开的是不是发起请求时那篇」 */
   const relatedNoteRef = useRef<Id | null>(null);
+
+  /* ---------------- 0.12.0 阶段4：AI 对话侧边栏 ---------------- */
+  const [chatOpen, setChatOpen] = useState(false);
 
   /* ---------------- 第七版：AI 辅助（0.7.0） ----------------
    * 划词气泡只做「选动作 + 选目标语言」；真正的请求、对比、替换都交给弹窗。
@@ -958,7 +962,7 @@ export default function Knowledge(props: {
   /* ---------------- 渲染 ---------------- */
 
   return (
-    <div className="kb">
+    <div className={'kb' + (chatOpen ? ' chat-open' : '')}>
       {/* 左栏：分类树 */}
       <div className="kb-tree" role="tree" aria-label="分类">
         <div className="row" style={{ marginBottom: 8 }}>
@@ -1365,7 +1369,7 @@ export default function Knowledge(props: {
       </div>
 
       {/* 右栏：编辑器 */}
-      <div className="kb-editor">
+      <div className={'kb-editor' + (chatOpen ? ' chat-open' : '')}>
         {!note ? (
           <Empty>左边挑一篇笔记，或者点 ＋ 新建一篇。</Empty>
         ) : (
@@ -1378,6 +1382,16 @@ export default function Knowledge(props: {
                   value={title}
                   onChange={(e) => touchTitle(e.target.value)}
                 />
+                <button
+                  type="button"
+                  className="icon-btn ai-chat-toggle"
+                  title="AI 对话（基于当前笔记）"
+                  aria-label="AI 对话"
+                  aria-expanded={chatOpen}
+                  onClick={() => setChatOpen((open) => !open)}
+                >
+                  💬
+                </button>
                 <button
                   type="button"
                   className="icon-btn"
@@ -1790,6 +1804,16 @@ export default function Knowledge(props: {
           </>
         )}
       </div>
+
+      {chatOpen && note ? (
+        <AiChatDrawer
+          noteId={openId}
+          noteTitle={title || note.title}
+          getContext={() => htmlToPlainText(htmlRef.current)}
+          ensureReady={ensureAiReady}
+          onClose={() => setChatOpen(false)}
+        />
+      ) : null}
 
       {tableOpen ? (
         <Modal
