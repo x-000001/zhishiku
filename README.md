@@ -6,7 +6,7 @@
 - 装好以后能自己升级：设置页点「检查更新」→ 有新版本就点「下载并安装」，自动下载、校验、静默安装并重开新版（详见下面「怎么更新到新版本」）
 - 技术：Electron + React + TypeScript + SQLite（WAL）+ FTS5；笔记正文用轻量 `contenteditable` 富文本编辑器（不引重型编辑器依赖）
 - 数据：一个 SQLite 文件 + 一个附件文件夹 + 一个备份文件夹，都在 D 盘
-- 需求原文：[PRD.md](PRD.md)　开发过程：[开发计划.md](开发计划.md)　验收清单：[验收清单.md](验收清单.md)　版本变更：[CHANGELOG.md](CHANGELOG.md)　**接手开发先读：[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)（14 章架构与开发者导航，含路径自检）**　技术分析：[TECH_REPORT.md](TECH_REPORT.md)（1 分钟全貌 / 5 分钟跑通 / 30 分钟首个 PR）
+- 使用说明书：[USER_MANUAL.md](USER_MANUAL.md)（给普通用户：10 分钟从零到会用）　需求原文：[PRD.md](PRD.md)　开发过程：[开发计划.md](开发计划.md)　验收清单：[验收清单.md](验收清单.md)　版本变更：[CHANGELOG.md](CHANGELOG.md)　**接手开发先读：[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)（14 章架构与开发者导航，含路径自检）**　技术分析：[TECH_REPORT.md](TECH_REPORT.md)（1 分钟全貌 / 5 分钟跑通 / 30 分钟首个 PR）
 
 ## 〇、30 秒极速上手
 
