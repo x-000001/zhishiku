@@ -36,7 +36,7 @@ tests/e2e/ud-kill/
 .tools/COMMIT_MSG.txt
 .tools/probe-shots/
 
-# DSH ²å¼ş/¼ÇÒä²Ö¿â£¨±¾»ú¹¤¾ß£¬²»ÊôÓÚ±¾ÏîÄ¿£©
+# DSH æ’ä»¶/è®°å¿†ä»“åº“ï¼ˆæœ¬æœºå·¥å…·ï¼Œä¸å±äºæœ¬é¡¹ç›®ï¼‰
 /dsh-memory-plugin/
 
 # DSH local session memory (machine-local, not part of this project)
