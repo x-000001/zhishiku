@@ -38,3 +38,6 @@ tests/e2e/ud-kill/
 
 # DSH 插件/记忆仓库（本机工具，不属于本项目）
 /dsh-memory-plugin/
+
+# DSH local session memory (machine-local, not part of this project)
+/.dsh/
