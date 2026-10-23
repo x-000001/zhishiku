@@ -509,12 +509,12 @@ await cdp.shot('your-feature');    // 截图落到 tests/e2e/shots/
 
 ### 9.5 测试准入（提 PR / 交付前必须全绿）
 
-| 门槛 | 命令 | 当前基线（0.12.1） |
+| 门槛 | 命令 | 当前基线（0.12.2） |
 |---|---|---|
 | 类型 | `npm run typecheck` | 0 错 |
-| 单元 | `npm run test:unit` | 500 项 / 36 文件 |
+| 单元 | `npm run test:unit` | 520 项 / 37 文件 |
 | 构建 | `npm run build` | 成功 |
-| 端到端 | `npm run test:e2e` | 338/338 |
+| 端到端 | `npm run test:e2e` | 344/344 |
 | 强杀 | `npm run test:kill` | 6/6 |
 | 一键 | `npm run test:all` | 以上顺序全跑 |
 | 打包产物 | `npm run dist` 后 `node .tools/check-packaged.mjs` | 23/23 |
@@ -616,31 +616,49 @@ flowchart TD
 测试基线（0.12.1）：单测 **500** 项 / **36** 个文件、e2e **338** 项、强杀 **6** 项、typecheck 0 错；0.12.0 的 485 条单测与 325 条 e2e 断言**一条未修改**。
 
 
+## 13. 0.12.2 AI 长时记忆与习惯适配（2026-10-23）
+
+设置页「🧠 AI 长时记忆」+ AI 主链路里的静默提取 / 注入。改动全部落在既有 AI 域，新增 4 条 IPC；**不提升 `SCHEMA_VERSION`**（仍为 8）。
+
+| 层 | 关键位置 | 不变量 |
+|---|---|---|
+| 共享契约 | `src/shared/ai-memory.ts`：`AI_MEMORY_MAX_INJECT`、`AI_MEMORY_MIN_SOURCE_CHARS`、`sanitizeMemoryText`、`buildPreferenceBlock`、`parseMemoryJson`、`shouldSkipMemoryExtraction`、`buildMemoryExtractPrompt` | 存库与拼 Prompt 前把 `<` / `>` 清成空格；`<user_preferences>` 必须声明「优先级低于上面的核心指令」；最多注入 3 条、每条截 120 字；JSON 用 `/\{[\s\S]*\}/` 剥离围栏，解析失败返回 `[]` |
+| 表结构 | `src/main/schema.ts` 的 `AI_MEMORY_SCHEMA`；`src/main/db.ts` 的 `migrate()` | 每次打开幂等 `CREATE TABLE IF NOT EXISTS`，`try...catch` 失败只打日志（防白屏）；`user_version` 保持 8，**不要**为新表提升版本号（会打挂 `tests/unit/migrate.test.ts` 的既有断言）；按 `module_target` 建索引 |
+| 读写 | `src/main/db.ts`：`aiMemoryEnabled`、`setAiMemoryEnabled`、`listAiMemory`、`aiMemoryPage`、`aiMemoryCount`、`addAiMemory`、`deleteAiMemory`、`clearAiMemory` | 表不存在 / 读失败一律静默降级（list 返回 []、enabled 默认关）；`addAiMemory` 同场景同名去重并累加 `hit_count`，每场景只留最近 20 条 |
+| 注入 | `src/main/ai.ts` 的 `buildSystemPrompt(preferences)`、`buildMessages(action, payload, preferences)`；`src/main/ipc/ai.ts` 的 `loadPreferencesSafely` | 80ms 预算 + try/catch，查库超时或失败返回 [] → 正常请求继续；只对 `AI_MEMORY_TEXT_ACTIONS`（润色 / 扩写 / 缩写 / 翻译 / 摘要）注入 |
+| 提取 | `src/main/ipc/ai.ts`：`scheduleMemoryExtraction`、`runPendingMemoryExtraction`、`broadcastMemory` | 只在用户请求 `done` 之后排程；1.5 秒防抖；`jobs.size` / `chatJobs.size` 非 0 时 1.2 秒后重试（绝不并发）；`chatOnce` 300 tokens、15 秒总超时；失败只 `console.warn`；提取成功推 `ai:memory:updated`（preload 白名单） |
+| 设置页 | `src/renderer/src/AiMemoryCard.tsx`、`src/renderer/src/pages/Settings.tsx`、`src/renderer/src/api.ts` 的 `aiMemory*` | 分页每页 5 条；单删 / 清空后重拉；`onAiMemoryUpdated` 一到就显示一行小字并回第 1 页 |
+
+测试基线（0.12.2）：单测 **520** 项 / **37** 个文件、e2e **344** 项、强杀 **6** 项、typecheck 0 错；0.12.1 的 500 条单测与 338 条 e2e 断言**一条未修改**。
+
+
 ## 附录 A：文件规模（机器统计）
 
 行数按 `wc -l` 口径（当前 HEAD）：
 
 | 文件 | 行数 | 说明 |
 |---|---|---|
-| `src/renderer/src/styles.css` | 6031 | 全部样式（含多段历史追加） |
-| `src/main/db.ts` | 2641 | SQLite 访问 + 全部业务读写 |
-| `src/renderer/src/pages/Knowledge.tsx` | 2446 | 知识库页（编辑器 + AI + 标签 + 树） |
-| `src/main/ai.ts` | 950 | AI 协议、流式解析、错误文案、提炼 Prompt |
-| `src/renderer/src/pages/Settings.tsx` | 791 | 设置页（AI / 导出 / 更新 / 备份） |
-| `src/renderer/src/ai.tsx` | 789 | AI 气泡与 5 个弹窗 |
-| `src/renderer/src/App.tsx` | 631 | 外壳：路由/侧栏/顶栏/快捷键/主题 |
-| `src/shared/types.ts` | 574 | 跨进程 DTO |
-| `src/main/index.ts` | 380 | 启动、窗口、托盘、协议、热键 |
-| `src/main/focus.ts` | 312 | 番茄钟纯引擎（可注入时钟） |
-| `src/main/schema.ts` | 271 | 表结构 + FTS + 增量 schema |
-| `src/preload/index.ts` | 50 | 唯一桥接面 |
-| `tests/e2e/cdp-check.mjs` | 7175 | e2e harness + 全部断言 |
-| `tests/e2e/kill-test.mjs` | 206 | 强杀恢复测试 |
-| `.tools/check-packaged.mjs` | 386 | 打包产物自检 |
+| `src/renderer/src/styles.css` | 6071 | 全部样式（含多段历史追加） |
+| `src/main/db.ts` | 2785 | SQLite 访问 + 全部业务读写 |
+| `src/renderer/src/pages/Knowledge.tsx` | 2447 | 知识库页（编辑器 + AI + 标签 + 树） |
+| `src/main/ai.ts` | 978 | AI 协议、流式解析、错误文案、提炼 Prompt |
+| `src/renderer/src/pages/Settings.tsx` | 795 | 设置页（AI / 导出 / 更新 / 备份 / 长时记忆） |
+| `src/renderer/src/ai.tsx` | 790 | AI 气泡与 5 个弹窗 |
+| `src/renderer/src/App.tsx` | 632 | 外壳：路由/侧栏/顶栏/快捷键/主题 |
+| `src/shared/types.ts` | 575 | 跨进程 DTO |
+| `src/main/index.ts` | 381 | 启动、窗口、托盘、协议、热键 |
+| `src/main/focus.ts` | 313 | 番茄钟纯引擎（可注入时钟） |
+| `src/main/schema.ts` | 292 | 表结构 + FTS + 增量 schema（含 ai_memory） |
+| `src/shared/ai-memory.ts` | 193 | 长时记忆纯函数（转义/JSON 剥离/注入块） |
+| `src/renderer/src/AiMemoryCard.tsx` | 179 | 设置页长时记忆管理卡片 |
+| `src/preload/index.ts` | 52 | 唯一桥接面 |
+| `tests/e2e/cdp-check.mjs` | 7308 | e2e harness + 全部断言 |
+| `tests/e2e/kill-test.mjs` | 207 | 强杀恢复测试 |
+| `.tools/check-packaged.mjs` | 387 | 打包产物自检 |
 
-源码：**78 个 TS/TSX 文件、23,228 行**；单测：36 文件 **6,585 行**；e2e：2 文件 **7,381 行**。
+源码：**80 个 TS/TSX 文件、24,052 行**；单测：37 文件 **6,831 行**；e2e：2 文件 **7,515 行**。
 
-## 附录 B：IPC 通道（按域，144 个）
+## 附录 B：IPC 通道（按域，148 个）
 
 | 域 | 数量 | 文件 |
 |---|---|---|
@@ -652,11 +670,11 @@ flowchart TD
 | plans（计划/条目/日历） | 11 | `src/main/ipc/plans.ts` |
 | github（授权/导入/重试提炼/转笔记/解绑） | 9 | `src/main/ipc/github.ts` |
 | focus（番茄钟） | 7 | `src/main/ipc/focus.ts` |
-| ai（配置/运行/取消/对话） | 7 | `src/main/ipc/ai.ts` |
+| ai（配置/运行/取消/对话/长时记忆） | 11 | `src/main/ipc/ai.ts` |
 | update（检查/下载/安装） | 6 | `src/main/ipc/update.ts` |
 | core（app:info / settings） | 3 | `src/main/ipc/core.ts` |
 | export（导出 Markdown） | 2 | `src/main/ipc/export.ts` |
-| **合计** | **144** | `src/main/ipc/index.ts:43-55` |
+| **合计** | **148** | `src/main/ipc/index.ts:43-55` |
 
 ## 附录 C：文档自检
 

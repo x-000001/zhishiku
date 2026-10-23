@@ -1,6 +1,6 @@
-# 技术分析报告：Jw 知识库（v0.12.1）
+# 技术分析报告：Jw 知识库（v0.12.2）
 
-> 写前基线实测：`npm run typecheck` **0 错**；`npm run test:unit` **500/500**（36 个文件）。最近一次全量 `npm run test:all`：e2e 338/338、强杀恢复 6/6、打包自检 23/23。宿主 Node v24.19.0，Electron 44.8.0。
+> 写前基线实测：`npm run typecheck` **0 错**；`npm run test:unit` **520/520**（37 个文件）。最近一次全量 `npm run test:all`：e2e 344/344、强杀恢复 6/6、打包自检 23/23。宿主 Node v24.19.0，Electron 44.8.0。
 
 ## 模块 1：全景速览
 
@@ -35,6 +35,10 @@
 
 工具栏「✨ AI → 整理成重点文档」把当前笔记压成一份**新笔记**，原笔记一行不改。链路：`Knowledge.tsx` 的 `startAiFull('extract')` → `AiExtractDocModal` → `window.api.invoke('ai:run', { action: 'extract' })` → `src/main/ipc/ai.ts` 的 `ai:run`（模块级 `extractJobRequestId` 单任务锁）→ `src/main/ai.ts` 的 `buildMessages`（对 `extract` 提前返回 `EXTRACT_SYSTEM_PROMPT`）→ `ai:stream` 逐块回渲染层（rAF 合并）→ 保存 `note:extract-save` → `src/main/db.ts` 的 `createExtractedNote`（`BEGIN IMMEDIATE` 包住「标题查重 → `createNote` → `setNoteTags`」，失败 `ROLLBACK`）。纯函数契约都在 `src/shared/extract-doc.ts`：`truncateForExtraction`（8000 字、优先按换行）、`splitExtractionOutput`、`normalizeExtractTitle`、`uniqueExtractTitle`、`extractResultError`。改这里先守住两条：① 空 / 纯空白结果绝不落库（IPC 与 db 各拦一道）；② 生成中关闭弹窗必须走 `src/renderer/src/ui.tsx` 的 `Modal.beforeClose` 二次确认。
 
+### 0.12.2 增量：AI 长时记忆与习惯适配
+
+AI 主链路多了「静默提取偏好 → 下次请求注入」的旁路，**非核心链路全程可降级**。提取：`src/main/ipc/ai.ts` 的 `scheduleMemoryExtraction` 只在用户请求 `done` 之后排程（1.5 秒防抖；`jobs.size` / `chatJobs.size` 非 0 时 1.2 秒后重试，绝不并发），`runPendingMemoryExtraction` 用 `chatOnce`（300 tokens、15 秒总超时）拿回 JSON，交给 `src/shared/ai-memory.ts` 的 `parseMemoryJson`（`/\{[\s\S]*\}/` 剥围栏与废话）与 `shouldSkipMemoryExtraction`（<20 字或简单替换直接跳过），再经 `src/main/db.ts` 的 `addAiMemory` 落 `ai_memory`（同场景同名去重、累加 `hit_count`、每场景只留最近 20 条）。注入：`buildMessages(action, payload, preferences)` 的第 0 条 system 由 `buildSystemPrompt(preferences)` 生成 = `SYSTEM_PROMPT` + `buildPreferenceBlock`（`<user_preferences>` 包裹，声明优先级低于核心指令）；`loadPreferencesSafely` 只对文本类动作注入、80ms 预算 + try/catch，失败返回 `[]`。表结构在 `src/main/schema.ts` 的 `AI_MEMORY_SCHEMA`，`migrate()` 里用 `CREATE TABLE IF NOT EXISTS` 幂等补齐并 `try...catch` 兜底，**不改 `SCHEMA_VERSION`（保持 8）**——提升版本会打挂 `tests/unit/migrate.test.ts` 对老库 `user_version` 的既有断言。提取成功经 `ai:memory:updated` 事件推到设置页 `src/renderer/src/AiMemoryCard.tsx`（只显示一行「🧠 已记住您的格式偏好」，不弹确认框）。改这里先守住两条：① 查库/提取失败必须静默降级，不能让润色/摘要主流程报错；② 入库与拼 Prompt 前必须 `sanitizeMemoryText` 清掉 `<` / `>`，防止提示词注入。
+
 ## 模块 2：工程结构与安全边界
 
 ### 目录树（★ = 生成目录，禁改）
@@ -50,7 +54,7 @@ src/
 ├─ renderer/      # React 页面；无 Node、无网络
 └─ shared/        # 双端共享：types.ts、html.ts、markdown.ts、ai.ts …
 tests/
-├─ unit/          # 485 条 Vitest
+├─ unit/          # 520 条 Vitest
 └─ e2e/           # cdp-check.mjs（6806 行）+ kill-test.mjs
 out/          ★  # electron-vite 编译产物（main/preload/renderer）
 release/      ★  # electron-builder 安装包输出
@@ -151,7 +155,7 @@ sequenceDiagram
   K->>K: setSaveState('saved') + savedFlash
 ```
 
-### 库表分布（`src/main/schema.ts`，20 张表）
+### 库表分布（`src/main/schema.ts`，21 张表）
 
 内容层：`note`、`note_version`、`tag`、`note_tag`、`category`、`attachment`、`inbox_item`；任务层：`task`、`goal`、`goal_key_result`、`goal_pool`；计划/复习层：`plan`、`plan_item`、`review_card`、`milestone`、`review_log`、`retrospective`；系统层：`meta`、`focus_sessions`、`github_sync_meta`。建表全在 `schema.ts`，`migrate()` 只做增量补列和索引；改结构不要去动已发布的 `CREATE TABLE`。
 
@@ -247,7 +251,7 @@ npm run typecheck  # 改代码前先确认基线
 | `tests/e2e/cdp-check.mjs` | 6806 行、单脚本顺序执行 | 325 条断言共享应用状态，单条失败会带偏后续 |
 | 无 CI、无 ErrorBoundary | 渲染层 `ErrorBoundary` / `window.onerror` 0 处 | 渲染层异常只剩白屏，无兜底上报 |
 | CodeMirror 死依赖 | `package.json` 3 个包，`src/` 0 引用 | 增大体积、误导选型 |
-| IPC 通道双端硬编码 | 139 个 `handle` + 3 个 `handleWindow` | 通道名在 `src/renderer/src/api.ts` 与 `src/main/ipc/*.ts` 各写一遍，改名要搜两处；漏改只会在运行时 `ok:false` |
+| IPC 通道双端硬编码 | 145 个 `handle` + 3 个 `handleWindow` | 通道名在 `src/renderer/src/api.ts` 与 `src/main/ipc/*.ts` 各写一遍，改名要搜两处；漏改只会在运行时 `ok:false` |
 | 无代码签名 | NSIS 产物未签名 | SmartScreen 首次运行会拦 |
 
 ### 急救指南
