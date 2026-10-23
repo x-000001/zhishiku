@@ -1,6 +1,6 @@
-# 技术分析报告：Jw 知识库（v0.12.0）
+# 技术分析报告：Jw 知识库（v0.12.1）
 
-> 写前基线实测：`npm run typecheck` **0 错**；`npm run test:unit` **485/485**（35 个文件）。最近一次全量 `npm run test:all`：e2e 325/325、强杀恢复 6/6、打包自检 23/23。宿主 Node v24.19.0，Electron 44.8.0。
+> 写前基线实测：`npm run typecheck` **0 错**；`npm run test:unit` **500/500**（36 个文件）。最近一次全量 `npm run test:all`：e2e 338/338、强杀恢复 6/6、打包自检 23/23。宿主 Node v24.19.0，Electron 44.8.0。
 
 ## 模块 1：全景速览
 
@@ -30,6 +30,10 @@
 | 测试 | Vitest **5.0.5** + 自研 CDP e2e | 主进程纯函数可直测；e2e 起真实 Electron 断言真实 DOM |
 
 **硬性版本**：宿主 Node 必须支持 `node:sqlite`（本机 v24.19.0 实测通过）；Electron 44.8.0 升级前先跑全量测试。
+
+### 0.12.1 增量：AI 提炼成重点文档
+
+工具栏「✨ AI → 整理成重点文档」把当前笔记压成一份**新笔记**，原笔记一行不改。链路：`Knowledge.tsx` 的 `startAiFull('extract')` → `AiExtractDocModal` → `window.api.invoke('ai:run', { action: 'extract' })` → `src/main/ipc/ai.ts` 的 `ai:run`（模块级 `extractJobRequestId` 单任务锁）→ `src/main/ai.ts` 的 `buildMessages`（对 `extract` 提前返回 `EXTRACT_SYSTEM_PROMPT`）→ `ai:stream` 逐块回渲染层（rAF 合并）→ 保存 `note:extract-save` → `src/main/db.ts` 的 `createExtractedNote`（`BEGIN IMMEDIATE` 包住「标题查重 → `createNote` → `setNoteTags`」，失败 `ROLLBACK`）。纯函数契约都在 `src/shared/extract-doc.ts`：`truncateForExtraction`（8000 字、优先按换行）、`splitExtractionOutput`、`normalizeExtractTitle`、`uniqueExtractTitle`、`extractResultError`。改这里先守住两条：① 空 / 纯空白结果绝不落库（IPC 与 db 各拦一道）；② 生成中关闭弹窗必须走 `src/renderer/src/ui.tsx` 的 `Modal.beforeClose` 二次确认。
 
 ## 模块 2：工程结构与安全边界
 
@@ -218,7 +222,7 @@ npm run typecheck  # 改代码前先确认基线
 | `touchBody()` 只写 `htmlRef`，不 `setState` | contentEditable 每次重渲染都会重置光标、打断中文输入法；正文真源是 `htmlRef`，只在换笔记时用 `putIntoEditor` + `editorEpoch` 写 DOM |
 | `rich.ts` 用 `document.execCommand` | 保留浏览器原生撤销栈；改成 `innerHTML =` 会丢 Ctrl+Z |
 | `savedFlash` 1.5 秒定时器 + 卸载清理 | 防卸载后 `setState`；所有手感时长集中在 `TIMING`，不要散落写死 |
-| `focus.ts` 只存 `endAt` + `setTimeout`，`restore()` 启动补记 | 不每秒 tick 写库；进程被杀后能按 `endAt` 续上会话 |
+| `src/main/focus.ts` 只存 `endAt` + `setTimeout`，`restore()` 启动补记 | 不每秒 tick 写库；进程被杀后能按 `endAt` 续上会话 |
 | 保存时两次 `sanitizeHtml`（预览一次、主进程一次） | 主进程是最后防线，AI 生成与粘贴内容都不可信 |
 | `palette.ts` 的 `shouldIgnoreShortcut` | 焦点在 input/textarea/contenteditable 且按裸键时放行，否则在笔记里打字会被 Ctrl+1…9 等全局快捷键抢走；带 Ctrl/Alt/Meta 的组合键仍走应用级（Ctrl+S/Ctrl+K） |
 

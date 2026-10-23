@@ -509,12 +509,12 @@ await cdp.shot('your-feature');    // 截图落到 tests/e2e/shots/
 
 ### 9.5 测试准入（提 PR / 交付前必须全绿）
 
-| 门槛 | 命令 | 当前基线（0.11.2） |
+| 门槛 | 命令 | 当前基线（0.12.1） |
 |---|---|---|
 | 类型 | `npm run typecheck` | 0 错 |
-| 单元 | `npm run test:unit` | 485 项 / 35 文件 |
+| 单元 | `npm run test:unit` | 500 项 / 36 文件 |
 | 构建 | `npm run build` | 成功 |
-| 端到端 | `npm run test:e2e` | 325/325 |
+| 端到端 | `npm run test:e2e` | 338/338 |
 | 强杀 | `npm run test:kill` | 6/6 |
 | 一键 | `npm run test:all` | 以上顺序全跑 |
 | 打包产物 | `npm run dist` 后 `node .tools/check-packaged.mjs` | 23/23 |
@@ -599,47 +599,64 @@ flowchart TD
 测试基线（0.12.0）：单测 **485** 项 / **35** 个文件、e2e **325** 项、强杀 **6** 项、typecheck 0 错；0.11.2 的 404 条单测与 305 条 e2e 断言**一条未修改**。
 
 
+## 12. 0.12.1 AI 提炼成重点文档（2026-10-23）
+
+工具栏「✨ AI」新增的入口（`src/renderer/src/pages/Knowledge.tsx` 的 `openAiMenu`），把当前笔记压成一份可独立保存的结构化文档，落库为**新笔记**，原笔记一行不改。
+
+| 层 | 关键位置 | 不变量 |
+|---|---|---|
+| 共享契约 | `src/shared/extract-doc.ts`：`EXTRACT_MAX_CHARS`、`truncateForExtraction`、`buildExtractPrompt`、`normalizeExtractTitle`、`uniqueExtractTitle`、`splitExtractionOutput`、`extractResultError`、`buildExtractHtml` | 截断按最近换行，无换行才硬截断且不能劈开代理对；标题只留纯文本、重名 ` (2)`；空 / 纯空白 / 只有标题一律视为失败 |
+| 动作枚举 | `src/shared/ai.ts` 的 `AiFullAction` 增加 `extract`、`AI_ACTION_LABELS`、`aiMaxTokens` 给 1600 | 新动作必须同时出现在三处枚举，否则 `ai:run` 的前置判断与按钮文案会漏 |
+| 主进程 AI | `src/main/ai.ts` 的 `buildMessages` 对 `extract` 在 switch 前提前 return 自己的 `EXTRACT_SYSTEM_PROMPT` | 默认 `SYSTEM_PROMPT` 禁 Markdown 标题，提炼必须换成「首行纯文本标题 + 允许小标题」的新 Prompt；禁开场白 / 代码块包裹 / 脑补 |
+| 并发锁 | `src/main/ipc/ai.ts` 的模块级 `extractJobRequestId` | 同一时刻只允许一个提炼任务；`finally` 里按 `requestId` 释放；并发生成直接中文拒绝（防刷额度） |
+| 落库 | `src/main/db.ts` 的 `createExtractedNote`、`src/main/ipc/notes.ts` 的 `note:extract-save` | `BEGIN IMMEDIATE` 必须包住「查重标题 → createNote → setNoteTags」，失败 `ROLLBACK`；继承 `category_id` 与原标签；正文末尾追加 `<blockquote class="ai-extract-source">`；`SQLITE_BUSY` 翻成中文 |
+| 弹窗 | `src/renderer/src/AiExtractDocModal.tsx`；`src/renderer/src/ui.tsx` 的 `Modal.beforeClose` | rAF 合并流式块并自动滚到底；生成中关闭必须二次确认；保存前 `extractResultError` 再拦一道；保存成功用 `setOpenId` 触发既有 `putIntoEditor → setEditorEpoch` |
+| 样式 | `src/renderer/src/styles.css` 的 `.rt-editor table/th/td`、`.rt-editor pre`、`overflow-wrap` | 表格有边框、代码块 `overflow-x: auto`、长串不撑破编辑区 |
+
+测试基线（0.12.1）：单测 **500** 项 / **36** 个文件、e2e **338** 项、强杀 **6** 项、typecheck 0 错；0.12.0 的 485 条单测与 325 条 e2e 断言**一条未修改**。
+
+
 ## 附录 A：文件规模（机器统计）
 
 行数按 `wc -l` 口径（当前 HEAD）：
 
 | 文件 | 行数 | 说明 |
 |---|---|---|
-| `src/renderer/src/styles.css` | 5274 | 全部样式（含多段历史追加） |
-| `src/main/db.ts` | 2483 | SQLite 访问 + 全部业务读写 |
-| `src/renderer/src/pages/Knowledge.tsx` | 2346 | 知识库页（编辑器 + AI + 标签 + 树） |
-| `src/main/ai.ts` | 939 | AI 协议、流式解析、错误文案、提炼 Prompt |
+| `src/renderer/src/styles.css` | 6031 | 全部样式（含多段历史追加） |
+| `src/main/db.ts` | 2641 | SQLite 访问 + 全部业务读写 |
+| `src/renderer/src/pages/Knowledge.tsx` | 2446 | 知识库页（编辑器 + AI + 标签 + 树） |
+| `src/main/ai.ts` | 950 | AI 协议、流式解析、错误文案、提炼 Prompt |
+| `src/renderer/src/pages/Settings.tsx` | 791 | 设置页（AI / 导出 / 更新 / 备份） |
 | `src/renderer/src/ai.tsx` | 789 | AI 气泡与 5 个弹窗 |
-| `src/renderer/src/pages/Settings.tsx` | 788 | 设置页（AI / 导出 / 更新 / 备份） |
-| `src/shared/types.ts` | 548 | 跨进程 DTO |
-| `src/renderer/src/App.tsx` | 435 | 外壳：路由/侧栏/顶栏/快捷键/主题 |
+| `src/renderer/src/App.tsx` | 631 | 外壳：路由/侧栏/顶栏/快捷键/主题 |
+| `src/shared/types.ts` | 574 | 跨进程 DTO |
 | `src/main/index.ts` | 380 | 启动、窗口、托盘、协议、热键 |
 | `src/main/focus.ts` | 312 | 番茄钟纯引擎（可注入时钟） |
 | `src/main/schema.ts` | 271 | 表结构 + FTS + 增量 schema |
-| `src/preload/index.ts` | 49 | 唯一桥接面 |
-| `tests/e2e/cdp-check.mjs` | 6220 | e2e harness + 全部断言 |
+| `src/preload/index.ts` | 50 | 唯一桥接面 |
+| `tests/e2e/cdp-check.mjs` | 7175 | e2e harness + 全部断言 |
 | `tests/e2e/kill-test.mjs` | 206 | 强杀恢复测试 |
 | `.tools/check-packaged.mjs` | 386 | 打包产物自检 |
 
-源码：**65 个 TS/TSX 文件、19,852 行**；单测：29 文件 **5,518 行**；e2e：2 文件 **6,426 行**。
+源码：**78 个 TS/TSX 文件、23,228 行**；单测：36 文件 **6,585 行**；e2e：2 文件 **7,381 行**。
 
-## 附录 B：IPC 通道（按域，143 个）
+## 附录 B：IPC 通道（按域，144 个）
 
 | 域 | 数量 | 文件 |
 |---|---|---|
-| notes（分类/笔记/标签/搜索/版本/回收站） | 25 | `src/main/ipc/notes.ts` |
+| notes（分类/笔记/标签/搜索/版本/回收站/提炼落库） | 28 | `src/main/ipc/notes.ts` |
 | goals（目标/KR/里程碑/目标池） | 20 | `src/main/ipc/goals.ts` |
+| system（附件/备份/窗口/剪贴板） | 21 | `src/main/ipc/system.ts` |
 | review（复习卡/复盘） | 15 | `src/main/ipc/review.ts` |
-| tasks（收集箱/任务/首页概览） | 14 | `src/main/ipc/tasks.ts` |
-| system（附件/备份/窗口/剪贴板） | 12 | `src/main/ipc/system.ts` |
+| tasks（收集箱/任务/首页概览） | 15 | `src/main/ipc/tasks.ts` |
 | plans（计划/条目/日历） | 11 | `src/main/ipc/plans.ts` |
 | github（授权/导入/重试提炼/转笔记/解绑） | 9 | `src/main/ipc/github.ts` |
 | focus（番茄钟） | 7 | `src/main/ipc/focus.ts` |
+| ai（配置/运行/取消/对话） | 7 | `src/main/ipc/ai.ts` |
 | update（检查/下载/安装） | 6 | `src/main/ipc/update.ts` |
-| ai（配置/运行/取消） | 5 | `src/main/ipc/ai.ts` |
 | core（app:info / settings） | 3 | `src/main/ipc/core.ts` |
 | export（导出 Markdown） | 2 | `src/main/ipc/export.ts` |
-| **合计** | **143** | `src/main/ipc/index.ts:43-55` |
+| **合计** | **144** | `src/main/ipc/index.ts:43-55` |
 
 ## 附录 C：文档自检
 

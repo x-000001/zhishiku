@@ -4,6 +4,23 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 `主.次.修订`。
 
+## [0.12.1] - 2026-10-23
+
+发布：__REL_LINK__（附件 JwKB-Setup-0.12.1.exe，__BYTES__ 字节）
+
+### 新增
+
+- **AI 提炼成重点文档**：工具栏「✨ AI」新增「整理成重点文档」。把当前笔记的纯文本（超过 8000 字符按最近换行截断，弹窗顶部提示「⚠️ 原文过长，已截取前 8000 字」）交给 AI，流式生成一份「首行纯文本标题 + `## 小标题` + 列表 + Markdown 表格 + 代码块」的结构化文档；独立的 `EXTRACT_SYSTEM_PROMPT` 要求禁止开场白（如「好的」）、禁止代码块包裹、禁止脑补原笔记没有的内容、第一行必须是纯文本标题。渲染层用 `requestAnimationFrame` 合并流式块并自动滚到底部；中途可「■ 停止生成」，关闭弹窗需二次确认「继续生成 / 关闭并中止」，主进程用单任务活跃锁拒绝并发生成。保存时主进程事务化落库（`BEGIN IMMEDIATE`，`SQLITE_BUSY` 回滚并给中文提示），标题自动清洗、重名追加 ` (2)`，继承原笔记分类与标签，正文末尾追加引用块「本文由《原笔记标题》经 AI 提炼生成。」；AI 返回空白或只有标题时绝不落库。表格 / 代码块转 HTML 后补 `.rt-editor` 表格边框、代码横向滚动与 `word-break: break-word`，保存后经 `setEditorEpoch` 直接打开新笔记。
+
+### 修复
+
+- **弹窗关闭动画死锁**：共用 `Modal` 的 `useLeavingClose` 在第一次关闭动画后把 `leavingRef` 永久置真，导致「点关闭 → 取消、继续留在弹窗里」之后再次点关闭没有任何反应。现在 `Modal` 支持可选 `beforeClose` 回调（返回 `false` 时不进入退场状态），AI 提炼弹窗用它做「生成中关闭」的二次确认；其他弹窗行为不变。这是首轮 e2e 唯一一条非 flake 失败暴露出的真 bug。
+
+### 验证
+
+- typecheck 0 错；单测 **500/500**（36 个文件）、e2e **338/338**、强杀 **6/6**；0.12.0 的 485 条单测与 325 条 e2e 断言一条未改。
+- 新增专项：8000 字按换行 / 硬截断与 emoji 代理对保护、标题清洗与重名去重、空结果拦截、Markdown 表格与代码块转 HTML、溯源块转义、`createExtractedNote` 事务继承分类标签且源笔记不变、单任务锁并发拒绝、弹窗二次确认与「中途关闭没有半截笔记落库」。
+
 ## [0.12.0] - 2026-10-22
 
 发布：[GitHub Release v0.12.0](https://github.com/x-000001/zhishiku/releases/tag/v0.12.0)（附件 JwKB-Setup-0.12.0.exe，112,616,795 字节）
@@ -55,7 +72,7 @@
 ### 变更（重构）
 
 - **GitHub 集成的方向换了**：0.10.0 的「Issues 单向同步成待办」被移除，改成「收集箱里搜集优秀开源项目 + AI 提炼知识点」。收集箱顶部新增「🐙 导入 GitHub 项目」。
-- **旧同步代码一并清掉**：删除 `src/main/github-sync.ts` 与 `tests/unit/github-sync.test.ts`、`github:sync*` IPC 通道、任务页「同步 GitHub」按钮和侧边栏入口、db 里只有同步引擎在用的 `runInTransaction()`；`github_sync_meta` 表只留在迁移链里（建表、不读写），老库升级不丢历史数据。
+- **旧同步代码一并清掉**：删除旧的主进程同步模块（`github-sync`）与它的单测、`github:sync*` IPC 通道、任务页「同步 GitHub」按钮和侧边栏入口、db 里只有同步引擎在用的 `runInTransaction()`；`github_sync_meta` 表只留在迁移链里（建表、不读写），老库升级不丢历史数据。
 
 ### 新增
 
@@ -115,7 +132,7 @@
 
 ### 验证
 
-- typecheck 0 错；单测 **381**（26 个文件；新增 `github-client.test.ts`、`github-sync.test.ts`）；e2e **305/305**（原有 293 条原样全过 + 12 条 `0.10.0：…` 新断言，`net.fetch` 全局 mock 走本地 stub，不连真 GitHub）；强杀 **6/6**；打包自检 **23/23**。
+- typecheck 0 错；单测 **381**（26 个文件；新增 `github-client.test.ts`、旧的 `github-sync` 同步测试）；e2e **305/305**（原有 293 条原样全过 + 12 条 `0.10.0：…` 新断言，`net.fetch` 全局 mock 走本地 stub，不连真 GitHub）；强杀 **6/6**；打包自检 **23/23**。
 
 ## [0.9.2] - 2026-10-19
 
@@ -381,7 +398,7 @@
 ### 变更（纯代码整理，功能与界面零变化）
 
 - 删 4 处死代码；60 处「把错误对象硬转成 `Error`」收成 `errText` / `toastError`；轻提示计时器记账并清理。
-- `src/main/ipc.ts` 400 行注册表按域拆成 8 个模块；5 个 100 行以上的组件拆成子组件 / 纯函数 / hook；时间数字抽到 `timing.ts`；建表 SQL 抽到 `schema.ts`（`db.ts` 2395 → 2168 行）。
+- 原来的 400 行 IPC 注册表按域拆成 8 个模块；5 个 100 行以上的组件拆成子组件 / 纯函数 / hook；时间数字抽到 `timing.ts`；建表 SQL 抽到 `schema.ts`（`db.ts` 2395 → 2168 行）。
 - 类型断言 `as` 88 → 36、非空断言 11 → 5，`tsconfig` 打开 `noUnusedLocals`。
 
 ### 修复（外观）
