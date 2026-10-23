@@ -5904,3 +5904,128 @@ blockquote.ai-summary b {
   font-family: var(--mono, monospace);
   letter-spacing: 0.08em;
 }
+
+/* ------------------------------------------------------------------ */
+/* AI 整理成重点文档（0.12.1）                                          */
+/* ------------------------------------------------------------------ */
+
+.ai-extract-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-extract-warning {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+  background: color-mix(in srgb, #e6a23c 14%, transparent);
+  border: 1px solid color-mix(in srgb, #e6a23c 38%, transparent);
+}
+
+.ai-extract-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--text-soft);
+}
+
+.ai-extract-state.running {
+  color: var(--brand);
+}
+
+.ai-extract-state.error {
+  color: var(--danger);
+}
+
+.ai-extract-output {
+  margin: 0;
+  max-height: 46vh;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.ai-extract-error {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.ai-extract-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 34%, transparent);
+}
+
+.ai-extract-confirm > span {
+  flex: 1 1 260px;
+  line-height: 1.6;
+}
+
+/* 编辑器里的 AI 文档：表格/代码块是常见崩坏点，单独兜底（预览区 .md-preview 另有规则） */
+.rt-editor table {
+  border-collapse: collapse;
+  margin: 12px 0;
+  max-width: 100%;
+}
+
+.rt-editor th,
+.rt-editor td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.rt-editor th {
+  background: var(--bg-sunken);
+  font-weight: 600;
+}
+
+.rt-editor pre {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  overflow-x: auto;
+  max-width: 100%;
+  white-space: pre;
+}
+
+.rt-editor pre code {
+  background: none;
+  padding: 0;
+}
+
+.rt-editor blockquote.ai-extract-source {
+  margin: 16px 0 6px;
+  padding: 8px 14px;
+  border-left: 3px solid var(--brand);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  background: var(--bg-sunken);
+  color: var(--text-soft);
+  font-size: 12.5px;
+}

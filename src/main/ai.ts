@@ -12,6 +12,7 @@ import {
   type AiRunPayload,
   type AiTagSuggestion
 } from '../shared/ai';
+import { EXTRACT_SYSTEM_PROMPT, buildExtractPrompt } from '../shared/extract-doc';
 
 /** 三道时间闸：等响应头、两次流式分片之间、整个请求。任何一道到点都掐掉，拒绝无限转圈。 */
 export interface AiTimeouts {
@@ -182,6 +183,15 @@ export function buildMessages(action: AiAction, payload: AiRunPayload): AiMessag
   const text = String(payload.text ?? '').trim();
   const noteText = clampAiText(payload.noteText ?? '', FULL_TEXT_LIMIT);
   const title = String(payload.title ?? '').trim();
+
+  // 「整理成重点文档」需要 Markdown 小标题，不能套用 SYSTEM_PROMPT（它明令禁用标题），
+  // 所以单独一套提示词，并且把第一行标题/禁止开场白/禁止脑补写死在 prompt 里。
+  if (action === 'extract') {
+    return [
+      { role: 'system', content: EXTRACT_SYSTEM_PROMPT },
+      { role: 'user', content: buildExtractPrompt(title, noteText) }
+    ];
+  }
 
   switch (action) {
     case 'polish':

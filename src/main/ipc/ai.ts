@@ -121,6 +121,12 @@ interface Job {
 const jobs = new Map<number, Job>();
 let nextRequestId = 1;
 
+/**
+ * 0.12.1「整理成重点文档」的单任务活跃锁：这是重请求，同一时刻只允许一个，
+ * 防止连点/重复点把额度刷爆。按 requestId 归属，生成结束（含失败/取消）在 finally 释放。
+ */
+let extractJobRequestId: number | null = null;
+
 function broadcast(event: AiStreamEventWithId): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send('ai:stream', event);
@@ -178,7 +184,12 @@ export function registerAi(handle: Handle): void {
     const config = assertAiConfig(readConfig());
     const noteText = String(input.noteText ?? '');
     const text = String(input.text ?? '');
-    if (input.action === 'summary' || input.action === 'tags' || input.action === 'related') {
+    if (
+      input.action === 'summary' ||
+      input.action === 'tags' ||
+      input.action === 'related' ||
+      input.action === 'extract'
+    ) {
       if (!noteText.trim()) throw new Error('这篇笔记还是空的，先写点内容再让 AI 帮忙');
     } else if (!text.trim()) {
       throw new Error('没有选中任何文字');
@@ -186,11 +197,16 @@ export function registerAi(handle: Handle): void {
     if (noteText.length > AI_MAX_INPUT_CHARS) {
       throw new Error('这篇笔记太长了，先拆成几篇再让 AI 读');
     }
+    // 提炼成文档是重操作：上一单没结束就直接拒绝，别让两个请求同时写库/烧额度。
+    if (input.action === 'extract' && extractJobRequestId != null) {
+      throw new Error('上一轮「整理成重点文档」还没结束，等它完成或先停止再试。');
+    }
 
     const requestId = nextRequestId;
     nextRequestId += 1;
     const controller = new AbortController();
     jobs.set(requestId, { controller });
+    if (input.action === 'extract') extractJobRequestId = requestId;
 
     void (async (): Promise<void> => {
       try {
@@ -226,6 +242,9 @@ export function registerAi(handle: Handle): void {
         broadcast({ requestId, type: 'error', message });
       } finally {
         jobs.delete(requestId);
+        if (input.action === 'extract' && extractJobRequestId === requestId) {
+          extractJobRequestId = null;
+        }
       }
     })();
 

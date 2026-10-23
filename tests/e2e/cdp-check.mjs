@@ -65,6 +65,25 @@ function aiReplyFor(messages) {
         { title: '标签该怎么管', detail: 'stub 联想条目二' }
       ]
     });
+  /* 0.12.1：整理成重点文档。首行纯标题 + 小标题 + 列表 + 表格 + 代码块，
+     专门用来断言「Markdown 转 HTML 后表格/代码在编辑器里也不崩」。 */
+  if (raw.includes('请把下面这篇笔记提炼成一份结构化的重点文档'))
+    return [
+      '重点整理文档',
+      '',
+      '## 核心结论',
+      '- 间隔重复与主动回忆是复习的两条主线',
+      '- 表格和代码也要能保存',
+      '',
+      '| 概念 | 说明 |',
+      '| --- | --- |',
+      '| 间隔重复 | 按遗忘曲线安排复习 |',
+      '| 主动回忆 | 先回想再看答案 |',
+      '',
+      '```js',
+      'console.log("间隔重复")',
+      '```'
+    ].join('\n');
   return 'AI 回复';
 }
 /* 假安装包：内容固定，测试里断言「落盘大小 + SHA256 对得上」就用它算 */
@@ -7003,6 +7022,122 @@ try {
       '卡片=' + cloudUi.hasCard + ' 初始禁用=' + cloudUi.initiallyDisabled + ' 输错仍禁用=' + cloudUi.wrongDisabled +
       ' 输对可点=' + cloudUi.typedEnabled + ' 恢复后标题=' + cloudUi.restoredTitle
   });
+
+  // ================= 0.12.1：AI 提取笔记重点并整理成文档 =================
+  // 1) 正常流：生成 → 保存为新笔记 → 校验标题/表格代码/溯源引用/继承分类标签
+  const aiExtract = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    const inv = (channel, payload) => window.api.invoke(channel, payload);
+    await inv('ai:config:set', {
+      baseUrl: 'http://127.0.0.1:${stubPort}/ai/v1',
+      model: 'stub-model',
+      apiKey: 'sk-e2e-secret-123456',
+      privacyAck: true
+    });
+    const cat = await inv('category:create', { parentId: null, name: '提炼测试分类' });
+    const src = await inv('note:create', {
+      categoryId: cat,
+      title: '重点提炼自检',
+      html: '<p>间隔重复与主动回忆是复习的两条主线，表格和代码也要能保存。</p>'
+    });
+    await inv('tag:set', { noteId: src.id, names: ['重点提炼标签'] });
+    location.hash = '/';
+    await sleep(350);
+    location.hash = '/knowledge';
+    const row = await waitFor(() => qa('.list-row').find((r) => ((r.textContent) || '').includes('重点提炼自检')), 8000);
+    if (!row) throw new Error('知识库列表里没找到重点提炼自检');
+    row.click();
+    const ed = await waitFor(() => { const el = q('.rt-editor'); return el && (el.textContent || '').includes('间隔重复') ? el : null; }, 8000);
+    rec('AI 提炼：能打开一篇有正文的笔记', !!ed, ed ? '正文长度=' + (ed.textContent || '').trim().length : '没有编辑器');
+    clickText('.tb-ai', 'AI');
+    await waitFor(() => q('.ctx-menu'), 3000);
+    clickText('.ctx-item', '整理成重点文档');
+    const privacy = await waitFor(() => q('.modal.ai-privacy'), 5000);
+    if (privacy) clickText('.ai-privacy-agree', '我知道');
+    const modal = await waitFor(() => q('.modal.ai-extract'), 6000);
+    rec('AI 提炼：菜单里有「整理成重点文档」，点击弹出提炼弹窗', !!modal, modal ? '弹窗出现' : '没有弹窗');
+    const saveBtn = await waitFor(() => { const b = q('.ai-extract-save'); return b && !b.disabled ? b : null; }, 15000);
+    const preview = txt('.ai-extract-output');
+    rec('AI 提炼：生成完成后「保存为新笔记」可点，预览不是空的', !!saveBtn && preview.includes('核心结论'), '预览长度=' + preview.length);
+    if (!saveBtn) throw new Error('保存按钮一直不可点');
+    saveBtn.click();
+    const closed = await waitFor(() => (!q('.modal.ai-extract') ? true : null), 10000);
+    rec('AI 提炼：保存后弹窗关闭', !!closed, '弹窗关闭=' + !!closed);
+    const titleNow = await waitFor(() => { const el = q('.editor-title'); return el && el.value === '重点整理文档' ? el : null; }, 8000);
+    rec('AI 提炼：保存后编辑器自动打开新笔记，标题取 AI 首行标题', !!titleNow, titleNow ? titleNow.value : (q('.editor-title') ? q('.editor-title').value : '没找到标题框'));
+    const list = await inv('note:list', { limit: 500 });
+    const createdItem = (list || []).find((n) => n.title === '重点整理文档');
+    const detail = createdItem ? await inv('note:get', { id: createdItem.id }) : null;
+    rec('AI 提炼：结果落库，表格/代码块转成 HTML，末尾有溯源引用块',
+      !!detail && /<table/i.test(detail.content_html) && /<pre/i.test(detail.content_html) && detail.content_html.includes('本文由《重点提炼自检》经 AI 提炼生成。'),
+      detail ? 'html长度=' + detail.content_html.length : '列表里没有新笔记');
+    rec('AI 提炼：新笔记继承原笔记的分类与标签',
+      !!detail && (detail.tags || []).some((t) => t.name === '重点提炼标签') && detail.category_id === cat,
+      detail ? '标签=' + (detail.tags || []).map((t) => t.name).join('/') + ' 分类=' + detail.category_id : '没有详情');
+    const editor = q('.rt-editor');
+    rec('AI 提炼：编辑器里长串/表格不会撑破界面（word-break=break-word）', !!editor && getComputedStyle(editor).wordBreak === 'break-word', editor ? 'word-break=' + getComputedStyle(editor).wordBreak : '没有编辑器');
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiExtract);
+  await cdp.shot('ai-extract');
+
+  // 2) 超长 + 慢速流：8000 字截断提示、生成中关闭要二次确认、中止后不落库
+  const aiExtractSlow = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    const inv = (channel, payload) => window.api.invoke(channel, payload);
+    await inv('ai:config:set', {
+      baseUrl: 'http://127.0.0.1:${stubPort}/ai-slow/v1',
+      model: 'stub-model',
+      apiKey: 'sk-e2e-secret-123456'
+    });
+    const lines = [];
+    for (let i = 0; i < 200; i += 1) lines.push('第 ' + i + ' 行：间隔重复与主动回忆是复习的主线，这段长文用来测试 8000 字截断。');
+    await inv('note:create', { title: '超长提炼自检', html: '<p>' + lines.join('</p><p>') + '</p>' });
+    location.hash = '/';
+    await sleep(350);
+    location.hash = '/knowledge';
+    const row = await waitFor(() => qa('.list-row').find((r) => ((r.textContent) || '').includes('超长提炼自检')), 8000);
+    if (!row) throw new Error('知识库列表里没找到超长提炼自检');
+    row.click();
+    await waitFor(() => { const el = q('.rt-editor'); return el && (el.textContent || '').includes('间隔重复') ? el : null; }, 8000);
+    const beforeCount = (await inv('note:list', { limit: 2000 })).length;
+    clickText('.tb-ai', 'AI');
+    await waitFor(() => q('.ctx-menu'), 3000);
+    clickText('.ctx-item', '整理成重点文档');
+    await waitFor(() => q('.modal.ai-extract'), 6000);
+    const warning = await waitFor(() => q('.ai-extract-warning'), 4000);
+    rec('AI 提炼：原文超 8000 字时顶部提示「已截取前 8000 字」', !!warning && (warning.textContent || '').includes('已截取前 8000 字'), warning ? (warning.textContent || '').trim() : '没有截断提示');
+    const streaming = await waitFor(() => { const t = txt('.ai-extract-output'); return t && t.length > 10 ? t : null; }, 12000);
+    rec('AI 提炼：生成过程中能看到流式预览', !!streaming, streaming ? '已生成=' + streaming.length + ' 字' : '没有流式内容');
+    q('.modal.ai-extract .modal-head .icon-btn').click();
+    const confirm = await waitFor(() => q('.ai-extract-confirm'), 3000);
+    rec('AI 提炼：生成中途关闭弹窗会二次确认', !!confirm, confirm ? (confirm.textContent || '').trim().slice(0, 40) : '没有确认框');
+    if (confirm) clickText('.ai-extract-confirm .btn', '继续生成');
+    const stillOpen = await waitFor(() => (q('.modal.ai-extract') ? true : null), 2500);
+    rec('AI 提炼：选「继续生成」后弹窗保留、不会中止请求', !!stillOpen && !q('.ai-extract-confirm'), '弹窗=' + !!stillOpen);
+    q('.modal.ai-extract .modal-head .icon-btn').click();
+    const confirm2 = await waitFor(() => q('.ai-extract-confirm'), 3000);
+    if (confirm2) q('.ai-extract-confirm-close').click();
+    const gone = await waitFor(() => (!q('.modal.ai-extract') ? true : null), 5000);
+    await sleep(500);
+    const afterCount = (await inv('note:list', { limit: 2000 })).length;
+    rec('AI 提炼：确认「关闭并中止」后中止生成，且没有留下半截笔记', !!gone && afterCount === beforeCount, '关闭=' + !!gone + ' 笔记数 ' + beforeCount + '→' + afterCount);
+    await inv('ai:config:set', { baseUrl: 'http://127.0.0.1:${stubPort}/ai/v1' });
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiExtractSlow);
 
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);

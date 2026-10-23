@@ -31,6 +31,7 @@ import { describeSaveError, saveStamp } from '../save';
 import { applyOrder, moveWithinGroup } from '../reorder';
 import RelatedNotes from '../RelatedNotes';
 import AiChatDrawer from '../AiChatDrawer';
+import AiExtractDocModal from '../AiExtractDocModal';
 import type { SearchHit } from '../../../shared/types';
 import type { Attachment, Category, Id, Note, NoteListItem, NoteVersion, Tag } from '../../../shared/types';import { toastError, errText } from '../errors';
 
@@ -946,6 +947,8 @@ export default function Knowledge(props: {
     items.push({ label: '摘要（插到开头）', separator: true, onSelect: () => void startAiFull('summary') });
     items.push({ label: '分类整理', onSelect: () => void startAiFull('tags') });
     items.push({ label: '知识联想', onSelect: () => void startAiFull('related') });
+    // 0.12.1：提炼成重点文档，确认后另存为新笔记（流程在 AiExtractDocModal 里）
+    items.push({ label: '整理成重点文档', onSelect: () => void startAiFull('extract') });
     showContextMenu(e, items, { panelClass: AI_MENU_CLASS });
   };
 
@@ -1919,6 +1922,22 @@ export default function Knowledge(props: {
           title={title}
           noteText={notePlainText()}
           onNewNote={(item) => createNoteFromAi(item)}
+          onClose={() => setAiFull(null)}
+        />
+      ) : null}
+
+      {/* 0.12.1：AI 整理成重点文档 —— 生成完成后保存为新笔记，并直接打开它 */}
+      {aiFull === 'extract' && openId != null ? (
+        <AiExtractDocModal
+          noteId={openId}
+          title={title}
+          noteText={notePlainText()}
+          onSaved={(created) => {
+            setAiFull(null);
+            void loadList();
+            setOpenId(created.id);
+            toast('已保存为《' + created.title + '》');
+          }}
           onClose={() => setAiFull(null)}
         />
       ) : null}

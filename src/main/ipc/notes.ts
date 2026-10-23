@@ -2,6 +2,7 @@ import * as db from '../db';
 import type { Id, ListFilter, SearchAdvancedRequest, SearchAdvancedResult, SearchHit } from '../../shared/types';
 import { parseSearchQuery } from '../../shared/search-query';
 import { extractBacklinkKeywords } from '../../shared/backlinks';
+import { extractResultError } from '../../shared/extract-doc';
 import type { Handle } from './common';
 
 /** 分类、笔记、版本点、标签、搜索：知识库这一摊。 */
@@ -126,5 +127,16 @@ export function registerNotes(handle: Handle): void {
     if (!note) return [];
     const terms = extractBacklinkKeywords({ title: note.title ?? '', text: note.content ?? '' });
     return db.searchRelatedNotes(p.id, terms, p.limit ?? 6);
+  });
+
+  /**
+   * AI「整理成重点文档」落库（0.12.1）：空结果在这里再拦一次，绝不落空笔记；
+   * 事务、标题去重、继承分类/标签、溯源块都在 db.createExtractedNote 里。
+   */
+  handle('note:extract-save', (p: { sourceNoteId: Id; markdown: string }) => {
+    const markdown = String(p?.markdown ?? '');
+    const problem = extractResultError(markdown);
+    if (problem) throw new Error(problem);
+    return db.createExtractedNote({ sourceNoteId: p.sourceNoteId, markdown });
   });
 }

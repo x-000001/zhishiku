@@ -92,14 +92,22 @@ export function ToastHost(): ReactNode {
 /* 弹窗                                                                */
 /* ------------------------------------------------------------------ */
 
-/** 关闭先播 150ms 退场动画（只动 transform / opacity），再真正卸载。 */
-function useLeavingClose(onClose: () => void): { leaving: boolean; requestClose: () => void } {
+/** 关闭先播 150ms 退场动画（只动 transform / opacity），再真正卸载。
+ *  beforeClose 返回 false 时视为「这次关闭被拦下」，不播退场也不卸载
+ *  （AI 提炼弹窗用它在生成中弹二次确认，拦下后还能继续生成）。 */
+function useLeavingClose(
+  onClose: () => void,
+  beforeClose?: () => boolean
+): { leaving: boolean; requestClose: () => void } {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const beforeRef = useRef(beforeClose);
+  beforeRef.current = beforeClose;
   const [leaving, setLeaving] = useState(false);
   const leavingRef = useRef(false);
   const timerRef = useRef(0);
   const requestClose = useCallback(() => {
+    if (beforeRef.current && beforeRef.current() === false) return;
     if (leavingRef.current) return;
     leavingRef.current = true;
     setLeaving(true);
@@ -150,9 +158,11 @@ export function Modal(props: {
   width?: number;
   /** 第五版：给弹窗挂一个变体类名（比如全局搜索的 search-modal），只用来加外观 */
   variant?: string;
+  /** 可选：返回 false 表示这次关闭被业务拦下（不播退场、不卸载），用于生成中的二次确认 */
+  beforeClose?: () => boolean;
 }): ReactNode {
   const boxRef = useRef<HTMLDivElement | null>(null);
-  const { leaving, requestClose } = useLeavingClose(props.onClose);
+  const { leaving, requestClose } = useLeavingClose(props.onClose, props.beforeClose);
 
   useEscapeKey(requestClose);
   useModalFocus(boxRef, props.variant);

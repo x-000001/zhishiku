@@ -168,6 +168,12 @@ export const api = {
   saveNote: (id: Id, title: string, body: { html?: string; content?: string }, reason?: string) =>
     call<{ note: Note; version: NoteVersion | null }>('note:save', { id, title, ...body, reason }),
   reorderNotes: (ids: Id[]) => call<number>('note:reorder', { ids }),
+  /** AI 整理成重点文档后另存为新笔记：主进程负责事务、标题去重、继承分类/标签。 */
+  createNoteFromExtraction: (sourceNoteId: Id, markdown: string) =>
+    call<Note & { tags: Tag[]; attachments: Attachment[] }>('note:extract-save', {
+      sourceNoteId,
+      markdown
+    }),
   moveNote: (id: Id, categoryId: Id | null) => call<boolean>('note:move', { id, categoryId }),
   togglePin: (id: Id) => call<boolean>('note:pin', { id }),
   trashNote: (id: Id) => call<boolean>('note:trash', { id }),

@@ -7,13 +7,16 @@
 /** 划词类动作：只处理选中的一段文字，结果替换回选区。 */
 export type AiTextAction = 'polish' | 'expand' | 'shorten' | 'translate';
 
-/** 全文类动作：把整篇笔记发给 AI，结果进弹窗（摘要会插到笔记开头）。 */
-export type AiFullAction = 'summary' | 'tags' | 'related';
+/**
+ * 全文类动作：把整篇笔记发给 AI，结果进弹窗（摘要会插到笔记开头）。
+ * extract 是 0.12.1 新增的「整理成重点文档」：流式输出，确认后另存为新笔记。
+ */
+export type AiFullAction = 'summary' | 'tags' | 'related' | 'extract';
 
 export type AiAction = AiTextAction | AiFullAction;
 
 export const AI_TEXT_ACTIONS: AiTextAction[] = ['polish', 'expand', 'shorten', 'translate'];
-export const AI_FULL_ACTIONS: AiFullAction[] = ['summary', 'tags', 'related'];
+export const AI_FULL_ACTIONS: AiFullAction[] = ['summary', 'tags', 'related', 'extract'];
 
 /** 界面上显示的动作名，和动作一一对应。 */
 export const AI_ACTION_LABELS: Record<AiAction, string> = {
@@ -23,7 +26,8 @@ export const AI_ACTION_LABELS: Record<AiAction, string> = {
   translate: '翻译',
   summary: '摘要',
   tags: '分类整理',
-  related: '知识联想'
+  related: '知识联想',
+  extract: '整理成重点文档'
 };
 
 /** 划词气泡上的动作顺序（翻译单独有语言下拉，放最后）。 */
@@ -61,6 +65,9 @@ export function aiMaxTokens(action: AiAction): number {
       return 400;
     case 'related':
       return 800;
+    case 'extract':
+      // 整理成文档要保留表格/代码/小标题，给足输出额度。
+      return 1600;
     default:
       return 1300;
   }

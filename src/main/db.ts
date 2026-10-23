@@ -10,6 +10,11 @@ import {
 } from './paths';
 import { renderMarkdown } from '../shared/markdown';
 import { htmlToPlainText, sanitizeHtml, textToHtml } from '../shared/html';
+import {
+  buildExtractHtml,
+  splitExtractionOutput,
+  uniqueExtractTitle
+} from '../shared/extract-doc';
 import type {
   Attachment,
   CalendarEntry,
@@ -623,6 +628,59 @@ export function createNote(input: {
   );
   syncFts(r.lastInsertRowid, title, content);
   return r.lastInsertRowid;
+}
+
+/**
+ * AI「整理成重点文档」落库：把提炼结果新建成一篇笔记，整条链路一个事务。
+ * 规则：标题取 AI 输出第一行（清洗 + 与现有标题去重，重名追加 " (2)"），
+ * 继承原笔记的分类与标签，正文末尾追加溯源引用块；中途任何一步失败都回滚，
+ * 绝不留下半篇笔记（SQLITE_BUSY 翻成中文提示，让用户稍后重试）。
+ */
+export function createExtractedNote(input: {
+  sourceNoteId: Id;
+  markdown: string;
+}): Note & { tags: Tag[]; attachments: Attachment[] } {
+  const source = getNote(input.sourceNoteId);
+  if (!source) throw new Error('原笔记已经不在了，可能刚被删掉。');
+  const sourceTitle = source.title || '未命名笔记';
+  const parsed = splitExtractionOutput(input.markdown, sourceTitle);
+  if (!parsed.body.trim()) {
+    throw new Error('AI 没有返回可保存的正文，本次不会落库。');
+  }
+  const html = buildExtractHtml(parsed.body, sourceTitle);
+  const tagNames = (source.tags ?? []).map((tag) => tag.name).filter(Boolean);
+  const database = requireDb();
+  let begun = false;
+  try {
+    // IMMEDIATE：先拿写锁再读标题列表，避免两个窗口同时保存时都以为标题没被占用。
+    database.exec('BEGIN IMMEDIATE');
+    begun = true;
+    const titles = all<{ title: string }>('select title from note').map((row) => row.title);
+    const title = uniqueExtractTitle(parsed.title, titles);
+    const id = createNote({
+      categoryId: source.category_id ?? null,
+      title,
+      html
+    });
+    if (tagNames.length) setNoteTags(id, tagNames);
+    database.exec('COMMIT');
+    begun = false;
+    const created = getNote(id);
+    if (!created) throw new Error('新笔记写入后没能读回来，请重试。');
+    return created;
+  } catch (err) {
+    if (begun) {
+      try {
+        database.exec('ROLLBACK');
+      } catch {
+        // 事务可能已被 SQLite 自动回滚，忽略即可，保留原始错误
+      }
+    }
+    if (/SQLITE_BUSY|database is locked/i.test(String(err))) {
+      throw new Error('数据库正忙（可能有别的保存任务在跑），请稍后再试。');
+    }
+    throw err;
+  }
 }
 
 /** 自动保存：只写草稿，不动正文，也不留版本点。 */
