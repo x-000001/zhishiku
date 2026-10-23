@@ -1,6 +1,6 @@
-# 技术分析报告：Jw 知识库（v0.12.2）
+# 技术分析报告：Jw 知识库（v0.12.3）
 
-> 写前基线实测：`npm run typecheck` **0 错**；`npm run test:unit` **520/520**（37 个文件）。最近一次全量 `npm run test:all`：e2e 344/344、强杀恢复 6/6、打包自检 23/23。宿主 Node v24.19.0，Electron 44.8.0。
+> 写前基线实测：`npm run typecheck` **0 错**；`npm run test:unit` **534/534**（38 个文件）。最近一次全量 `npm run test:all`：e2e 344/344、强杀恢复 6/6、打包自检 23/23。宿主 Node v24.19.0，Electron 44.8.0。
 
 ## 模块 1：全景速览
 
@@ -38,6 +38,10 @@
 ### 0.12.2 增量：AI 长时记忆与习惯适配
 
 AI 主链路多了「静默提取偏好 → 下次请求注入」的旁路，**非核心链路全程可降级**。提取：`src/main/ipc/ai.ts` 的 `scheduleMemoryExtraction` 只在用户请求 `done` 之后排程（1.5 秒防抖；`jobs.size` / `chatJobs.size` 非 0 时 1.2 秒后重试，绝不并发），`runPendingMemoryExtraction` 用 `chatOnce`（300 tokens、15 秒总超时）拿回 JSON，交给 `src/shared/ai-memory.ts` 的 `parseMemoryJson`（`/\{[\s\S]*\}/` 剥围栏与废话）与 `shouldSkipMemoryExtraction`（<20 字或简单替换直接跳过），再经 `src/main/db.ts` 的 `addAiMemory` 落 `ai_memory`（同场景同名去重、累加 `hit_count`、每场景只留最近 20 条）。注入：`buildMessages(action, payload, preferences)` 的第 0 条 system 由 `buildSystemPrompt(preferences)` 生成 = `SYSTEM_PROMPT` + `buildPreferenceBlock`（`<user_preferences>` 包裹，声明优先级低于核心指令）；`loadPreferencesSafely` 只对文本类动作注入、80ms 预算 + try/catch，失败返回 `[]`。表结构在 `src/main/schema.ts` 的 `AI_MEMORY_SCHEMA`，`migrate()` 里用 `CREATE TABLE IF NOT EXISTS` 幂等补齐并 `try...catch` 兜底，**不改 `SCHEMA_VERSION`（保持 8）**——提升版本会打挂 `tests/unit/migrate.test.ts` 对老库 `user_version` 的既有断言。提取成功经 `ai:memory:updated` 事件推到设置页 `src/renderer/src/AiMemoryCard.tsx`（只显示一行「🧠 已记住您的格式偏好」，不弹确认框）。改这里先守住两条：① 查库/提取失败必须静默降级，不能让润色/摘要主流程报错；② 入库与拼 Prompt 前必须 `sanitizeMemoryText` 清掉 `<` / `>`，防止提示词注入。
+
+### 0.12.3 增量：AI 搜索直达（精准跳转与高亮）
+
+搜索弹窗的 `openNote(hit.note_id, q)` 把查询词随 id 交给 `App.tsx` 的 `locate` state；`Knowledge` 页等 `putIntoEditor → setEditorEpoch` 渲染完再定位。链路：`src/renderer/src/pages/Knowledge.tsx` 的 `useLocateHighlight` → `src/shared/locate.ts` 的 `findQuoteRanges`（`extractCoreChars` 先剥全/半角标点与空白并保留索引映射，精确失败后多词组合、再前 15 个核心字符）→ `src/renderer/src/dom-find.ts` 的 `buildTextMap`（TreeWalker 跳过脚本/隐藏节点、块级与 `<br>` 补换行）+ `highlightRanges`（CSS Custom Highlight 优先，`<mark>` 降级）+ `scrollRangeIntoView`（用 `range.getClientRects()` 手动居中，不用 `scrollIntoView`）；同时发 `ai:locate`（`src/main/ipc/ai.ts`，`chatOnce`、`maxTokens 160`、timeouts 4s/6s/8s），AI 只回一句引文，`parseLocateQuote` 用 `/\{[\s\S]*\}/` 剥围栏，回来后替换高亮。防串台：`AbortController` + 打开的 `openId` 比对；防脏写：`touchBody` / `scheduleDraft` / `manualSave` 前 `stripHighlights()`，高亮绝不进 `htmlRef`。改这里先守住两条：① AI 定位失败/超时必须静默保留本地高亮；② 任何保存路径前必须清理 DOM 高亮。
 
 ## 模块 2：工程结构与安全边界
 
@@ -251,7 +255,7 @@ npm run typecheck  # 改代码前先确认基线
 | `tests/e2e/cdp-check.mjs` | 6806 行、单脚本顺序执行 | 325 条断言共享应用状态，单条失败会带偏后续 |
 | 无 CI、无 ErrorBoundary | 渲染层 `ErrorBoundary` / `window.onerror` 0 处 | 渲染层异常只剩白屏，无兜底上报 |
 | CodeMirror 死依赖 | `package.json` 3 个包，`src/` 0 引用 | 增大体积、误导选型 |
-| IPC 通道双端硬编码 | 145 个 `handle` + 3 个 `handleWindow` | 通道名在 `src/renderer/src/api.ts` 与 `src/main/ipc/*.ts` 各写一遍，改名要搜两处；漏改只会在运行时 `ok:false` |
+| IPC 通道双端硬编码 | 147 个 `handle` + 3 个 `handleWindow` | 通道名在 `src/renderer/src/api.ts` 与 `src/main/ipc/*.ts` 各写一遍，改名要搜两处；漏改只会在运行时 `ok:false` |
 | 无代码签名 | NSIS 产物未签名 | SmartScreen 首次运行会拦 |
 
 ### 急救指南

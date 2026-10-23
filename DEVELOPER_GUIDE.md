@@ -1,7 +1,7 @@
 # Jw 知识库 · 架构与开发者导航指南（DEVELOPER_GUIDE）
 
 > 目标读者：**第一次接手这个仓库的人**。读完应该能在 30 分钟内跑起项目、对每个「我想改 X」知道去哪个文件，并且清楚哪些操作会放倒用户数据。
-> 版本基线：**0.11.2**。文中所有 `路径:行号` 都是当前 HEAD 的真实坐标，提交前用 `node .tools/check-guide.cjs` 机器校验（会逐条检查文件存在 + 行号不越界 + Mermaid 图数量）。
+> 版本基线：**0.12.3**。文中所有 `路径:行号` 都是当前 HEAD 的真实坐标，提交前用 `node .tools/check-guide.cjs` 机器校验（会逐条检查文件存在 + 行号不越界 + Mermaid 图数量）。
 > 坐标约定：`路径:行号` 指该行所在文件；区间写作 `路径:起-止`。行号会随代码移动，**改完代码顺手改行号**是交接的一部分。
 
 ---
@@ -21,7 +21,7 @@
 | 9 | [拓展 Recipes 与测试准入](#9-拓展开发-recipes-与测试准入) | 加表/加通道/加页面/加断言 |
 | 10 | [打包发布与技术债](#10-打包发布与技术债) | 发版 SOP + 最脆弱模块清单 |
 | A | [附录：文件规模](#附录-a文件规模机器统计) | 大文件排行 |
-| B | [附录：IPC 通道清单](#附录-bipc-通道按域129-个) | 143 个通道按域分布 |
+| B | [附录：IPC 通道清单](#附录-bipc-通道按域149-个) | 149 个通道按域分布 |
 | C | [附录：文档自检](#附录-c文档自检) | 路径核对报告怎么跑 |
 
 ---
@@ -145,7 +145,7 @@ npm run dev
 - 代价：所有入库 HTML 必须过 `sanitizeHtml()`（`src/shared/html.ts:201`，白名单 `:86-140`）；`execCommand` 已被标准标记废弃但 Chromium 仍稳定支持。
 - 现状：`package.json:36-38` 仍声明三个 CodeMirror 依赖，但 `src/` 里零 import（见 §10.3 技术债）。
 
-### ADR-6 IPC 统一信封 + 单点注册（143 个通道）
+### ADR-6 IPC 统一信封 + 单点注册（149 个通道）
 
 - 实现：`Result<T> = {ok:true,data}|{ok:false,error}`（`src/main/ipc/common.ts:5`）；`wrap()` 统一 try/catch + `console.error('[IPC] 处理失败：')`（`:19-28`）；注册器在 `src/main/ipc/index.ts:21-55`（`handle()` 先 `removeHandler` 再 `handle`，重复注册幂等）；preload 把信封解包成「成功返回 data、失败 throw Error」（`src/preload/index.ts:16-25`）。
 - 为什么：渲染层永远不用判断两套错误形态；e2e 多次启动不冲突；错误文案可直接给用户看。
@@ -509,10 +509,10 @@ await cdp.shot('your-feature');    // 截图落到 tests/e2e/shots/
 
 ### 9.5 测试准入（提 PR / 交付前必须全绿）
 
-| 门槛 | 命令 | 当前基线（0.12.2） |
+| 门槛 | 命令 | 当前基线（0.12.3） |
 |---|---|---|
 | 类型 | `npm run typecheck` | 0 错 |
-| 单元 | `npm run test:unit` | 520 项 / 37 文件 |
+| 单元 | `npm run test:unit` | 534 项 / 38 文件 |
 | 构建 | `npm run build` | 成功 |
 | 端到端 | `npm run test:e2e` | 344/344 |
 | 强杀 | `npm run test:kill` | 6/6 |
@@ -632,33 +632,51 @@ flowchart TD
 测试基线（0.12.2）：单测 **520** 项 / **37** 个文件、e2e **344** 项、强杀 **6** 项、typecheck 0 错；0.12.1 的 500 条单测与 338 条 e2e 断言**一条未修改**。
 
 
+## 14. 0.12.3 AI 搜索直达（精准跳转与高亮，2026-10-23）
+
+搜索弹窗点开结果时把查询词随笔记 id 带到知识库页，正文渲染完先本地秒级定位、AI 8 秒内兜底纠偏。高亮是**纯 DOM 展示层**，不进正文、不落库。
+
+| 层 | 关键位置 | 不变量 |
+|---|---|---|
+| 共享纯函数 | `src/shared/locate.ts`：`extractCoreChars`、`findQuoteRanges`、`takeAround`、`parseLocateQuote`、`buildLocateMessages` | `extractCoreChars` 剥全/半角标点、空白与连字符并保留「清洗索引 → 原文索引」映射；精确匹配失败先多词组合、再前 15 个核心字符；AI 结果必须用 `/\{[\s\S]*\}/` 剥围栏，解析失败返回空串 |
+| DOM 层 | `src/renderer/src/dom-find.ts`：`buildTextMap`、`rangesFromOffsets`、`highlightRanges`、`clearHighlights`、`stripHighlights`、`scrollRangeIntoView` | TreeWalker 跳过 `script/style` 与隐藏节点，块级标签和 `<br>` 补 `\n`；CSS Custom Highlight API 优先、`<mark class="jw-hit">` 只作降级；滚动必须用 `range.getClientRects()` 手动居中，**禁止 `scrollIntoView`**（会贴顶） |
+| 主进程 AI | `src/main/ipc/ai.ts` 的 `ai:locate` / `ai:locate:cancel`、模块级 `locateJobs` | 只回一句原文引文、`maxTokens 160`、8 秒硬超时（头 4s / 空闲 6s / 总 8s）；`assertAiConfig` 失败或超时直接返回空，渲染层保留本地高亮；取消按 requestId abort |
+| 渲染接入 | `src/renderer/src/pages/Knowledge.tsx` 的 `useLocateHighlight`；`App.tsx` 的 `locate` state + `armLocate`；`api.ts` 的 `aiLocate` / `aiLocateCancel` | 本地兜底必须等 `setEditorEpoch` 的渲染 effect 之后；`AbortController` + 打开 `openId` 比对防串台；AI 返回后重算 Range、替换高亮并重新聚焦 |
+| 防脏写 | `touchBody` / `scheduleDraft` 的 1 秒计时 / `manualSave` 前 `stripHighlights()`；`htmlRef` 只存无高亮 HTML | 高亮只改 DOM；即使踩 mark 降级，任何草稿/保存路径也必须先剥离，否则 `<mark>` 会进 SQLite |
+| 滚动容器 | `src/renderer/src/styles.css` 的 `::highlight(jw-locate-hit)`、`.rt-editor mark.jw-hit`、`.rt-editor` 的 `scroll-margin-block` | 高亮色跟随明暗主题；滚动容器是 `.editor-body`，`.rt-editor` 只提供滚动余量 |
+
+测试基线（0.12.3）：单测 **534** 项 / **38** 个文件、e2e **344** 项、强杀 **6** 项、typecheck 0 错；0.12.2 的 520 条单测与 344 条 e2e 断言**一条未修改**。
+
+
 ## 附录 A：文件规模（机器统计）
 
 行数按 `wc -l` 口径（当前 HEAD）：
 
 | 文件 | 行数 | 说明 |
 |---|---|---|
-| `src/renderer/src/styles.css` | 6071 | 全部样式（含多段历史追加） |
-| `src/main/db.ts` | 2785 | SQLite 访问 + 全部业务读写 |
-| `src/renderer/src/pages/Knowledge.tsx` | 2447 | 知识库页（编辑器 + AI + 标签 + 树） |
+| `src/renderer/src/styles.css` | 6095 | 全部样式（含多段历史追加） |
+| `src/main/db.ts` | 2784 | SQLite 访问 + 全部业务读写 |
+| `src/renderer/src/pages/Knowledge.tsx` | 2552 | 知识库页（编辑器 + AI + 标签 + 树 + 搜索定位） |
 | `src/main/ai.ts` | 978 | AI 协议、流式解析、错误文案、提炼 Prompt |
-| `src/renderer/src/pages/Settings.tsx` | 795 | 设置页（AI / 导出 / 更新 / 备份 / 长时记忆） |
-| `src/renderer/src/ai.tsx` | 790 | AI 气泡与 5 个弹窗 |
-| `src/renderer/src/App.tsx` | 632 | 外壳：路由/侧栏/顶栏/快捷键/主题 |
-| `src/shared/types.ts` | 575 | 跨进程 DTO |
-| `src/main/index.ts` | 381 | 启动、窗口、托盘、协议、热键 |
-| `src/main/focus.ts` | 313 | 番茄钟纯引擎（可注入时钟） |
-| `src/main/schema.ts` | 292 | 表结构 + FTS + 增量 schema（含 ai_memory） |
-| `src/shared/ai-memory.ts` | 193 | 长时记忆纯函数（转义/JSON 剥离/注入块） |
-| `src/renderer/src/AiMemoryCard.tsx` | 179 | 设置页长时记忆管理卡片 |
-| `src/preload/index.ts` | 52 | 唯一桥接面 |
-| `tests/e2e/cdp-check.mjs` | 7308 | e2e harness + 全部断言 |
-| `tests/e2e/kill-test.mjs` | 207 | 强杀恢复测试 |
-| `.tools/check-packaged.mjs` | 387 | 打包产物自检 |
+| `src/renderer/src/pages/Settings.tsx` | 794 | 设置页（AI / 导出 / 更新 / 备份 / 长时记忆） |
+| `src/renderer/src/ai.tsx` | 767 | AI 气泡与 5 个弹窗 |
+| `src/renderer/src/App.tsx` | 623 | 外壳：路由/侧栏/顶栏/快捷键/主题 + 搜索直达状态 |
+| `src/shared/types.ts` | 574 | 跨进程 DTO |
+| `src/main/index.ts` | 380 | 启动、窗口、托盘、协议、热键 |
+| `src/renderer/src/dom-find.ts` | 305 | DOM 文本地图 / 高亮 / 居中滚动 |
+| `src/main/focus.ts` | 298 | 番茄钟纯引擎（可注入时钟） |
+| `src/main/schema.ts` | 283 | 表结构 + FTS + 增量 schema（含 ai_memory） |
+| `src/shared/locate.ts` | 253 | 搜索直达纯函数（核心字符映射 / 引文查找 / AI 解析） |
+| `src/shared/ai-memory.ts` | 180 | 长时记忆纯函数（转义/JSON 剥离/注入块） |
+| `src/renderer/src/AiMemoryCard.tsx` | 168 | 设置页长时记忆管理卡片 |
+| `src/preload/index.ts` | 51 | 唯一桥接面 |
+| `tests/e2e/cdp-check.mjs` | 7307 | e2e harness + 全部断言 |
+| `tests/e2e/kill-test.mjs` | 199 | 强杀恢复测试 |
+| `.tools/check-packaged.mjs` | 386 | 打包产物自检 |
 
-源码：**80 个 TS/TSX 文件、24,052 行**；单测：37 文件 **6,831 行**；e2e：2 文件 **7,515 行**。
+源码：**82 个 TS/TSX 文件、24,219 行**；单测：38 文件 **6,866 行**；e2e：2 文件 **7,506 行**。
 
-## 附录 B：IPC 通道（按域，148 个）
+## 附录 B：IPC 通道（按域，149 个）
 
 | 域 | 数量 | 文件 |
 |---|---|---|
@@ -670,11 +688,11 @@ flowchart TD
 | plans（计划/条目/日历） | 11 | `src/main/ipc/plans.ts` |
 | github（授权/导入/重试提炼/转笔记/解绑） | 9 | `src/main/ipc/github.ts` |
 | focus（番茄钟） | 7 | `src/main/ipc/focus.ts` |
-| ai（配置/运行/取消/对话/长时记忆） | 11 | `src/main/ipc/ai.ts` |
+| ai（配置/运行/取消/对话/长时记忆/搜索定位） | 13 | `src/main/ipc/ai.ts` |
 | update（检查/下载/安装） | 6 | `src/main/ipc/update.ts` |
 | core（app:info / settings） | 3 | `src/main/ipc/core.ts` |
 | export（导出 Markdown） | 2 | `src/main/ipc/export.ts` |
-| **合计** | **148** | `src/main/ipc/index.ts:43-55` |
+| **合计** | **149** | `src/main/ipc/index.ts:43-55` |
 
 ## 附录 C：文档自检
 

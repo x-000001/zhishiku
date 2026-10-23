@@ -4,6 +4,20 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 `主.次.修订`。
 
+## [0.12.3] - 2026-10-23
+
+发布：__REL_LINK__（附件 JwKB-Setup-0.12.3.exe，__BYTES__ 字节）
+
+### 新增
+
+- **AI 搜索直达（精准跳转与高亮）**：在搜索弹窗点开一条结果时，查询词会随笔记 id 一起交给知识库页；正文渲染完成后先在本地做秒级兜底——`src/shared/locate.ts` 的 `extractCoreChars` 把全/半角标点、空白与连字符剥掉，同时保留「清洗后索引 → 原文索引」映射（跨 `<span>` 拆开的「配置 WAL」也能拼回），`findQuoteRanges` 先精确匹配，找不到再按多词组合、最后用前 15 个核心字符兜底。`src/renderer/src/dom-find.ts` 的 `buildTextMap` 用 TreeWalker 跳过 `script/style` 与隐藏节点、在块级标签和 `<br>` 处补换行；`highlightRanges` 优先用 CSS Custom Highlight API（`CSS.highlights` + `Highlight`），不支持才降级 `<mark class="jw-hit">`；`scrollRangeIntoView` 用 `range.getClientRects()[0]` 把目标滚到滚动容器（`.editor-body`）垂直居中，**不用** `scrollIntoView` 贴顶；滚完编辑器重新聚焦、光标落在高亮附近。同时发起 `ai:locate`（主进程 `chatOnce`，`maxTokens 160`，8 秒硬超时：头 4s / 空闲 6s / 总 8s），模型只回 `{"quote":"..."}` 一句原文引文，`parseLocateQuote` 用 `/\{[\s\S]*\}/` 剥掉围栏与废话；结果回来重算 Range 替换高亮，`AbortController` + 打开 `noteId` 比对防串台，AI 失败/超时就保留本地高亮，绝不让主流程报错。
+- **高亮不落库**：高亮只改 DOM、不进 `htmlRef`；`touchBody`、`scheduleDraft` 的 1 秒草稿计时、`manualSave` 前都强制 `stripHighlights()`，所以即使走了 `<mark>` 降级路径，SQLite 里也不会留下标记；`.rt-editor` 只加 `scroll-margin-block` 作为滚动余量。
+- **新增单测**：`tests/unit/locate.test.ts` 14 条（全/半角标点与空白映射、跨标签文本拼接、精确/多词/15 前缀兜底、AI JSON 剥离、`takeAround` 窗口边界与段落对齐）。
+
+### 验证
+
+- typecheck 0 错；单测 **534/534**（38 个文件）、e2e **344/344**、强杀 **6/6**、打包自检 **23/23**；0.12.2 的 520 条单测与 344 条 e2e 断言一条未改。
+
 ## [0.12.2] - 2026-10-23
 
 发布：[GitHub Release v0.12.2](https://github.com/x-000001/zhishiku/releases/tag/v0.12.2)（附件 JwKB-Setup-0.12.2.exe，112,625,916 字节）
