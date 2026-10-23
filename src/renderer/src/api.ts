@@ -6,6 +6,7 @@ import type {
   AiStreamEventWithId
 } from '../../shared/ai';
 import type { AiChatRequest, AiChatStreamEvent } from '../../shared/ai-chat';
+import type { AiMemoryPage, AiMemoryUpdatedEvent } from '../../shared/ai-memory';
 import type {
   CloudBackupInfo,
   CloudConfigInput,
@@ -117,6 +118,11 @@ export function onAiStream(listener: (event: AiStreamEventWithId) => void): () =
 /** AI 对话的流式输出（独立通道，和划词的 ai:stream 互不干扰）。 */
 export function onAiChatStream(listener: (event: AiChatStreamEvent) => void): () => void {
   return bridge.on('ai:chat:stream', (payload) => listener(payload as AiChatStreamEvent));
+}
+
+/** 后台提取到长时记忆后推一次：设置页刷新列表 + 显示一行「已记住」小字。 */
+export function onAiMemoryUpdated(listener: (event: AiMemoryUpdatedEvent) => void): () => void {
+  return bridge.on('ai:memory:updated', (payload) => listener(payload as AiMemoryUpdatedEvent));
 }
 
 /** 番茄钟状态变化（主进程是唯一计时源，渲染层只镜像）。 */
@@ -395,6 +401,14 @@ export const api = {
    */
   aiChat: (payload: AiChatRequest) => call<{ requestId: number }>('ai:chat', payload),
   aiChatCancel: (requestId: number) => call<boolean>('ai:chat:cancel', { requestId }),
+
+  /* ---------------- 0.12.2：AI 长时记忆 ---------------- */
+  /** 分页读记忆：设置页用；记忆表异常时主进程会降级成空列表。 */
+  aiMemoryList: (page = 1, size = 5) => call<AiMemoryPage>('ai:memory:list', { page, size }),
+  aiMemorySetEnabled: (enabled: boolean) =>
+    call<{ enabled: boolean }>('ai:memory:set-enabled', { enabled }),
+  aiMemoryDelete: (id: number) => call<boolean>('ai:memory:delete', { id }),
+  aiMemoryClear: () => call<number>('ai:memory:clear'),
 
   /* ---------------- 第八版：导出全库为 Markdown ---------------- */
   /** 主进程弹系统「选择文件夹」→ 按分类树写 .md 和 attachments，进度走 onExportProgress。 */

@@ -259,6 +259,26 @@ CREATE INDEX IF NOT EXISTS idx_focus_started ON focus_sessions(started_at DESC);
 
 
 /**
+ * 第九版（0.12.2）：AI 长时记忆。一条偏好一行，按 module_target 分域存储。
+ * 单独抽出来给「老库 v8 → v9 迁移」复用；迁移里包 try/catch，
+ * 建表失败只打日志、绝不阻断启动（防白屏）。
+ */
+export const AI_MEMORY_SCHEMA = `
+CREATE TABLE IF NOT EXISTS ai_memory (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  module_target TEXT NOT NULL,
+  content       TEXT NOT NULL,
+  hit_count     INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+-- 同一场景下同一句话只存一条：重复提取就更新 updated_at / hit_count
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_memory_unique ON ai_memory(module_target, content);
+-- 注入时按场景取最近 3 条；设置页按时间倒序分页
+CREATE INDEX IF NOT EXISTS idx_ai_memory_target ON ai_memory(module_target, updated_at DESC);
+`;
+
+/**
  * 第七版留下的表：每个仓库的增量游标（last_synced_at / last_error）。
  * 0.11.0 起「Issues 同步成待办」被换成「收集箱搜集项目 + AI 提炼」，这张表不再读写；
  * 之所以不删，是为了老库升级时不动用户已有数据（迁移链里只建不写）。

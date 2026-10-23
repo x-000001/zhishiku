@@ -84,6 +84,9 @@ function aiReplyFor(messages) {
       'console.log("间隔重复")',
       '```'
     ].join('\n');
+  /* 0.12.2：长时记忆提取。故意裹 ```json 围栏 + 前缀废话，验证主进程的正则剥离脏 JSON。 */
+  if (raw.includes('请从下面这次 AI 交互里提取用户稳定的写作/格式偏好'))
+    return '好的，整理如下：\n```json\n{"preferences":["喜欢简短、分点作答"]}\n```';
   return 'AI 回复';
 }
 /* 假安装包：内容固定，测试里断言「落盘大小 + SHA256 对得上」就用它算 */
@@ -95,10 +98,18 @@ const githubCalls = [];
    而不是像旧实现那样靠前端 setInterval 反复调一个阻塞式 IPC。 */
 let githubTokenPolls = 0;
 let stubPort = 0;
+/* 0.12.2：记录最后一次打到 AI stub 的请求体，用来断言「长时记忆有没有被注入 system 提示词」。 */
+let lastAiRequestBody = '';
 /* 0.12.0 阶段5：WebDAV 灾备 stub 的内存存储（PUT 写、GET 读、MKCOL 建目录） */
 const webdavStore = new Map();
 const stubServer = http.createServer((req, res) => {
   const url = req.url || '';
+  /* 0.12.2：把最后一次 AI 请求体原样吐回，e2e 用它断言 <user_preferences> 注入/删除。 */
+  if (req.method === 'GET' && url === '/ai-last') {
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end(lastAiRequestBody);
+    return;
+  }
   /* 第七版：AI（POST /ai/…/chat/completions）。流式 = SSE 一块一块发，
      非流式（标签/联想/测试连接）= 一次性 JSON。 */
   if (req.method === 'POST' && /^\/ai(-|\/|$)/.test(url)) {
@@ -107,6 +118,7 @@ const stubServer = http.createServer((req, res) => {
       body += chunk;
     });
     req.on('end', () => {
+      lastAiRequestBody = body;
       if (url.startsWith('/ai-bad/')) {
         res.writeHead(401, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: { message: 'invalid api key (stub)' } }));
@@ -7138,6 +7150,126 @@ try {
     )
   );
   results.push(...aiExtractSlow);
+
+  // ================= 0.12.2：AI 长时记忆与习惯适配 =================
+  // 1) 设置页管理区域 + 后台静默提取后自动刷新（非阻塞小字，不弹确认框）
+  const aiMemoryExtract = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const inv = (c, p) => window.api.invoke(c, p);
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    await inv('ai:memory:set-enabled', { enabled: true });
+    await inv('ai:memory:clear');
+    await inv('ai:config:set', { baseUrl: 'http://127.0.0.1:${stubPort}/ai/v1', model: 'stub-model', apiKey: 'sk-e2e-secret-123456', privacyAck: true });
+    location.hash = '/settings';
+    const card = await waitFor(() => q('.ai-memory-card'), 6000);
+    rec('AI 长时记忆：设置页有独立区域（开关 + 分页 + 一键清空）', !!card && !!q('.ai-memory-card .switch') && !!q('.ai-memory-card .ai-memory-foot'), card ? '区域已渲染' : '没找到');
+    location.hash = '/';
+    await sleep(320);
+    location.hash = '/knowledge';
+    await sleep(500);
+    const row = qa('.list-row').find((r) => ((r.textContent) || '').includes('重点提炼自检'));
+    if (!row) throw new Error('列表里没找到 重点提炼自检');
+    row.click();
+    await waitFor(() => { const el = q('.rt-editor'); return el && (el.textContent || '').includes('间隔重复') ? el : null; }, 8000);
+    clickText('.tb-ai', 'AI');
+    await waitFor(() => q('.ctx-menu'), 3000);
+    clickText('.ctx-item', '摘要（插到开头）');
+    if (q('.modal.ai-privacy')) clickText('.ai-privacy-agree', '我知道');
+    const modal = await waitFor(() => q('.modal.ai-summary'), 8000);
+    // 等摘要真的生成完并插入（这块 blockquote 出现 = 主进程已 done，后台提取的防抖计时才开始）
+    await waitFor(() => q('.rt-editor blockquote.ai-summary'), 10000);
+    // 摘要 done 之后主进程还要等 1.5s 防抖才发后台提取；立刻回设置页，才能收到「已记住」事件
+    location.hash = '/settings';
+    const hint = await waitFor(() => q('.ai-memory-hint'), 12000);
+    const memoryRow = await waitFor(() => q('.ai-memory-card .memory-row'), 12000);
+    rec('AI 长时记忆：后台提取后设置页自动刷新并显示一行「已记住」小字', !!modal && !!hint && !!memoryRow, 'hint=' + (hint ? (hint.textContent || '').trim().slice(0, 30) : 'null') + ' 行=' + !!memoryRow);
+    const preference = txt('.ai-memory-card .memory-row .memory-text');
+    rec('AI 长时记忆：模型回复里的 JSON 围栏被剥离后正确入库', preference.includes('分点'), preference || '列表为空');
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiMemoryExtract);
+
+  // 2) 注入：下一次摘要请求的 system 提示词里要带 <user_preferences>
+  const aiMemoryInjected = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    location.hash = '/';
+    await sleep(320);
+    location.hash = '/knowledge';
+    await sleep(500);
+    const row = qa('.list-row').find((r) => ((r.textContent) || '').includes('重点提炼自检'));
+    if (!row) throw new Error('列表里没找到 重点提炼自检');
+    row.click();
+    await waitFor(() => { const el = q('.rt-editor'); return el && (el.textContent || '').includes('间隔重复') ? el : null; }, 8000);
+    clickText('.tb-ai', 'AI');
+    await waitFor(() => q('.ctx-menu'), 3000);
+    clickText('.ctx-item', '摘要（插到开头）');
+    const modal = await waitFor(() => q('.modal.ai-summary'), 8000);
+    return JSON.stringify({ modal: !!modal });
+  })()`)
+    )
+  );
+  // 立刻读 stub 记下的请求体：这时还是「用户主动的摘要」，后台提取请求还没发
+  const lastAiBody = String(await (await fetch('http://127.0.0.1:' + stubPort + '/ai-last')).text());
+  results.push({
+    name: 'AI 长时记忆：下一次请求的 system 提示词携带 <user_preferences>（声明优先级低于核心指令）',
+    ok: aiMemoryInjected.modal === true && lastAiBody.includes('<user_preferences>') && lastAiBody.includes('分点') && lastAiBody.includes('优先级低于'),
+    detail: '请求体长度=' + lastAiBody.length + ' 含块=' + lastAiBody.includes('<user_preferences>') + ' 含分点=' + lastAiBody.includes('分点') + ' 含优先级声明=' + lastAiBody.includes('优先级低于')
+  });
+
+  // 给后台提取留时间（同一偏好命中唯一索引，只累加 hit_count），再去设置页删掉
+  await sleep(2600);
+  const aiMemoryDeleted = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const out = [];
+    const rec = (name, ok, detail) => out.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail).slice(0, 220) });
+    location.hash = '/settings';
+    await waitFor(() => q('.ai-memory-card'), 6000);
+    const before = qa('.ai-memory-card .memory-row').length;
+    q('.ai-memory-card .memory-row .btn.danger').click();
+    const gone = await waitFor(() => (qa('.ai-memory-card .memory-row').length === 0 ? true : null), 8000);
+    rec('AI 长时记忆：单条删除后列表清空并显示空状态', before > 0 && !!gone, '删除前=' + before + ' 删除后=' + qa('.ai-memory-card .memory-row').length);
+    return JSON.stringify(out);
+  })()`)
+    )
+  );
+  results.push(...aiMemoryDeleted);
+
+  // 3) 删除后不再注入：再跑一次摘要，stub 收到的请求体里不应再出现 <user_preferences>
+  const aiMemoryAfterDelete = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    location.hash = '/';
+    await sleep(320);
+    location.hash = '/knowledge';
+    await sleep(500);
+    const row = qa('.list-row').find((r) => ((r.textContent) || '').includes('重点提炼自检'));
+    if (!row) throw new Error('列表里没找到 重点提炼自检');
+    row.click();
+    await waitFor(() => { const el = q('.rt-editor'); return el && (el.textContent || '').includes('间隔重复') ? el : null; }, 8000);
+    clickText('.tb-ai', 'AI');
+    await waitFor(() => q('.ctx-menu'), 3000);
+    clickText('.ctx-item', '摘要（插到开头）');
+    const modal = await waitFor(() => q('.modal.ai-summary'), 8000);
+    return JSON.stringify({ modal: !!modal });
+  })()`)
+    )
+  );
+  const lastAiBodyAfterDelete = String(await (await fetch('http://127.0.0.1:' + stubPort + '/ai-last')).text());
+  results.push({
+    name: 'AI 长时记忆：删除记忆后，后续请求不再携带 <user_preferences>',
+    ok: aiMemoryAfterDelete.modal === true && !lastAiBodyAfterDelete.includes('<user_preferences>'),
+    detail: '请求体长度=' + lastAiBodyAfterDelete.length
+  });
 
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);

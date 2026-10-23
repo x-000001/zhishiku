@@ -13,6 +13,12 @@ import {
   type AiTagSuggestion
 } from '../shared/ai';
 import { EXTRACT_SYSTEM_PROMPT, buildExtractPrompt } from '../shared/extract-doc';
+import {
+  AI_MEMORY_EXTRACT_SYSTEM,
+  buildMemoryExtractPrompt,
+  buildPreferenceBlock,
+  type AiMemoryExtractContext
+} from '../shared/ai-memory';
 
 /** 三道时间闸：等响应头、两次流式分片之间、整个请求。任何一道到点都掐掉，拒绝无限转圈。 */
 export interface AiTimeouts {
@@ -177,9 +183,30 @@ const SYSTEM_PROMPT =
 /** 全文动作发给模型的正文最多这么多字，避免一篇长文烧掉整月额度。 */
 const FULL_TEXT_LIMIT = 8000;
 
+/**
+ * 系统提示词 = 原有写作约束 + 长时记忆块。
+ * 记忆为空时返回值和旧版 SYSTEM_PROMPT 完全一致，保证「没记忆 = 零行为变化」；
+ * 记忆块由 shared/ai-memory 再 sanitize 一遍并声明「优先级低于核心指令」（契约二）。
+ */
+export function buildSystemPrompt(preferences: string[] = []): string {
+  return SYSTEM_PROMPT + buildPreferenceBlock(preferences);
+}
+
+/** 后台「提取长时记忆」用的消息：独立系统提示词，只要 JSON。 */
+export function buildMemoryExtractionMessages(ctx: AiMemoryExtractContext): AiMessage[] {
+  return [
+    { role: 'system', content: AI_MEMORY_EXTRACT_SYSTEM },
+    { role: 'user', content: buildMemoryExtractPrompt(ctx) }
+  ];
+}
+
 /** 按动作拼出对话消息。标签/联想会额外要求「只输出 JSON」。 */
-export function buildMessages(action: AiAction, payload: AiRunPayload): AiMessage[] {
-  const messages: AiMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }];
+export function buildMessages(
+  action: AiAction,
+  payload: AiRunPayload,
+  preferences: string[] = []
+): AiMessage[] {
+  const messages: AiMessage[] = [{ role: 'system', content: buildSystemPrompt(preferences) }];
   const text = String(payload.text ?? '').trim();
   const noteText = clampAiText(payload.noteText ?? '', FULL_TEXT_LIMIT);
   const title = String(payload.title ?? '').trim();

@@ -6029,3 +6029,42 @@ blockquote.ai-summary b {
   color: var(--text-soft);
   font-size: 12.5px;
 }
+
+/* ---------------- 0.12.2：AI 长时记忆（设置页） ---------------- */
+.ai-memory-card .card-head {
+  gap: 8px;
+}
+.ai-memory-card .memory-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--line, rgba(120, 130, 150, 0.16));
+}
+.ai-memory-card .memory-row:last-of-type {
+  border-bottom: none;
+}
+.ai-memory-card .memory-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.5;
+}
+.ai-memory-card .ai-memory-hint {
+  margin: 2px 0 6px;
+  padding: 5px 10px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, #2e9e5b 12%, transparent);
+  color: #2e7d4f;
+  font-size: 12.5px;
+}
+[data-theme='dark'] .ai-memory-card .ai-memory-hint {
+  color: #7fd4a0;
+}
+.ai-memory-card .ai-memory-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}

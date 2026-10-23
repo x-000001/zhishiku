@@ -16,6 +16,7 @@ import { classifyAiConfigError } from '../../../shared/ai';
 import { errText, toastError } from '../errors';
 import { GithubCard } from '../github';
 import CloudBackupCard from '../CloudBackupCard';
+import AiMemoryCard from '../AiMemoryCard';
 
 /** 把字节数说成人话：安装包几十 MB，进度里只显示 MB 就够了。 */
 function fmtSize(bytes: number): string {
@@ -650,6 +651,8 @@ export default function Settings(props: {
           {aiTestText || 'Key 只在本机主进程里使用；渲染层拿到的只有「有没有配」和打码后的尾巴。填好后点「测试连接」验证一下。'}
         </p>
       </div>
+
+      <AiMemoryCard />
 
       <GithubCard />
 

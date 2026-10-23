@@ -16,6 +16,7 @@ import {
 } from '../../shared/ai-chat';
 import {
   assertAiConfig,
+  buildMemoryExtractionMessages,
   buildMessages,
   chatOnce,
   maskAiKey,
@@ -26,6 +27,15 @@ import {
   type AiFetcher,
   type AiMessage
 } from '../ai';
+import {
+  AI_MEMORY_HINT,
+  AI_MEMORY_MAX_INJECT,
+  AI_MEMORY_TEXT_ACTIONS,
+  parseMemoryJson,
+  shouldSkipMemoryExtraction,
+  type AiMemoryExtractContext,
+  type AiMemoryUpdatedEvent
+} from '../../shared/ai-memory';
 import type { Handle } from './common';
 
 /**
@@ -144,6 +154,130 @@ function broadcastChat(event: AiChatStreamEvent): void {
   }
 }
 
+/* ---------------- 0.12.2：AI 长时记忆（非核心链路，全程静默降级） ----------------
+   两条铁律：
+   1. 读记忆失败/超时 = 不注入，主流程照常跑；
+   2. 后台提取排在用户请求结束之后的防抖队列里，绝不和润色/摘要并发抢额度。
+   这里没有 MemoryManager 类：就是本文件里的几个函数 + db.ts 里的几条 SQL。 */
+
+const AI_MEMORY_BUDGET_MS = 80;
+const AI_MEMORY_DEBOUNCE_MS = 1500;
+const AI_MEMORY_RETRY_MS = 1200;
+
+let memoryTimer: ReturnType<typeof setTimeout> | null = null;
+let memoryPending: AiMemoryExtractContext | null = null;
+let memoryBusy = false;
+
+function broadcastMemory(event: AiMemoryUpdatedEvent): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('ai:memory:updated', event);
+  }
+}
+
+function memorySourceOf(input: AiRunPayload): string {
+  return String(input.noteText ?? input.text ?? '');
+}
+
+/**
+ * 注入用：按当前动作查最多 3 条记忆。任何异常（表不存在 / 库忙 / 超预算）
+ * 都静默降级为不注入 —— 记忆是锦上添花，不能把润色/摘要带崩。
+ */
+function loadPreferencesSafely(moduleTarget: string): string[] {
+  try {
+    if (!db.aiMemoryEnabled()) return [];
+    if (!AI_MEMORY_TEXT_ACTIONS.includes(moduleTarget)) return [];
+    const startedAt = Date.now();
+    const rows = db.listAiMemory(moduleTarget, AI_MEMORY_MAX_INJECT);
+    if (Date.now() - startedAt > AI_MEMORY_BUDGET_MS) {
+      // SQLite 是同步调用，这里主要是防极端卡顿：宁可这次不注入，也不拖慢主请求。
+      console.warn('[AI] 长时记忆查询超过 ' + AI_MEMORY_BUDGET_MS + 'ms，本次跳过注入');
+      return [];
+    }
+    return rows.map((row) => row.content);
+  } catch (err) {
+    console.warn(
+      '[AI] 读取长时记忆失败，本次不注入（不影响主流程）：',
+      err instanceof Error ? err.message : String(err)
+    );
+    return [];
+  }
+}
+
+function armMemoryTimer(delay: number): void {
+  if (memoryTimer) clearTimeout(memoryTimer);
+  memoryTimer = setTimeout(() => {
+    memoryTimer = null;
+    void runPendingMemoryExtraction();
+  }, delay);
+  // 后台任务不阻止应用退出
+  memoryTimer.unref?.();
+}
+
+/** 请求结束后安排一次「空闲时提取」：先本地拦截，再防抖。 */
+function scheduleMemoryExtraction(input: AiRunPayload, outputText: string): void {
+  try {
+    if (!db.aiMemoryEnabled()) return;
+    if (!AI_MEMORY_TEXT_ACTIONS.includes(input.action)) return;
+    const ctx: AiMemoryExtractContext = {
+      moduleTarget: input.action,
+      sourceText: memorySourceOf(input),
+      outputText
+    };
+    // 契约三：< 20 字 / 只是换了个词 → 直接跳过，省一次 API 钱。
+    if (shouldSkipMemoryExtraction(ctx)) return;
+    memoryPending = ctx;
+    armMemoryTimer(AI_MEMORY_DEBOUNCE_MS);
+  } catch (err) {
+    console.warn('[AI] 安排长时记忆提取失败（已忽略）：', err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** 真正发后台提取请求：用户空闲、没有别的 AI 任务时才跑。 */
+async function runPendingMemoryExtraction(): Promise<void> {
+  if (memoryBusy) {
+    armMemoryTimer(AI_MEMORY_RETRY_MS);
+    return;
+  }
+  // 错峰：用户主动的润色/摘要/对话还在跑时，后台提取往后排队。
+  if (jobs.size > 0 || chatJobs.size > 0) {
+    armMemoryTimer(AI_MEMORY_RETRY_MS);
+    return;
+  }
+  const ctx = memoryPending;
+  if (!ctx) return;
+  memoryPending = null;
+  memoryBusy = true;
+  try {
+    const config = assertAiConfig(readConfig());
+    const reply = await chatOnce({
+      fetcher: netFetcher,
+      config,
+      messages: buildMemoryExtractionMessages(ctx),
+      maxTokens: 300,
+      timeouts: { headersMs: 5000, idleMs: 8000, totalMs: 15_000 }
+    });
+    // 契约二：模型回复可能裹 ```json 或废话，先抠 JSON；解析失败就丢，不报错。
+    const preferences = parseMemoryJson(reply);
+    if (!preferences.length) return;
+    const added = db.addAiMemory(ctx.moduleTarget, preferences);
+    broadcastMemory({
+      moduleTarget: ctx.moduleTarget,
+      added,
+      total: db.aiMemoryCount(),
+      hint: AI_MEMORY_HINT
+    });
+  } catch (err) {
+    // 契约一：提取失败只打日志，用户完全无感。
+    console.warn(
+      '[AI] 后台提取长时记忆失败（已静默忽略）：',
+      err instanceof Error ? err.message : String(err)
+    );
+  } finally {
+    memoryBusy = false;
+    if (memoryPending) armMemoryTimer(AI_MEMORY_RETRY_MS);
+  }
+}
+
 export function registerAi(handle: Handle): void {
   handle('ai:config:get', () => publicConfig());
 
@@ -210,7 +344,7 @@ export function registerAi(handle: Handle): void {
 
     void (async (): Promise<void> => {
       try {
-        const messages = buildMessages(input.action, input);
+        const messages = buildMessages(input.action, input, loadPreferencesSafely(input.action));
         // 标签/联想要的是完整 JSON，流式没意义；其余动作边生成边推，界面有打字机效果
         const streaming = input.action !== 'tags' && input.action !== 'related';
         if (streaming) {
@@ -223,6 +357,8 @@ export function registerAi(handle: Handle): void {
             onDelta: (delta) => broadcast({ requestId, type: 'chunk', delta })
           });
           broadcast({ requestId, type: 'done', text: result });
+          // 主请求已经结束，才开始「空闲时静默提取偏好」，绝不和它并发抢额度。
+          scheduleMemoryExtraction(input, result);
         } else {
           const result = await chatOnce({
             fetcher: netFetcher,
@@ -258,6 +394,36 @@ export function registerAi(handle: Handle): void {
     job.controller.abort();
     return true;
   });
+
+  /* ---------------- 0.12.2：长时记忆管理（设置页）---------------- */
+
+  handle('ai:memory:list', (payload: { page?: number; size?: number }) => {
+    const page = Number(payload?.page ?? 1);
+    const size = Number(payload?.size ?? 5);
+    try {
+      const data = db.aiMemoryPage(Number.isFinite(page) ? page : 1, Number.isFinite(size) ? size : 5);
+      return {
+        ...data,
+        page: Math.max(1, Math.floor(Number.isFinite(page) ? page : 1)),
+        size: Math.max(1, Math.min(20, Math.floor(Number.isFinite(size) ? size : 5))),
+        enabled: db.aiMemoryEnabled()
+      };
+    } catch (err) {
+      // 设置页也不能因为记忆表异常白屏：退化成「空列表 + 已关闭」。
+      console.warn('[AI] 读取长时记忆列表失败（已降级为空）：', err instanceof Error ? err.message : String(err));
+      return { items: [], total: 0, page: 1, size: 5, enabled: false };
+    }
+  });
+
+  handle('ai:memory:set-enabled', (payload: { enabled?: boolean }) => {
+    const enabled = Boolean(payload?.enabled);
+    db.setAiMemoryEnabled(enabled);
+    return { enabled };
+  });
+
+  handle('ai:memory:delete', (payload: { id?: number }) => db.deleteAiMemory(Number(payload?.id ?? 0)));
+
+  handle('ai:memory:clear', () => db.clearAiMemory());
 
   /**
    * AI 对话（0.12.0 阶段4）：渲染层带「当前笔记正文 + 历史 + 这一问」过来。

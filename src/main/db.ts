@@ -58,7 +58,13 @@ import type {
   TaskPriority,
   TaskStatus
 } from '../shared/types';
-import { FOCUS_SCHEMA, GITHUB_SCHEMA, SCHEMA } from './schema';
+import { AI_MEMORY_SCHEMA, FOCUS_SCHEMA, GITHUB_SCHEMA, SCHEMA } from './schema';
+import {
+  AI_MEMORY_MAX_INJECT,
+  AI_MEMORY_SETTING_KEY,
+  sanitizeMemoryText,
+  type AiMemoryEntry
+} from '../shared/ai-memory';
 import { runCleanGithubBugMigration } from './migrations/cleanGithubBug';
 import type { RepoExtractMeta, RepoExtractStatus } from '../shared/github';
 
@@ -302,6 +308,15 @@ function migrate(): void {
     addColumnIfMissing('inbox_item', 'github_language', 'TEXT');
     addColumnIfMissing('inbox_item', 'extract_status', 'TEXT');
     addColumnIfMissing('inbox_item', 'extract_meta', 'TEXT');
+  }
+  // AI 长时记忆（0.12.2）：这张表不藏在 SCHEMA_VERSION 后面，每次打开都幂等补齐，
+  // 这样 0.12.1 的老库和全新库走同一条路径；契约要求「Migration 兜底」——
+  // 建表失败只打印日志，绝不能因为这张表把整个应用卡在启动阶段（白屏）。
+  // 功能层（listAiMemory 等）也全部做了「表不在 = 静默降级为不注入」。
+  try {
+    database.exec(AI_MEMORY_SCHEMA);
+  } catch (err) {
+    console.error('[迁移] 创建 ai_memory 表失败（长时记忆本次不生效，不影响启动）：', err);
   }
   if (current < SCHEMA_VERSION) {
     database.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
@@ -2638,4 +2653,132 @@ export function updateGithubInboxExtract(
     nowIso(),
     id
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* AI 长时记忆（0.12.2）                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 表不在（迁移失败 / 老库异常）时返回 false，所有记忆读写都退化成空操作。
+ * 契约一：记忆是非核心链路，任何异常都不能冒泡到润色/摘要主流程。
+ */
+function aiMemoryTableExists(): boolean {
+  try {
+    return (
+      all<{ name: string }>(
+        "select name from sqlite_master where type = 'table' and name = 'ai_memory'"
+      ).length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** 长时记忆总开关（meta 表，默认开启）。读失败按关闭处理，宁可不注入也不报错。 */
+export function aiMemoryEnabled(): boolean {
+  try {
+    return (getSetting(AI_MEMORY_SETTING_KEY) ?? '1') !== '0';
+  } catch {
+    return false;
+  }
+}
+
+export function setAiMemoryEnabled(enabled: boolean): void {
+  setSetting(AI_MEMORY_SETTING_KEY, enabled ? '1' : '0');
+}
+
+/** 注入用：严格按 moduleTarget 过滤（契约三：领域隔离），最多 3 条。 */
+export function listAiMemory(moduleTarget: string, limit = AI_MEMORY_MAX_INJECT): AiMemoryEntry[] {
+  if (!aiMemoryTableExists()) return [];
+  const target = String(moduleTarget ?? '').trim();
+  if (!target) return [];
+  const capped = Math.max(1, Math.min(AI_MEMORY_MAX_INJECT, Math.floor(limit) || AI_MEMORY_MAX_INJECT));
+  return all<AiMemoryEntry>(
+    'select * from ai_memory where module_target = ? order by updated_at desc, id desc limit ?',
+    target,
+    capped
+  );
+}
+
+/** 设置页分页列表（按最近更新倒序）。 */
+export function aiMemoryPage(page = 1, size = 5): { items: AiMemoryEntry[]; total: number } {
+  if (!aiMemoryTableExists()) return { items: [], total: 0 };
+  const total = Number(one<{ c: number }>('select count(*) as c from ai_memory')?.c ?? 0);
+  const safeSize = Math.max(1, Math.min(20, Math.floor(size) || 5));
+  const totalPages = Math.max(1, Math.ceil(total / safeSize));
+  const safePage = Math.max(1, Math.min(totalPages, Math.floor(page) || 1));
+  const items = all<AiMemoryEntry>(
+    'select * from ai_memory order by updated_at desc, id desc limit ? offset ?',
+    safeSize,
+    (safePage - 1) * safeSize
+  );
+  return { items, total };
+}
+
+export function aiMemoryCount(): number {
+  if (!aiMemoryTableExists()) return 0;
+  return Number(one<{ c: number }>('select count(*) as c from ai_memory')?.c ?? 0);
+}
+
+/**
+ * 批量写入提取到的偏好：先 sanitize（契约二：入库前剥特殊符号），
+ * 同一场景同一句只留一条（唯一索引），重复命中只更新 updated_at / hit_count。
+ * 返回真正新增的条数；0 表示全是重复命中。
+ */
+export function addAiMemory(moduleTarget: string, contents: string[]): number {
+  if (!aiMemoryTableExists()) return 0;
+  const target = String(moduleTarget ?? '').trim();
+  if (!target || !Array.isArray(contents) || !contents.length) return 0;
+  const now = nowIso();
+  let added = 0;
+  for (const item of contents) {
+    const content = sanitizeMemoryText(item);
+    if (!content) continue;
+    const existed = one<{ id: Id }>(
+      'select id from ai_memory where module_target = ? and content = ?',
+      target,
+      content
+    );
+    if (existed) {
+      run('update ai_memory set hit_count = hit_count + 1, updated_at = ? where id = ?', now, existed.id);
+      continue;
+    }
+    run(
+      'insert into ai_memory(module_target, content, hit_count, created_at, updated_at) values(?, ?, 1, ?, ?)',
+      target,
+      content,
+      now,
+      now
+    );
+    added += 1;
+  }
+  // 每个场景只留最近 20 条：注入永远只有 3 条，旧的不清只会越攒越多。
+  run(
+    `delete from ai_memory where module_target = ? and id not in (
+       select id from ai_memory where module_target = ? order by updated_at desc, id desc limit 20
+     )`,
+    target,
+    target
+  );
+  return added;
+}
+
+export function deleteAiMemory(id: Id): boolean {
+  if (!aiMemoryTableExists()) return false;
+  return run('delete from ai_memory where id = ?', id).changes > 0;
+}
+
+export function clearAiMemory(): number {
+  if (!aiMemoryTableExists()) return 0;
+  const database = requireDb();
+  database.exec('BEGIN');
+  try {
+    const changes = run('delete from ai_memory').changes;
+    database.exec('COMMIT');
+    return changes;
+  } catch (err) {
+    database.exec('ROLLBACK');
+    throw err;
+  }
 }
