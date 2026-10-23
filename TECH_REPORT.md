@@ -1,396 +1,255 @@
-# 技术分析报告（TECH_REPORT）
+# 技术分析报告：Jw 知识库（v0.12.0）
 
-> 基线：版本 **0.11.2**、schema **v8**、`src/` 65 个 TS/TSX 文件 19,456 行、单测 **404**（29 文件）、e2e **305**、强杀 **6**、打包自检 **23**。
-> 这份报告里的每个 `path:line` 都可以用 `.tools/check-doc.cjs TECH_REPORT.md` 复核（会逐条检查文件存在 + 行号不越界 + Mermaid 图数量）。
-> 想看更细的操作手册（Day-1 SOP、发版 10 步）去 [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)；这份只回答三个问题：**它是什么、底层怎么转、我第一刀往哪切**。
+> 写前基线实测：`npm run typecheck` **0 错**；`npm run test:unit` **485/485**（35 个文件）。最近一次全量 `npm run test:all`：e2e 325/325、强杀恢复 6/6、打包自检 23/23。宿主 Node v24.19.0，Electron 44.8.0。
 
----
+## 模块 1：全景速览
 
-## 0. 三个目标对应的最短路径
+**一句话定位：Jw 知识库是纯本地的 Windows「第二大脑」—— 笔记、任务、复习、目标、番茄钟、AI 对话、收集箱共用一个 SQLite 文件；断网可用，数据不出本机。**
 
-| 目标 | 直接看 |
-|---|---|
-| 1 分钟看懂全貌 | §1.1 一句话定位 + §1.2 界面拆解 + §2.1 进程边界表 |
-| 5 分钟跑通本地环境 | §3.1 命令表 + §3.2 数据隔离（**必读**，别污染真实库） |
-| 30 分钟完成第一次改动 | §3.3 代码地图 → §3.4 First PR（照抄步骤，含验收） |
+它解决的痛点：云笔记要账号/订阅且数据不受控；笔记、待办、复习分散在几个工具里。本项目用「单 Electron 应用 + 单 `kb.db` + 无后端」换零服务依赖、整目录可备份迁移。
 
----
+**选型克制（它不解决什么）**：不做多端同步、协作、Web 版；AI 需自备 API Key，不内置模型；安装包无代码签名，SmartScreen 首次运行会拦；数据默认只落在 `D:\Jw知识库`，跨机靠整目录复制或云端备份。
 
-## 1. 全景速览
+**界面拆解**：主窗 9 个导航页（由 `App.tsx` 的 `NAV` 数组定义，`useHashRoute` 手写路由）；快速记录小窗（无边框置顶，hash `#/quick`）；托盘常驻。全局快捷键：Ctrl+K 搜索、Ctrl+N 新建笔记、Ctrl+1…9 切页、Ctrl+Shift+P 命令面板。
 
-### 1.1 一句话定位
+| 目标 | 读哪节 | 最快动作 |
+| --- | --- | --- |
+| 1 分钟看懂全貌 | 模块 1–3 | 看两张 Mermaid 图 |
+| 5 分钟跑通本地 | 模块 4 | `npm install` → `npm run dev` |
+| 30 分钟完成首改 | 模块 5 | 按 First PR 的 Diff 改一行 |
 
-**一个本地优先（local-first）的 Windows 桌面「第二大脑」**：笔记 / 分类 / 标签、任务与计划、间隔复习、当前目标与里程碑、番茄钟、AI 润色与摘要、收集箱里的 GitHub 项目 AI 提炼，全部数据落在本机一个 SQLite 文件里（`kb.db`），不登录、不上传、可整目录搬走。
+### 技术栈矩阵
 
-它解决的痛点：把「记笔记 / 管任务 / 复习 / 专注」四件事拆成四个 App 的人，用同一个库把它们串起来（笔记 → 复习卡 → 任务 → 番茄钟 / 目标），并且**不牺牲数据主权**（`src/main/paths.ts:67` 的 `resolveDataRoot()` 允许把数据目录指到任意盘）。
+| 层 | 选型（版本以 `package.json` 为准） | 一句话原因 |
+| --- | --- | --- |
+| 桌面壳 | Electron **44.8.0** | 一套 TS 写主进程/渲染层/小窗/托盘；Windows NSIS 打包成熟 |
+| 构建 | electron-vite **6** + electron-builder **26.15.3** | 开发热更新、生产 asar；`electronDist` 直接用本地 Electron，绕开国内下载 |
+| 界面 | React **18.3.1** + 手写 CSS | 9 个主导航页 + 快速记录小窗；无路由库（`useHashRoute`）、无 Redux/Zustand，页面级 state 够用 |
+| 语言 | TypeScript **7.0.2**（strict） | 跨进程接口全部落 `src/shared` 类型，改错在编译期暴露 |
+| 数据 | `node:sqlite` 的 `DatabaseSync` | 零原生依赖、免编译；单文件 `kb.db` 可直接备份 |
+| 测试 | Vitest **5.0.5** + 自研 CDP e2e | 主进程纯函数可直测；e2e 起真实 Electron 断言真实 DOM |
 
-### 1.2 界面与功能拆解
+**硬性版本**：宿主 Node 必须支持 `node:sqlite`（本机 v24.19.0 实测通过）；Electron 44.8.0 升级前先跑全量测试。
 
-不是传统多窗口应用：**1 个主窗口 + 1 个全局快速记录小窗 + 1 个托盘**。
+## 模块 2：工程结构与安全边界
 
-- 主窗口（`src/main/index.ts:121` `createMainWindow`，`frame:false` 自绘标题栏、Windows 11 用 acrylic 材质）
-  - 左侧固定侧栏：品牌区 + 9 个导航（首页 / 收集箱 / 知识库 / 任务待办 / 学习计划 / 当前目标 / 下一阶段目标 / 复习与复盘 / 设置）+ 底部折叠按钮。
-  - 顶部工具条：搜索（Ctrl+K）、快速记录（Ctrl+Alt+Space）。
-  - 主区域：11 个页面组件（`src/renderer/src/pages/` 下 11 个文件），**没有路由库**，用 hash 路由手写：`src/renderer/src/App.tsx:39` 的 `useHashRoute()` + `NAV` 表。
-  - 右下角悬浮层：番茄钟 `FocusDock`（`src/renderer/src/App.tsx:16` import），全局常驻、可拖动/吸边。
-  - 全局轻提示：`ToastHost`（同文件 `App.tsx` 底部），带「撤销」动作。
-- 快速记录小窗（`src/main/index.ts:188` `createCaptureWindow`，560×148、失焦自动隐藏）：不打断当前工作，先扔进收集箱。
-- 托盘（`src/main/index.ts:246` `createTray`）：快速记录 / 显示主窗 / 退出；`Ctrl+Alt+Space` 全局热键在 `src/main/index.ts:331` 注册。
-
-**联动关系**（不是并列功能，是有数据流的）：
+### 目录树（★ = 生成目录，禁改）
 
 ```
-收集箱 --convert--> 知识库笔记 --from-note--> 复习卡 --grade--> 复习日志
-   └--convert--> 任务（可挂到 计划 / 里程碑 / 目标关键结果）
-知识库笔记 --AI--> 摘要/标签/联想 --> 回写笔记或新建笔记
-任务 --定时提醒--> 系统通知（src/main/index.ts:277 checkDue）
-任务 --开始专注--> 番茄钟会话 focus_sessions --> 今日/本周统计
-GitHub 项目 --README + AI 提炼--> 收集箱条目（YAML+Markdown）--转笔记--> 知识库
+src/
+├─ main/          # 主进程：窗口、托盘、数据库、AI、云备份、GitHub
+│  ├─ index.ts    # 入口：createMainWindow / createCaptureWindow / createTray
+│  ├─ db.ts       # 唯一数据访问层（约 2400 行）
+│  ├─ ipc/        # 按域注册：registerIpc → registerNotes / registerAi …
+│  └─ paths.ts    # 数据目录解析 resolveDataRoot
+├─ preload/       # 仅 50 行：contextBridge 暴露 window.api
+├─ renderer/      # React 页面；无 Node、无网络
+└─ shared/        # 双端共享：types.ts、html.ts、markdown.ts、ai.ts …
+tests/
+├─ unit/          # 485 条 Vitest
+└─ e2e/           # cdp-check.mjs（6806 行）+ kill-test.mjs
+out/          ★  # electron-vite 编译产物（main/preload/renderer）
+release/      ★  # electron-builder 安装包输出
+node_modules/ ★
+.e2e-data/ .kill-data/ .pack-data/ .probe-data/ ★  # 测试专用数据目录
+resources/       # 图标、installer.nsh
+.tools/          # 打包、发布、文档自检脚本
 ```
 
-### 1.3 核心技术栈（含「为什么」和「代价」）
+### 主进程模块分工
 
-| 层 | 选型（版本） | 为什么 | 代价 / 妥协 |
-|---|---|---|---|
-| 壳 | Electron 44.8.0 + electron-vite 6 | 需要托盘、全局热键、`safeStorage`(DPAPI)、自绘标题栏、原生窗口材质；Web 技术栈迭代快 | 安装包 ~112 MB；Electron 安全基线要自己守住 |
-| UI | React 18.3.1（无 Router、无状态库） | 页面数固定 11 个，hash 路由 + `useState` 足够；少依赖少供应链风险（运行时依赖只有 5 个，见 `package.json:26`） | `useState` 在渲染层出现 90 处，跨页共享靠 prop drilling；`App.tsx` 撑到 433 行 |
-| 编辑器 | 原生 `contentEditable` + `document.execCommand`（`src/renderer/src/rich.ts`） | 能在不引第三方编辑器的情况下做粗体/颜色/表格/插图，且**借用浏览器原生撤销栈**（AI 插入摘要必须能被 Ctrl+Z 一次撤掉） | 光标/选区/撤销栈全是隐式状态，任何「重设 innerHTML」都可能丢现场（见 §2.3） |
-| 数据库 | Node 内置 `node:sqlite`（`DatabaseSync`，`src/main/db.ts:1`） | Electron 44 / Node 24 自带，**零原生编译、零额外依赖**；同步 API 写起来像本地文件 | 单连接同步调用，长事务会阻塞主进程；没有连接池概念 |
-| IPC | 手写 `ipcMain.handle` + `preload` 白名单桥（`src/preload/index.ts:3`） | 通道数量大（129 个），需要统一的 `{ok,data}|{ok,error}` 语义和事件白名单 | 每个新通道都要手动加：主进程注册 + 白名单 + `api.ts` 封装（3 处） |
-| 网络 | 全部在主进程，用 Electron `net.fetch`（AI / GitHub / 更新 / 附件协议） | 渲染层零网络是硬红线：Key/Token 不进渲染层，CSP 简单 | 流式响应要在主进程解析 SSE，再逐块 push 给渲染层（见 §2.4） |
-| 打包 | electron-builder 26 + NSIS（`electron-builder.yml`） | 免安装体验 + 单文件安装包；支持「检查更新 → 下载 → 静默安装」 | 无代码签名 → 首次运行 SmartScreen 提示；更新清单靠 GitHub Release |
-| 测试 | vitest 5（单测）+ CDP 驱动 Electron 的 e2e（`tests/e2e/cdp-check.mjs`） | 真跑应用、真截图、真点按钮，覆盖「软件渲染 + 真实 IPC + 真实 SQLite」 | 单脚本 6,140 行、顺序强耦合、跑一轮数分钟 |
+| 文件 | 职责 |
+| --- | --- |
+| `src/main/index.ts` | 进程/窗口/托盘/生命周期 |
+| `src/main/db.ts` + `src/main/schema.ts` | 数据访问层与建表迁移 |
+| `src/main/ipc/*` | 按域注册通道（`registerIpc` 统一汇总） |
+| `src/main/ai.ts` | AI 流式对话、取消、错误翻译 |
+| `src/main/cloud.ts` + `src/main/snapshot.ts` | 云端灾备与本地快照/恢复 |
+| `src/main/github.ts` + `src/main/github-auth.ts` | 仓库同步与 Device Flow 登录 |
+| `src/main/focus.ts` | 番茄钟纯引擎（`endAt` + `setTimeout` + `restore`） |
+| `src/main/update.ts` + `src/main/updater.ts` | 更新检查与安装 |
+| `src/main/export.ts` / `src/main/html-to-md.ts` | 导出与 HTML→Markdown |
 
-> 两个「看着像在用、其实没用」的东西（别被骗）：
-> - `package.json` 的 3 个 CodeMirror 依赖：`src/` 里 grep `codemirror|CodeMirror` **0 命中**（历史遗留，P2 技术债）。
-> - 没有 Zustand / Redux / Context：grep `zustand|redux|createContext` 同样 **0 命中**。
+渲染层：`src/renderer/src/App.tsx` 管路由与全局快捷键，每个页面在 `src/renderer/src/pages/*` 一个文件，`src/renderer/src/api.ts` 是唯一 IPC 出口；可复用 UI 平铺在 `src/renderer/src/*.tsx`，没有 `components/` 子目录。
 
----
+### 安全边界（红线）
 
-## 2. 架构深潜与数据流向
+| 项 | 现状（`src/main/index.ts` 两处 `webPreferences`） | 改了会怎样 |
+| --- | --- | --- |
+| `contextIsolation` | **true** | 改 false = 页面脚本可劫持 preload 暴露的 IPC |
+| `nodeIntegration` | **false** | 改 true = 任意页面脚本拿到 `require('fs')` |
+| `sandbox` | **false**（为让 preload 用 `webUtils.getPathForFile`，不是放权） | 不要再放宽其它窗口；渲染层只能看到 `window.api` |
+| 渲染层网络 | `src/renderer` 0 处 `fetch`/`require`；网络全在主进程（`net.fetch` 17 处） | 渲染层新增外联会绕过 CSP 与主进程审查 |
+| 事件通道 | `src/preload/index.ts` 的 `ALLOWED_EVENTS` 白名单（10 条） | 未登记的事件 `api.on` 直接抛错；新增事件必须双端登记 |
+| CSP | `src/renderer/index.html`；构建时 `electron.vite.config.ts` 的 `tightenCspInBuild` 把 `connect-src` 收紧为 `'self'` | 绕过 CSP 等于把「本地离线」变成可外联应用 |
 
-### 2.1 进程边界与通信红线
+渲染层禁止：`import fs from 'node:fs'`、直接 `fetch()`、把 API Key 写 `localStorage`（Key 由主进程 `safeStorage` 加密后存 `meta` 表）。
 
-```
-┌─────────────────────────── Renderer（src/renderer，React）───────────────────────────┐
-│ 页面 + 组件（无 Node、无网络、拿不到 fs）；只能通过 window.api.invoke / on 说话          │
-└───────────────────────────────▲──────────────────────────────────────────────────────┘
-                    contextBridge │（src/preload/index.ts:1 contextBridge）
-┌───────────────────────────────┴──────────────────────────────────────────────────────┐
-│ Preload（src/preload/index.ts:48 行）：invoke<T>() 解包 {ok,data,error}；on() 只放行白名单 │
-└───────────────────────────────▲──────────────────────────────────────────────────────┘
-                                │ ipcMain.handle（统一 wrap，src/main/ipc/common.ts:19）
-┌───────────────────────────────┴──────────────────────────────────────────────────────┐
-│ Main（src/main，Node）：SQLite / 文件 / 网络 / 通知 / 托盘 / 全局热键 / 窗口              │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-| 职责 | 主进程 `src/main` | 预加载 `src/preload` | 渲染层 `src/renderer/src` |
-|---|---|---|---|
-| 数据库 | 全部（`db.ts` 2,480 行） | 不碰 | 不碰 |
-| 网络 | 全部（`src/main/ai.ts` / `src/main/github.ts` / `src/main/update.ts`） | 不碰 | **0 处** `fetch/XHR/axios`（实测 grep = 0） |
-| 密钥 | `safeStorage` 加密后进 `meta` | 不碰 | 只拿 `hasKey` / 打码尾巴 |
-| 窗口/托盘/热键 | 全部 | 不碰 | 不碰 |
-| 业务 UI 状态 | 无 | 无 | 全部（`useState`/`useRef`） |
-
-**四条被 e2e 或代码结构强制的红线**：
-
-1. 渲染层不允许直接联网：AI / GitHub / 更新全部走 `ipcMain.handle`，再由主进程 `fetch`。
-2. IPC 返回值统一 `Result<T>`：`{ ok: true; data } | { ok: false; error }`（`src/main/ipc/common.ts:5`），`wrap()`（同文件 `:19`）负责把所有异常转成中文 error，渲染层只 `throw Error(error)`。
-3. 事件（主→渲染）必须登记在 `ALLOWED_EVENTS`（`src/preload/index.ts:3`），否则 `on()` 直接忽略；当前包含 `nav:go / capture:focus / notice:due / update:progress / focus:state / ai:stream / export:progress / github:progress`。
-4. 通道注册集中在一处：`src/main/ipc/index.ts:4` 起按域调 `registerCore / registerNotes / … / registerGithub`，加通道只改这里 + preload + `api.ts`。
-
-### 2.2 架构拓扑（Mermaid）
+进程 / 数据拓扑：
 
 ```mermaid
-flowchart TB
-  subgraph R["Renderer · React（无网络/无 Node）"]
-    P["11 个页面<br/>pages/*.tsx"]
-    A["api.ts<br/>call() / onXxx()"]
-    F["FocusDock<br/>focus.tsx"]
-    AI["AI 弹窗<br/>ai.tsx"]
-  end
-  subgraph PL["Preload · contextBridge"]
-    W["invoke / on<br/>白名单 ALLOWED_EVENTS"]
-  end
-  subgraph M["Main · Electron（Node）"]
-    IPC["ipc/*.ts<br/>registerXxx(handle)"]
-    DB[("kb.db<br/>node:sqlite")]
-    FS["附件 / 备份 / 导出<br/>fs + protocol jw-att"]
-    NET["net.fetch<br/>AI · GitHub · 更新"]
-    WIN["窗口 / 托盘 / 全局热键<br/>通知"]
-  end
-  P --> A --> W --> IPC
-  F --> A
-  AI --> A
-  IPC --> DB
-  IPC --> FS
-  IPC --> NET
-  IPC --> WIN
-  WIN -. "webContents.send 事件" .-> W -. "on(cb)" .-> A
+flowchart LR
+  R["渲染进程 React"] -->|"window.api.invoke"| P["preload 白名单"]
+  P -->|"ipcRenderer.invoke"| M["主进程 ipc 层 wrap()"]
+  M --> DB[("kb.db")]
+  M -->|"net.fetch"| N["AI / GitHub / 更新"]
+  M -->|"safeStorage"| S["DPAPI 密文"]
+  C["快速记录小窗"] --> P
+  T["托盘"] --> M
 ```
 
-### 2.3 核心难点 A：`contentEditable` 富文本的「持久化不炸」
+## 模块 3：全局耦合与全链路穿透
 
-问题不在「怎么存 HTML」，而在**怎么在高频输入下既不丢光标、不丢撤销栈，又能自动保存、版本回滚、AI 改写**。项目里三套状态彼此牵制：
+### 隐性耦合（改一处炸一片）
 
-1. **正文只有一个真源**：`htmlRef`（`src/renderer/src/pages/Knowledge.tsx:46` 附近）。输入时 `onInput → touchBody()`（`Knowledge.tsx:155`）只做三件事：把 `el.innerHTML` 抄进 ref、标 `dirty`、触发草稿；**不 setState 正文**——否则每敲一个字 React 就重渲染，光标会跳。
-2. **只有「换文档」才允许把 HTML 推回 DOM**：`putIntoEditor()`（`Knowledge.tsx:146`）会 sanitize + setPreviewHtml + setWordCount + `setEditorEpoch(n+1)`，而真正写 `el.innerHTML` 的 effect 依赖 `[editorEpoch, openId]`——换笔记 / 恢复草稿 / 回滚版本 / 应用模板才触发。这是全项目最容易被新人破坏的约定：**随手改 effect 依赖 = 光标乱跳 + 撤销栈清空**。
-3. **保存分三档，节奏写在 `src/renderer/src/timing.ts`**：`TIMING.draftIdle = 1000`（停手 1 秒写草稿 `note:draft`，`Knowledge.tsx:138` 的 `scheduleDraft`）、`wordCountIdle = 300`（字数统计）、`manualSave`（`Knowledge.tsx:349`，Ctrl+S / 点保存，写正式版本 `note:save`）。
-4. **服务端兜底**：主进程 `saveNoteHtml()`（`src/main/db.ts:685`）入口再 `sanitizeHtml(html)` 一次，然后写纯文本 `content` + 清洗后的 `content_html` + 一条 `note_version`（版本回滚数据源）。所以「前端不清洗」也不会把 XSS 存进去——但**别删这一层**，它是最后一道闸。
-5. **AI 改写为何能用 Ctrl+Z 撤销**：`insertAiSummary()` / `replaceSelectionWithAi()` 走 `document.execCommand('insertHTML')` 而不是重设 `innerHTML`，一次插入一个 `<blockquote class="ai-summary">`，浏览器把它记成一条 undo 记录。
+| 耦合点 | 位置 | 级联风险 |
+| --- | --- | --- |
+| 设计 token | `src/renderer/src/styles.css`：`:root`（亮色）+ `[data-theme='dark']`（暗色） | 改 `--brand`/`--bg`/`--text`/`--radius` 会影响所有按钮、选中态、焦点环；只改一套 → 暗色主题不可读 |
+| 核心类型 | `src/shared/types.ts` 的 `Note` | 同时被渲染层 state、IPC payload、db 行映射消费；加字段必须同步 schema、迁移、默认值 |
+| 预加载 API | `window.api` 仅 `invoke`/`on`/`pathForFile` | 新通道要同时改 `src/renderer/src/api.ts`、`src/main/ipc/*`、`ALLOWED_EVENTS` |
+| 时间常量 | `src/renderer/src/timing.ts` 的 `TIMING` | `themeFade`/`dragSettle`/`menuLeave`/`modalLeave` 与 CSS 过渡时长对齐，改一处要连 `styles.css` 一起改 |
+| 通道字符串 | `note:save` 等在 `src/renderer/src/api.ts` 与 `src/main/ipc/notes.ts` 硬编码 | 单边改名 → 运行时 `ok:false`（`wrap()` 把异常转成中文错误，不崩但功能失效） |
 
-### 2.4 核心难点 B：主进程计时、流式与 SQLite 一致性
+常见改动的穿透路径（照着链改，别漏半边）：
 
-番茄钟和 AI 是两个「看起来是 UI、其实是并发/状态机」的模块，共同结论：**状态的真源在主进程，渲染层只是投影**。
+| 想改什么 | 要动的文件链 |
+| --- | --- |
+| 新增一个 IPC 能力 | `src/shared/types.ts` 加类型 → `src/main/ipc/*.ts` 加 `handle` → `src/renderer/src/api.ts` 加封装 → 页面调用；若走事件推送才需要改 `ALLOWED_EVENTS` |
+| 新增设置项 | 设置页 UI → `setSetting` 写 `meta` 表 → 读取处（主进程/渲染层各读一次）；默认值要兼容老库 |
+| 改全局快捷键 | `App.tsx` 的 keydown → `palette.ts` 的 `shouldIgnoreShortcut`（输入框保护）→ e2e 补断言 |
 
-- **番茄钟**：`createFocus()`（`src/main/focus.ts:83`）是纯引擎（不 import electron），只存 `endAt`、全程一个 `setTimeout`、状态机 `idle / focus / paused / break`；副作用通过 `FocusDeps` 注入（`now / setTimer / clearTimer / notify / emit / persist / progress / flash`）。渲染层每秒只是拿 `endAt - now` 重算显示，**关面板、切页、最小化都不影响倒计时**；崩溃后 `restore()` 会用 `focus:state` 的持久化记录补记（残留的收 abandoned）。任务栏进度条 / 到点闪窗也在 ipc 层通过可选钩子注入（`src/main/ipc/focus.ts`），引擎本身保持可单测。
-- **AI 流式**：请求在主进程 `streamChat()`（`src/main/ai.ts:517`），三层超时 `AI_TIMEOUTS`（`src/main/ai.ts:22`）：等响应头 10s / 空闲 60s / 总 180s；用 `AbortController` + `requestId` 隔离并发；解析 SSE 逐块 `webContents.send('ai:stream', …)`，渲染层 `useAiRun()` 按 `requestId` 过滤后把增量拼进弹窗文本。取消走 `ai:cancel`；网络错误统一翻中文。
-- **SQLite 一致性**：`SCHEMA_VERSION`（`src/main/db.ts:158`）与 `migrate()`（`db.ts:220`）用 `PRAGMA user_version` 做**幂等顺序迁移**，每一步都 `addColumnIfMissing` 只加不删；批量写用 `db.ts` 里内联的 `BEGIN`/`COMMIT`/`ROLLBACK`（如 `db.ts:764`、`db.ts:913`），例如笔记排序、标签改名、GitHub 仓库提炼结果落库；启动时 `integrityCheck()`（`db.ts:342`）跑 `PRAGMA integrity_check`，配合每日备份（`src/main/backup.ts`）与「强杀测试」（`tests/e2e/kill-test.mjs`）兜底。
+### 全链路穿透：保存一篇笔记
 
-### 2.5 核心交互时序：AI 润色流式（Mermaid）
+1. 触发：`src/renderer/src/pages/Knowledge.tsx` 的 `manualSave()`（Ctrl+S 也走它）；正文取自 `htmlRef.current`，不是 React state。
+2. 输入：`touchBody()` 每次输入只把 `innerHTML` 抄进 `htmlRef`（不 setState，避免重渲染打断光标）。
+3. 渲染层：`src/renderer/src/api.ts` 的 `api.saveNote(id, title, { html }, '手动保存')` → `call('note:save', …)` → `window.api.invoke`。
+4. preload：`src/preload/index.ts` 的 `api.invoke` 解包 `{ ok, data } | { ok, error }`，失败抛 `Error`。
+5. IPC：`registerIpc`（`src/main/ipc/index.ts`）→ `registerNotes`（`src/main/ipc/notes.ts`）→ `note:save` 处理器被 `wrap()`（`src/main/ipc/common.ts`）包住，异常只回 `ok:false`。
+6. 数据：`db.saveNoteHtml`（`src/main/db.ts`）先 `sanitizeHtml`，再 `writeNote` 写 `note` 行、追加 `note_version`，`pruneVersions` 只留最近若干版。
+7. 回程：`{ note, version }` 经 `wrap` 原路返回；`manualSave` 更新 `saveState`/`savedFlash`，`TIMING.savedFlash` 后自动消失。
 
 ```mermaid
 sequenceDiagram
-  autonumber
   participant U as 用户
-  participant R as Renderer<br/>ai.tsx / Knowledge.tsx
-  participant PL as Preload<br/>invoke / on
-  participant IPC as Main ipc/ai.ts
-  participant AIC as Main ai.ts
-  participant N as net.fetch
-
-  U->>R: 选中文字 → 点「润色」
-  R->>R: 打开对比弹窗（原文 vs AI 区）
-  R->>PL: api.aiRun({action:'polish', text})
-  PL->>IPC: ipcRenderer.invoke('ai:run')
-  IPC->>IPC: assertAiConfig + 建 AbortController<br/>分配 requestId
-  IPC-->>R: { requestId }（立刻返回）
-  IPC->>AIC: streamChat(...)
-  AIC->>N: POST /chat/completions (stream:true)
-  loop SSE 每块
-    N-->>AIC: data: {choices:[{delta:{content}}]}
-    AIC-->>IPC: onDelta(text)
-    IPC-->>PL: webContents.send('ai:stream', {requestId, type:'chunk', delta})
-    PL-->>R: onAiStream(cb)
-    R->>R: 只认自己的 requestId，追加到结果区
-  end
-  AIC-->>IPC: 全文结束
-  IPC-->>R: {type:'done', text}
-  R->>U: 显示「确认替换 / 复制 / 停止」
-  U->>R: 确认替换
-  R->>R: execCommand('insertHTML') + touchBody()（保留原生撤销）
+  participant K as Knowledge.tsx
+  participant A as api.ts / preload
+  participant I as ipc note:save
+  participant D as db.saveNoteHtml
+  U->>K: Ctrl+S 或点保存
+  K->>K: manualSave() 读 htmlRef.current
+  K->>A: api.saveNote(id, title, html)
+  A->>I: invoke('note:save')
+  I->>D: saveNoteHtml
+  D->>D: sanitizeHtml -> writeNote -> pruneVersions
+  D-->>I: { note, version }
+  I-->>A: wrap 成 { ok, data }
+  A-->>K: { note, version }
+  K->>K: setSaveState('saved') + savedFlash
 ```
 
-番茄钟状态机（精简版，完整实现见 `src/main/focus.ts`）：
+### 库表分布（`src/main/schema.ts`，20 张表）
 
-```mermaid
-stateDiagram-v2
-  [*] --> idle
-  idle --> focus: start(plannedSeconds)
-  focus --> paused: pause
-  paused --> focus: resume
-  focus --> break: 到点 completeFocus()
-  focus --> abandoned: abandon
-  break --> idle: completeBreak() / skipBreak
-  abandoned --> idle
-  idle --> focus: restore()（崩溃后补跑）
+内容层：`note`、`note_version`、`tag`、`note_tag`、`category`、`attachment`、`inbox_item`；任务层：`task`、`goal`、`goal_key_result`、`goal_pool`；计划/复习层：`plan`、`plan_item`、`review_card`、`milestone`、`review_log`、`retrospective`；系统层：`meta`、`focus_sessions`、`github_sync_meta`。建表全在 `schema.ts`，`migrate()` 只做增量补列和索引；改结构不要去动已发布的 `CREATE TABLE`。
+
+### DB 迁移
+
+- 版本号：`src/main/db.ts` 的 `SCHEMA_VERSION`，当前 **8**；`migrate()` 读 `PRAGMA user_version`，按 `if (current < N)` 逐级补列/建表，最后写回版本号。
+- 入口：`openDatabase()` 打开库后执行 `migrate()`，顺序幂等（重复打开不会重跑）。
+- 加字段的正确姿势：升级 `SCHEMA_VERSION` + 在 `migrate()` 追加 `if (current < N+1)` 分支，用 `addColumnIfMissing` / `CREATE INDEX IF NOT EXISTS`；同步补 `tests/unit/migrate.test.ts`、`tests/unit/db.test.ts` 用例。
+- 禁忌：只改建表 `SCHEMA` 不升版本——老库不会重建，运行时直接 `no such column`。
+
+## 模块 4：接手 SOP 与排雷
+
+### Day 1 启动
+
+```bash
+npm install        # Node 需支持 node:sqlite；.npmrc 配了镜像，npm warn 可忽略
+npm run dev        # electron-vite 起 Vite dev server + 真实 Electron 窗口
+npm run typecheck  # 改代码前先确认基线
 ```
 
----
+- **没有 `.env`，也没有 dotenv**：配置由启动命令直接注入 `process.env.JWKB_*`。
+- 生产差异：开发时主进程拿到 `ELECTRON_RENDERER_URL` 走 `loadURL`；打包版没有该变量，走 `loadFile(out/renderer/index.html)`，CSP 收紧为 `connect-src 'self'`。
+- 生产可只设一个：`JWKB_DATA_DIR`（覆盖数据目录，见 `paths.resolveDataRoot`）。测试专用：`JWKB_FOCUS_MIN_SECONDS`（番茄钟最短秒数）、`JWKB_EXPORT_DIR`、`JWKB_GITHUB_*`、`JWKB_UPDATE_*`。
 
-## 3. 接手实操 SOP
+### 环境排雷（3 个必踩）
 
-### 3.1 命令表
+| 报错关键词 | 原因 | 处理 |
+| --- | --- | --- |
+| `NativeCommandError` + `npm warn Unknown project config "electron_mirror"` | PowerShell 把 npm 的 stderr 当错误 | 跑 npm 脚本**不要接管道/重定向**，直接裸跑 |
+| `EADDRINUSE 9333` | 上一轮 e2e 的 Electron 未退出，CDP 端口被占 | `taskkill /F /IM electron.exe` 后重跑 |
+| `!tempfile: Unable to create temporary file!` / `Error writing temporary file` | 项目路径含中文（`Jw的app`）+ 工作区 ACL，NSIS 在项目目录打不了包也装不了 | 用 `node .tools/build-installer.mjs`（英文暂存目录）；安装包从 `C:\JwKB\setup` 运行 |
 
-| 目的 | 命令 | 备注 |
-|---|---|---|
-| 装依赖 | `npm ci`（首次可 `npm install`） | 需要 Node ≥ 22（本机实测 v24.19.0） |
-| 起开发 | `npm run dev` | electron-vite 热更新（渲染层 HMR） |
-| 类型检查 | `npm run typecheck` | `tsc --noEmit`，要求 0 错 |
-| 单测 | `npm run test:unit` | vitest，当前 **404** 项 / 29 文件，约 7 秒 |
-| 构建 + e2e | `npm run build` **然后** `npm run test:e2e` | **`test:e2e` 不会自动 build**，不 build 就跑旧 `out/`（经典坑） |
-| 强杀（断电）测试 | `npm run test:kill` | 6 项，验证 WAL + 草稿恢复 |
-| 全量门槛 | `npm run test:all` | typecheck → unit → build → e2e → kill |
-| 打包 | `npm run dist` | 产物 `C:\JwKB\setup\Jw知识库-安装包-<版本>.exe`，再 `node .tools/check-packaged.mjs` 自检 23 项 |
+### 数据隔离（绝不污染真实数据）
 
-### 3.2 数据隔离（红线，先做这个）
+- 测试/自检一律用 `JWKB_DATA_DIR` 指向临时目录：e2e 用 `.e2e-data/`、强杀测试 `.kill-data/`、打包自检 `.pack-data/`。真实库在 `D:\Jw知识库`（`paths.DEFAULT_DATA_ROOT`，换过目录则记录在 `readLocator()` 的 `%APPDATA%\Jw知识库\locator.json`）。
+- **禁止**把 `JWKB_DATA_DIR` 指到真实目录，或手删真实 `kb.db`；破坏性实验前先整目录复制。
+- 数据目录长这样：`kb.db`（+ `kb.db-wal` / `kb.db-shm`）、`attachments/`（附件原文件）、`备份/`（快照）。换机迁移直接整目录复制，新位置由 `readLocator()` 记录的 locator 指向。
+- 清空测试数据：关掉 Electron 后删对应隐藏目录，应用启动会重建。
 
-**绝不要用真实库跑开发/测试**。数据目录解析顺序（`src/main/paths.ts:62`）：
+### 测试与调试
 
-1. 环境变量 `JWKB_DATA_DIR`（最高优先级，`paths.ts:68`）
-2. 之前保存的定位文件 `%APPDATA%\Jw知识库\locator.json`（`paths.ts:17`）
-3. 兜底目录（且只有**没设环境变量**时才写定位文件，`src/main/index.ts:313`）
+- 单跑一条用例：`npx vitest run tests/unit/save.test.ts -t "关键词"`。
+- 入门阅读顺序：`src/main/index.ts`（进程与窗口边界）→ `src/shared/types.ts` + `src/main/schema.ts`（数据模型）→ `src/renderer/src/App.tsx` + 任一 `pages/*`（页面与 IPC 调用），然后 `npm run dev` 对照真实界面。
+- e2e 是单脚本顺序执行（`tests/e2e/cdp-check.mjs`），**没有 `--grep` 过滤**；调试时在脚本里临时 `return` 或注释段落，跑完必须还原。
+- 全量顺序：`npm run test:all`（typecheck → unit → build → e2e → kill）；单独跑 e2e **必须先 `npm run build`**，否则测的是旧 `out/`。
 
-标准姿势（PowerShell）：
+## 模块 5：First PR 与暗黑逻辑
 
-```powershell
-$env:JWKB_DATA_DIR = "$PWD\dev-data"    # 任意空目录；第一次会自动建库
-npm run dev
+### First PR 演练：给 AI 对话「发送」按钮加 Tooltip
+
+低风险理由：只加 DOM 属性，不碰 IPC/DB/状态；e2e 用类名 `.ai-chat-send` 定位，不受影响。
+
+```diff
+--- a/src/renderer/src/AiChatDrawer.tsx
++++ b/src/renderer/src/AiChatDrawer.tsx
+@@
+-            <button type="button" className="btn sm primary ai-chat-send" onClick={() => void send()} disabled={!draft.trim()}>
++            <button type="button" className="btn sm primary ai-chat-send" title="Enter 发送，Shift+Enter 换行" onClick={() => void send()} disabled={!draft.trim()}>
 ```
 
-e2e 自带隔离：脚本会创建 `.e2e-data/` 并通过 `JWKB_DATA_DIR` 传给被启动的 Electron，断言里还会检查 `dataRoot` 指向它。
+验证：`npm run dev` → 打开任意笔记 → 打开 AI 对话抽屉 → 悬停「发送」出现提示；再跑 `npm run typecheck` 和全量 `npm run test:all`（e2e 325 条必须全绿）。肉眼再确认：输入为空时按钮仍禁用、Enter 发送行为不变。
 
-**弄坏了怎么重置**：直接删掉隔离目录即可（`Remove-Item -Recurse -Force dev-data`），下次启动重建 schema。**真实库的备份/恢复**走设置页「备份与恢复」（每日自动备份 + 手动备份 + 数据库自检），不要手删 `kb.db`。
+### 暗黑逻辑（看着奇怪，删了就坏）
 
-### 3.3 代码地图（「我想改 X → 去 Y」）
+| 代码 | 为什么不能删 |
+| --- | --- |
+| `TIMING.draftIdle = 1000`（`timing.ts`，`Knowledge.tsx` 的 `scheduleDraft`） | 每次输入都写库会触发 SQLITE_BUSY 并放大 WAL；停手 1 秒才 `saveDraft`（只写草稿，不建版本） |
+| `touchBody()` 只写 `htmlRef`，不 `setState` | contentEditable 每次重渲染都会重置光标、打断中文输入法；正文真源是 `htmlRef`，只在换笔记时用 `putIntoEditor` + `editorEpoch` 写 DOM |
+| `rich.ts` 用 `document.execCommand` | 保留浏览器原生撤销栈；改成 `innerHTML =` 会丢 Ctrl+Z |
+| `savedFlash` 1.5 秒定时器 + 卸载清理 | 防卸载后 `setState`；所有手感时长集中在 `TIMING`，不要散落写死 |
+| `focus.ts` 只存 `endAt` + `setTimeout`，`restore()` 启动补记 | 不每秒 tick 写库；进程被杀后能按 `endAt` 续上会话 |
+| 保存时两次 `sanitizeHtml`（预览一次、主进程一次） | 主进程是最后防线，AI 生成与粘贴内容都不可信 |
+| `palette.ts` 的 `shouldIgnoreShortcut` | 焦点在 input/textarea/contenteditable 且按裸键时放行，否则在笔记里打字会被 Ctrl+1…9 等全局快捷键抢走；带 Ctrl/Alt/Meta 的组合键仍走应用级（Ctrl+S/Ctrl+K） |
 
-| 我想改… | 去哪 | 关键位置 |
-|---|---|---|
-| 主题 / 颜色 / 圆角 | `src/renderer/src/styles.css` | `:root` 变量（`styles.css:6`）、暗色覆盖（`styles.css:100`）、玻璃拟态 `.glass`（`styles.css:2730`） |
-| 加一个页面 | `src/renderer/src/pages/` + `App.tsx` + 侧栏配置 | 新 `pages/<你的页面>.tsx` → `App.tsx:39` 的 `useHashRoute` 与 `NAV` 表 → 渲染分支（`App.tsx` 中 `switch/page` 处） |
-| 全局快捷键 | `src/main/index.ts` | `globalShortcut.register`（`src/main/index.ts:331`）；再改设置页说明 |
-| 本地热键（Ctrl+K 等） | `src/renderer/src/App.tsx` | 全局 keydown effect（`App.tsx` 中 `keydown` 监听） |
-| 笔记编辑器工具栏按钮 | `src/renderer/src/pages/Knowledge.tsx` | 工具栏 JSX（`Knowledge.tsx` 中 `.rt-toolbar`）；命令封装在 `rich.ts` |
-| AI 提示词 / 模型参数 | `src/main/ai.ts` | `SYSTEM_PROMPT`、`buildMessages`、`AI_TIMEOUTS`（`src/main/ai.ts:22`） |
-| AI 设置卡片 / 错误文案 | `src/renderer/src/pages/Settings.tsx` + `src/shared/ai.ts` | `classifyAiConfigError`（`src/shared/ai.ts`） |
-| GitHub 项目拉取 / 地址清洗 | `src/main/github.ts` + `src/shared/github.ts` | `fetchRepoInfo`（README 截 8000 字）、`parseRepoUrl` |
-| GitHub 项目 AI 提炼 | `src/main/repo-extract.ts` + `src/main/ipc/github.ts` | `extractRepoNote`、`RepoExtractLimiter`（并发 ≤2）、`github:import` |
-| 番茄钟逻辑 | `src/main/focus.ts` + `src/renderer/src/focus.tsx` | `createFocus`（`src/main/focus.ts:83`）、悬浮球定位纯函数 `src/renderer/src/fabPos.ts:77` |
-| 加 IPC 通道 | 三处同名 | `src/main/ipc/<域>.ts` 注册 → `src/preload/index.ts:3` 白名单（仅事件）→ `src/renderer/src/api.ts` 封装 |
-| 加数据表 / 迁移 | `src/main/schema.ts` + `src/main/db.ts` | 表定义走 `SCHEMA`；版本与迁移见 `db.ts:158` / `db.ts:220` |
-| 安装包图标 / 名称 | `resources/` + `electron-builder.yml` | `icon.ico`/`icon.png`/`tray.png`；`productName` 与 `nsis` 配置在 yml |
-| e2e 断言 | `tests/e2e/cdp-check.mjs` | `CHECK_SCRIPT`（`cdp-check.mjs:421`）、`rec()`（`cdp-check.mjs:423`）、截图 `cdp.shot()` |
+## 模块 6：构建与流水线（防打包白屏）
 
-### 3.4 First PR（低风险、可验证、30 分钟内完成）
+- `npm run build` = `electron-vite build`：主进程/预加载 → `out/main`、`out/preload`；渲染层 Vite 产物 → `out/renderer`。`out/` 是生成目录，禁改。
+- `npm run dist` = build + `.tools/build-installer.mjs`：复制产物到纯英文暂存目录 → `node_modules` 用 junction → electron-builder 打 NSIS（`electronDist` 用本地 Electron）→ 输出 `release/`，并把安装包另拷到 `C:\JwKB\setup`；`.tools/check-packaged.mjs` 对产物做 23 项冒烟自检（启动、窗口、IPC、数据目录、9 个页面渲染、新建/保存/回读、搜索等），任一项失败即视为不可发布。
+- `localhost` vs `file://`：开发时 `ELECTRON_RENDERER_URL` 是 http 地址，走 `loadURL`，CSP 放开 `ws:` / `http://localhost:*`；生产 `loadFile` 下资源必须是相对路径，hash 路由（`#/quick`）不经过服务端。**白屏第一嫌疑**：用了绝对 `/assets/...` 路径，或没 `npm run build` 就跑新安装包。
+- 安装包不能从项目目录双击运行（工作区 ACL 拒绝临时文件），要从 `C:\JwKB\setup` 或桌面英文目录运行。
+- 无 CI：发版手动 `node .tools/release.mjs --apply`（PowerShell 5.1 下 `npm run release -- --apply` 会静默变预演）。
+- 发版 checklist：① `package.json` 版本号、`CHANGELOG.md`、README 徽章三处同步；② `npm run test:all` 全绿；③ `npm run dist` 出包后跑 `.tools/check-packaged.mjs`，必须 23/23；④ 真机安装，9 个页面各点一次、新建/搜索/导出各验一次；⑤ 打 tag、传安装包与 SHA256 到 GitHub Release。
 
-**任务**：在设置页「软件更新」卡片里加一个 **「复制版本信息」** 按钮，一键复制 `Jw知识库 0.11.0 · Electron 44.8.0 · Node 24.19.0`（报 bug 时给维护者用）。
+## 模块 7：技术债与急救指南
 
-为什么安全：不碰数据库 / 不碰网络 / 不碰 IPC 契约（`system:copy-text` 已存在，`api.copyText` 在 `src/renderer/src/api.ts:323`），版本信息在页面挂载时已经通过 `api.appInfo()` 拿好了（`src/renderer/src/pages/Settings.tsx:64`），只是多一个按钮和一次剪贴板写入。
+### 客观盘点（只陈述事实）
 
-**动 2 个文件**：
+| 事实 | 体量 | 影响 |
+| --- | --- | --- |
+| `src/renderer/src/pages/Knowledge.tsx` | 2265 行 | 编辑器、列表、附件、版本、搜索混在一个组件；改保存链路需通读全文件 |
+| `src/main/db.ts` | 2379 行 | 所有表、迁移、行映射集中；改 schema 要连带看 `SCHEMA` / `migrate` / 查询 |
+| `src/renderer/src/styles.css` | 5092 行、两套 `:root` token | 级联面大，暗色主题靠 `[data-theme='dark']` 覆盖 |
+| `tests/e2e/cdp-check.mjs` | 6806 行、单脚本顺序执行 | 325 条断言共享应用状态，单条失败会带偏后续 |
+| 无 CI、无 ErrorBoundary | 渲染层 `ErrorBoundary` / `window.onerror` 0 处 | 渲染层异常只剩白屏，无兜底上报 |
+| CodeMirror 死依赖 | `package.json` 3 个包，`src/` 0 引用 | 增大体积、误导选型 |
+| IPC 通道双端硬编码 | 139 个 `handle` + 3 个 `handleWindow` | 通道名在 `src/renderer/src/api.ts` 与 `src/main/ipc/*.ts` 各写一遍，改名要搜两处；漏改只会在运行时 `ok:false` |
+| 无代码签名 | NSIS 产物未签名 | SmartScreen 首次运行会拦 |
 
-1. `src/renderer/src/pages/Settings.tsx`——在「软件更新」卡片头部（`<div className="card-head">` 那一块，靠近「检查更新」按钮）加：
+### 急救指南
 
-```tsx
-<button
-  className="btn sm"
-  onClick={() =>
-    void api
-      .copyText(`Jw知识库 ${info?.version ?? ''} · Electron ${info?.electron ?? ''} · Node ${info?.node ?? ''}`)
-      .then(() => toast('版本信息已复制'))
-  }
->
-  复制版本信息
-</button>
-```
-
-2. `src/renderer/src/styles.css`——一般不需要改（`.btn.sm` 已存在）；只有在卡片头部挤不下时才加一条：
-
-```css
-.card-head .btn + .btn { margin-left: 6px; }
-```
-
-**验收（照做即可）**：
-
-```powershell
-npm run typecheck        # 0 错
-npm run build            # e2e 前必须 build
-npm run test:e2e         # 期望仍是 305/305（这条改动不新增断言）
-```
-
-再手动看三件事：① 设置页「软件更新」卡片里出现按钮；② 点它弹 Toast「版本信息已复制」；③ 随便粘到记事本里，版本号与设置页「数据位置」卡片底部那行一致（`0.11.2 · Electron 44.8.0 · Node 24.19.0`）。
-
-可选加分（第二个 PR）：给按钮加 `title="复制版本号与运行环境，报 bug 时贴给维护者"`，并在 `tests/e2e/cdp-check.mjs` 里补一条断言（用 `cdp.eval` 读剪贴板不可靠，改成断言按钮存在 + `.click()` 后出现 toast 文案）。
-
----
-
-## 4. 工程红线与排错
-
-### 4.1 防崩溃机制（现状盘点，别以为很全）
-
-| 机制 | 位置 | 覆盖什么 | 缺口 |
-|---|---|---|---|
-| IPC 统一 try/catch | `src/main/ipc/common.ts:19` `wrap()` | 任何 handler 抛错都变 `{ok:false,error}`，不会把主进程炸掉 | 只覆盖 IPC 边界 |
-| 启动失败兜底 | `src/main/index.ts:350` `dialog.showErrorBox` | 建库/迁移/路径失败时提示后退出 | 无重启/回滚建议 |
-| 数据库完整性检查 | `src/main/db.ts:342` `integrityCheck()` | 设置页「数据库自检」、启动时 | 只报错不自修 |
-| 每日/手动备份 + 恢复 | `src/main/backup.ts`、设置页「备份与恢复」 | 数据库文件级快照 | 恢复需要重启应用 |
-| 草稿自动保存 | `note:draft`（`Knowledge.tsx:138` 触发） | 断电/强杀后能找回未保存正文 | 只覆盖笔记正文 |
-| 事务回滚 | `src/main/db.ts:764` 等内联 `BEGIN`/`COMMIT` | 批量写要么全成要么全退 | 只在显式开事务的地方 |
-| 强杀测试 | `tests/e2e/kill-test.mjs:5` | 回归「写一半断电」 | 只覆盖极少数路径 |
-| **渲染层全局兜底** | **不存在** | — | 没有 ErrorBoundary、没有 `window.onerror`、没有 `unhandledrejection`（grep 0 命中）：某个组件渲染抛错 = 白屏且无处上报（P2 技术债） |
-| **主进程未捕获异常** | **不存在** `process.on('uncaughtException')` | — | 未捕获异常默认让 Electron 弹错误对话框并退出 |
-
-### 4.2 调试指南
-
-| 场景 | 怎么做 |
-|---|---|
-| 主进程日志 | `npm run dev` 的终端 stdout/stderr 全在主进程侧；打包版没有控制台，**优先在 dev 复现**；AI/GitHub 原始响应会 `console.warn('[AI] …')`（已打码，见 `src/main/ai.ts` 的 `logRawAiResponse`） |
-| 渲染层断点 | 开发时 `Ctrl+Shift+I` 开 DevTools；或 `--remote-debugging-port=9222` 后用 CDP 连（e2e 就是这么干的） |
-| 数据库里到底有什么 | 数据目录见设置页「数据位置」；用任意 SQLite 工具打开 `kb.db`；`PRAGMA user_version` 看 schema 版本，`SELECT * FROM meta` 看设置/密钥状态（密钥是密文） |
-| e2e 失败现场 | 每步截图在 `tests/e2e/shots/*.png`；结果明细在 `tests/e2e/last-result.txt`；日志尾行会打印「合计 N 项，通过 M，失败 K」 |
-| e2e 连不上 Electron | CDP 端口被占用（默认 9222 / 探针 9357）：先 `Get-Process electron` 清残留，或改脚本里的端口 |
-| 打包/安装报错 | `electron-builder.yml` 的 `electronDist` 指向 `node_modules/electron/dist`（本机 github 不可达时走本地已下载的 Electron）；NSIS 需要写注册表 → 被杀软拦时加白 |
-| AI 报「连不上」 | 先看设置页「测试连接」的具体中文错误（401/404/429 已分类）；代理环境要在系统层配，代码不读代理设置 |
-
-### 4.3 高频排错表
-
-| 现象 | 最可能的原因 | 处理 |
-|---|---|---|
-| 页面白屏、控制台无报错 | 渲染层异常（无 ErrorBoundary，React 18 会卸载整棵树） | 开 DevTools 看 Console；临时在 `src/renderer/src/main.tsx` 外层套 try/catch 或加 ErrorBoundary（属于 P2 改进） |
-| `npm run test:e2e` 全挂「没有 tab」 | 忘了 `npm run build`，e2e 驱动的是旧 `out/` | 先 build 再跑 |
-| 新功能本地好、打包版坏 | 用了只有 dev 才有的路径/环境变量（如 `out/` 相对路径、未进 `extraResources` 的资源） | 跑 `npm run dist` + `node .tools/check-packaged.mjs`；资源走 `resourcePath()` |
-| 数据库突然报 `no such column` | 迁移没执行（`PRAGMA user_version` 没跟上 `SCHEMA_VERSION`） | 看 `src/main/db.ts:220` 的 migrate 顺序；**不要手改真实库**，用备份恢复 |
-| 拖拽/悬浮层点不动 | 落在 `-webkit-app-region: drag` 的自绘标题栏区（`styles.css:1204`） | 给该元素加 `-webkit-app-region: no-drag`（参考 `.focus-dock` 的做法） |
-
----
-
-## 5. 技术债与重构优先级（现状真相）
-
-### 5.1 核心遗留问题
-
-| 优先级 | 问题 | 证据 | 建议 |
-|---|---|---|---|
-| **P0** | `Knowledge.tsx` 2,294 行单组件：编辑器 + AI + 标签 + 分类树 + 版本抽屉 + 拖拽全在一个文件 | `src/renderer/src/pages/Knowledge.tsx:42` 起 | 先抽 hooks（`useNoteEditor` / `useAiActions` / `useTagActions`）再抽子组件，**保持 DOM/类名不变**，每步用 e2e 305 条兜底 |
-| **P0** | e2e 是 6,140 行单脚本、顺序强耦合、跑一轮数分钟 | `tests/e2e/cdp-check.mjs:421` | 拆成 specs/*.mjs + 共享的 e2e harness 模块（Cdp/stub/rec/shot），断言之间禁止共享状态 |
-| **P1** | `db.ts` 2,480 行巨型仓储（120 个 export，所有域混在一起） | `src/main/db.ts` 全文件 | 按域拆 db/{notes,tasks,goals,review,focus,github}.ts + 各域 index.ts 重导出；现有单测可当护栏 |
-| **P1** | `styles.css` 5,148 行，同一选择器多段重复、靠特异性互相覆盖，且有**两个** `:root` | `styles.css:6` 与 `styles.css:4259` | 按域拆文件 + `@layer`；拆前先把最终生效值写成快照测试 |
-| **P1** | 没有 CI：typecheck/单测/e2e 全靠本地自觉 | 无 `.github/workflows/` | 加 Windows runner：`typecheck + test:unit + build`；e2e 依赖图形环境，可先只跑单测 |
-| **P2** | 渲染层无 ErrorBoundary / 全局异常兜底 | grep `ErrorBoundary|window.onerror|unhandledrejection` = 0 | 加 ErrorBoundary + 上报 toast + 写日志；主进程补 `uncaughtException` |
-| **P2** | 3 个 CodeMirror 依赖声明但零使用 | `package.json` deps；`src/` grep 0 命中 | 移除依赖 + 修正 README 技术栈描述 |
-| **P2** | 跨页状态靠 prop drilling（`navigate` / `refreshCount` 传到 9 个页面） | `App.tsx` 渲染分支 | 页面数不再增长就先不动；要加「跨页编辑态」时引轻 Context |
-| **P2** | GitHub Device Flow 要用户自备 OAuth App Client ID（默认空串） | `src/shared/github.ts:19`；`src/main/ipc/github.ts:59` | 发行方注册一个公开 OAuth App 内置 client id |
-| **P3** | 时间比较用「带本地时区偏移的 ISO 字符串」做字符串比较 | `src/main/db.ts` 中 focus 统计、`src/main/ipc/focus.ts` | 统一 epoch ms 或 UTC |
-| **P3** | e2e 多处靠 sleep/重试抗抖动（软件渲染下偶发丢点击） | `cdp-check.mjs` 中 `sleep(` 大量出现 | 换成「等条件成立」的轮询 helper |
-| **P3** | 安装包无代码签名 | `electron-builder.yml` 无 `sign` 配置 | 有证书后加；否则保持「SmartScreen 提示」的用户说明 |
-
-### 5.2 明确禁区（脆弱但核心，不要随手重构）
-
-1. **`src/main/db.ts` 的 `SCHEMA_VERSION` 与 `migrate()` 段**（`db.ts:158` / `db.ts:220`）：顺序、幂等、`user_version` 三者错一个，老用户升级就炸库。加列只走 `addColumnIfMissing`，绝不改历史步骤的语义。
-2. **`saveNoteHtml()` 的清洗链**（`db.ts:685`）：`sanitizeHtml`（白名单）→ 纯文本 → 版本快照。删一层就是 XSS 或正文丢失。
-3. **`src/preload/index.ts` 的 `ALLOWED_EVENTS` 与 invoke 解包语义**（`src/preload/index.ts:3`）：事件名漏登记 = 功能静默失效（不报错，最难查）。
-4. **`src/main/focus.ts` 的定时器/`restore()` 语义**（`src/main/focus.ts:83` / `src/main/focus.ts:137`）：改完必须跑 `focus-engine` 单测 + 强杀测试，否则「关面板就丢计时 / 重启后幽灵会话」。
-5. **`src/renderer/src/pages/Knowledge.tsx` 的 `htmlRef` + `editorEpoch` 约定**（`Knowledge.tsx:146` / `:153`）：动 effect 依赖 = 光标跳、撤销栈清空、草稿覆盖正式内容。
-6. **`styles.css` 的响应式与折叠态覆盖**：`.sidebar` / `.brand` / `.focus-dock` 有多段级联，删任意一段都可能让 60px 折叠态错位（e2e 里已有专门断言）。
-7. **e2e 既有 305 条断言**：它们不是「测试」，是**产品行为契约**（键盘、快捷键、空态文案、主题、拖拽区）。改 UI 时优先改实现去满足断言，而不是改断言。
-
-### 5.3 建议的重构顺序（低风险 → 高风险）
-
-1. 加 CI（只跑 typecheck + unit + build）——零业务风险，收益立刻有。
-2. 拆 `Knowledge.tsx` 的 hooks——e2e 305 条是安全网，先抽逻辑再抽视图。
-3. 拆 db.ts 按域 + 各域 index.ts 重导出——单测 404 条兜底。
-4. 拆 `styles.css`（先快照最终生效值，再按层拆）。
-5. 拆 e2e 成 specs（最后做，因为它是前面所有步骤的裁判）。
-
----
-
-## 附录 A：文件规模 Top 10（`(Get-Content <文件>).Count` 实测，含空行）
-
-| 文件 | 行数 |
-|---|---|
-| `tests/e2e/cdp-check.mjs` | 6,140 |
-| `src/renderer/src/styles.css` | 5,148 |
-| `src/main/db.ts` | 2,480 |
-| `src/renderer/src/pages/Knowledge.tsx` | 2,294 |
-| `src/main/ai.ts` | 863 |
-| `src/renderer/src/pages/Settings.tsx` | 788 |
-| `src/renderer/src/ai.tsx` | 767 |
-| `src/renderer/src/pages/Inbox.tsx` | 734 |
-| `src/renderer/src/pages/Tasks.tsx` | 679 |
-| `src/shared/types.ts` | 548 |
-
-## 附录 B：自检方式
-
-```powershell
-node .tools/check-doc.cjs TECH_REPORT.md   # 路径存在 + 行号不越界 + Mermaid ≥ 2 张
-```
+1. **本地库坏了 / 要重置**：先关应用；整目录复制备份 `D:\Jw知识库`；把 `kb.db`、`kb.db-wal`、`kb.db-shm` **一起**改名（只删主文件会留下脏 WAL）；重开应用会自动 `openDatabase` + `migrate` 建 v8 空库。
+2. **恢复数据**：从 `D:\Jw知识库\备份\` 或云端备份取回；单篇回滚用笔记内的 `rollbackVersion`（会先自动存「回滚前快照」）。
+3. **测试崩 / 残留进程**：`taskkill /F /IM electron.exe`、`/IM node.exe`；删除 `.e2e-data`、`.kill-data`、`.pack-data`、`tests/e2e/ud`、`out/` 后重跑。
+4. **Git 冲突**：`git status` 后逐文件 `git checkout -- <file>`（放弃本地）或 `git stash`；解决后必须 `npm run typecheck && npm run test:unit` 再提交。
+5. **依赖死锁 / `node_modules` 删不掉（EPERM/EBUSY）**：先杀 `node.exe`、`electron.exe`，关 IDE 和杀毒；用 `cmd /c rmdir /s /q node_modules`（PowerShell 的 `Remove-Item -Recurse -Force` 常遇长路径/占用报错）；删干净后 `npm ci`。仍失败就把仓库复制到英文短路径（如 `C:\jwkb`）再删。
