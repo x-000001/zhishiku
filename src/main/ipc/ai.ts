@@ -36,6 +36,12 @@ import {
   type AiMemoryExtractContext,
   type AiMemoryUpdatedEvent
 } from '../../shared/ai-memory';
+import {
+  buildLocateMessages,
+  parseLocateQuote,
+  type AiLocateRequest,
+  type AiLocateResult
+} from '../../shared/locate';
 import type { Handle } from './common';
 
 /**
@@ -130,6 +136,10 @@ interface Job {
 
 const jobs = new Map<number, Job>();
 let nextRequestId = 1;
+
+/* 0.12.3 搜索直达：定位请求是"可取消的一次性短请求"，单独一张表；
+   渲染层切换笔记 / 发起新搜索时会立刻 ai:locate:cancel，防止旧结果串台。 */
+const locateJobs = new Map<number, AbortController>();
 
 /**
  * 0.12.1「整理成重点文档」的单任务活跃锁：这是重请求，同一时刻只允许一个，
@@ -392,6 +402,43 @@ export function registerAi(handle: Handle): void {
     const job = jobs.get(id);
     if (!job) return false;
     job.controller.abort();
+    return true;
+  });
+
+  /* ---------------- 0.12.3：搜索直达（AI 纠偏）----------------
+     本地 Query 已经先高亮过一遍，这一步只是"如果 AI 更准就替换"：
+     短超时（总 8s）+ 可取消 + 出错静默降级，绝不阻塞用户看笔记。 */
+  handle('ai:locate', async (payload: AiLocateRequest) => {
+    const input = payload ?? ({} as AiLocateRequest);
+    const requestId = Number(input.requestId ?? 0);
+    const query = String(input.query ?? '').trim();
+    const text = String(input.text ?? '').trim();
+    if (!query) throw new Error('没有要定位的关键词');
+    if (!text) return { quote: '' } as AiLocateResult;
+    const config = assertAiConfig(readConfig());
+    const controller = new AbortController();
+    if (Number.isFinite(requestId) && requestId > 0) locateJobs.set(requestId, controller);
+    try {
+      const reply = await chatOnce({
+        fetcher: netFetcher,
+        config,
+        messages: buildLocateMessages(query, text),
+        signal: controller.signal,
+        maxTokens: 160,
+        timeouts: { headersMs: 4000, idleMs: 6000, totalMs: 8000 }
+      });
+      return { quote: parseLocateQuote(reply) } as AiLocateResult;
+    } finally {
+      if (locateJobs.get(requestId) === controller) locateJobs.delete(requestId);
+    }
+  });
+
+  handle('ai:locate:cancel', (payload: { requestId?: number }) => {
+    const id = Number(payload?.requestId ?? 0);
+    const controller = locateJobs.get(id);
+    if (!controller) return false;
+    controller.abort();
+    locateJobs.delete(id);
     return true;
   });
 

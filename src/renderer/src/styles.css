@@ -6068,3 +6068,28 @@ blockquote.ai-summary b {
   gap: 10px;
   margin-top: 10px;
 }
+
+/* ---------------- 0.12.3 搜索直达：命中高亮 ----------------
+   首选 CSS Custom Highlight API：零 DOM 变更、不进撤销栈、不会被保存链路抄进库。 */
+::highlight(jw-locate-hit) {
+  background-color: #ffe58f;
+  color: inherit;
+}
+[data-theme='dark'] ::highlight(jw-locate-hit) {
+  background-color: rgba(255, 214, 0, 0.38);
+  color: #fff;
+}
+/* 兜底路径：只有不支持 CSS.highlights 时才插入的 <mark>，保存前会被 stripHighlights() 清掉 */
+.rt-editor mark.jw-hit {
+  background-color: #ffe58f;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+[data-theme='dark'] .rt-editor mark.jw-hit {
+  background-color: rgba(255, 214, 0, 0.38);
+}
+/* 手动滚动居中的补充：贴近容器顶部时也留出呼吸空间 */
+.rt-editor {
+  scroll-margin-block: 84px;
+}

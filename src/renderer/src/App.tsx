@@ -130,6 +130,8 @@ export default function App(): ReactNode {
   const [collapsed, setCollapsed] = useState(false);
   const [inboxCount, setInboxCount] = useState(0);
   const [openNoteId, setOpenNoteId] = useState<number | null>(null);
+  /** 0.12.3 搜索直达：从搜索弹窗点进笔记时，把原始 Query 一起带过去（只对这次打开有效）。 */
+  const [locate, setLocate] = useState<{ id: number; query: string } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -141,12 +143,16 @@ export default function App(): ReactNode {
   const paletteSeq = useRef(0);
   const layout = useLayout();
   const openNote = useCallback(
-    (id: number) => {
+    (id: number, query?: string) => {
+      const target = query?.trim() ?? '';
+      setLocate(target ? { id, query: target } : null);
       setOpenNoteId(id);
       navigate('/knowledge');
     },
     [navigate]
   );
+  /** 直达用完就清掉，避免同一条 Query 在后续重渲染里反复触发高亮。 */
+  const consumeLocate = useCallback(() => setLocate(null), []);
 
   const refreshCount = useCallback(() => {
     void api.listInbox('open').then((list) => setInboxCount(list.length));
@@ -463,7 +469,15 @@ export default function App(): ReactNode {
         <div className="content">
           {route === '/' && <Dashboard navigate={navigate} refreshCount={refreshCount} openNote={openNote} />}
           {route === '/inbox' && <Inbox navigate={navigate} refreshCount={refreshCount} openNote={openNote} />}
-          {route === '/knowledge' && <Knowledge openNoteId={openNoteId} clearOpenNote={() => setOpenNoteId(null)} refreshCount={refreshCount} />}
+          {route === '/knowledge' && (
+            <Knowledge
+              openNoteId={openNoteId}
+              clearOpenNote={() => setOpenNoteId(null)}
+              refreshCount={refreshCount}
+              locateQuery={locate && locate.id === openNoteId ? locate.query : null}
+              onLocateConsumed={consumeLocate}
+            />
+          )}
           {route === '/tasks' && <Tasks refreshCount={refreshCount} />}
           {route === '/plans' && <Plans refreshCount={refreshCount} />}
           {route === '/goals' && <Goals refreshCount={refreshCount} />}
@@ -497,7 +511,7 @@ export default function App(): ReactNode {
 /* 全局搜索                                                            */
 /* ------------------------------------------------------------------ */
 
-function SearchModal({ onClose, openNote }: { onClose: () => void; openNote: (id: number) => void }): ReactNode {
+function SearchModal({ onClose, openNote }: { onClose: () => void; openNote: (id: number, query?: string) => void }): ReactNode {
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [meta, setMeta] = useState<SearchAdvancedResult | null>(null);
@@ -587,7 +601,7 @@ function SearchModal({ onClose, openNote }: { onClose: () => void; openNote: (id
             key={hit.note_id}
             className="list-row"
             onClick={() => {
-              openNote(hit.note_id);
+              openNote(hit.note_id, q);
               onClose();
             }}
           >

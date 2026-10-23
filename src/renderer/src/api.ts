@@ -7,6 +7,7 @@ import type {
 } from '../../shared/ai';
 import type { AiChatRequest, AiChatStreamEvent } from '../../shared/ai-chat';
 import type { AiMemoryPage, AiMemoryUpdatedEvent } from '../../shared/ai-memory';
+import type { AiLocateRequest, AiLocateResult } from '../../shared/locate';
 import type {
   CloudBackupInfo,
   CloudConfigInput,
@@ -395,6 +396,9 @@ export const api = {
   /** 发起一次 AI 请求：立刻拿 requestId，文字随后从 onAiStream 推来。 */
   aiRun: (payload: AiRunPayload) => call<AiRunResult>('ai:run', payload),
   aiCancel: (requestId: number) => call<boolean>('ai:cancel', { requestId }),
+  /** 0.12.3 搜索直达：让 AI 在原文窗口里找一句最匹配的引文；总超时 8s，可取消。 */
+  aiLocate: (payload: AiLocateRequest) => call<AiLocateResult>('ai:locate', payload),
+  aiLocateCancel: (requestId: number) => call<boolean>('ai:locate:cancel', { requestId }),
   /**
    * AI 对话（基于当前笔记提问）：requestId 由渲染层生成（与划词完全隔离），
    * 正文由主进程统一截断 + <note_content> 隔离，增量从 onAiChatStream 推来。

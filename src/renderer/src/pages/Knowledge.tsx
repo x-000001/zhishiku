@@ -6,6 +6,16 @@ import { showContextMenu, type MenuItem } from '../menu';
 import { relative } from '../format';
 import { diffLines, renderMarkdown } from '../../../shared/markdown';
 import { attachmentUrl, escapeHtml, htmlToPlainText, sanitizeHtml } from '../../../shared/html';
+import { findQuoteRanges, takeAround } from '../../../shared/locate';
+import {
+  buildTextMap,
+  capRanges,
+  clearHighlights,
+  highlightRanges,
+  rangesFromOffsets,
+  scrollRangeIntoView,
+  stripHighlights
+} from '../dom-find';
 import {
   AI_ACTION_LABELS,
   AI_DEFAULT_LANG,
@@ -44,15 +54,141 @@ type CatSel = Id | 'all' | 'unassigned' | 'trash';
  */
 const AI_MENU_CLASS = 'ai-dropdown';
 
+/** 没有搜索直达时用：保持 Hook 依赖稳定。 */
+const noopLocateConsume = (): void => undefined;
+
 /** 字数按纯文字算：HTML 标签不算字。 */
 function countLocal(html: string): number {
   return htmlToPlainText(html).replace(/\s/g, '').length;
+}
+
+/* ---------------- 0.12.3：搜索直达（本地秒级兜底 + AI 异步纠偏） ----------------
+   契约：
+   1. 本地先按用户原始 Query 高亮滚动，0 延迟给反馈；
+   2. 随后 ai:locate（总 8s）拿 AI 引文替换高亮；
+   3. 切笔记 / 换搜索立刻 abort 上一单，回调前再比对 openId，防串台；
+   4. 高亮优先走 CSS Custom Highlight（零 DOM 变更），不支持才用 <mark> 兜底。 */
+
+/** 搜索语法（tag:/is:）不是要定位的文字，本地匹配前先剥掉。 */
+function locateableQuery(raw: string): string {
+  return raw.replace(/\b(?:tag|is):\S+/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** 滚动居中 + 把焦点和光标放到命中位置附近。 */
+function focusRange(editor: HTMLDivElement, range: Range): void {
+  const body = editor.closest('.editor-body');
+  if (body instanceof HTMLElement) scrollRangeIntoView(range, body);
+  try {
+    editor.focus({ preventScroll: true });
+  } catch {
+    editor.focus();
+  }
+  const sel = window.getSelection();
+  if (!sel) return;
+  const caret = range.cloneRange();
+  caret.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(caret);
+}
+
+interface LocateHookOptions {
+  editor: { current: HTMLDivElement | null };
+  locateQuery: string | null;
+  openId: Id | null;
+  editorEpoch: number;
+  onConsumed: () => void;
+}
+
+function useLocateHighlight(options: LocateHookOptions): void {
+  const { editor, locateQuery, openId, editorEpoch, onConsumed } = options;
+  const seqRef = useRef(0);
+  const requestRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const activeIdRef = useRef<Id | null>(null);
+  activeIdRef.current = openId;
+
+  useEffect(() => {
+    const query = locateableQuery(locateQuery ?? '');
+    if (!query || openId == null) return;
+    const el = editor.current;
+    if (!el) return;
+
+    const seq = seqRef.current + 1;
+    seqRef.current = seq;
+    // 换笔记 / 新搜索：先取消上一单（真的 abort 主进程请求），再清旧高亮
+    abortRef.current?.abort();
+    abortRef.current = null;
+    clearHighlights(el);
+
+    // ① 本地秒级兜底：不等待 AI，先按原始 Query 定位
+    const localMap = buildTextMap(el);
+    const localSpans = findQuoteRanges(localMap.text, query);
+    let anchor = query;
+    if (localSpans.length) {
+      anchor = localMap.text.slice(localSpans[0].start, localSpans[0].end);
+      const localRanges = capRanges(rangesFromOffsets(localMap, localSpans));
+      highlightRanges(localRanges, el);
+      if (localRanges[0]) focusRange(el, localRanges[0]);
+    }
+
+    // ② AI 异步纠偏：只发命中附近的一个窗口，失败/超时静默降级
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const requestId = requestRef.current + 1;
+    requestRef.current = requestId;
+    controller.signal.addEventListener('abort', () => {
+      void api.aiLocateCancel(requestId);
+    });
+
+    let settled = false;
+    const consume = (): void => {
+      if (settled) return;
+      settled = true;
+      onConsumed();
+    };
+
+    const around = takeAround(localMap.text, anchor);
+    void api
+      .aiLocate({ requestId, query, text: around.text })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        if (seqRef.current !== seq) return;
+        if (activeIdRef.current !== openId) return;
+        const quote = String(result?.quote ?? '').trim();
+        if (!quote) return;
+        const current = editor.current;
+        if (!current) return;
+        const fresh = buildTextMap(current);
+        const spans = findQuoteRanges(fresh.text, quote);
+        if (!spans.length) return;
+        const ranges = capRanges(rangesFromOffsets(fresh, spans));
+        if (!ranges.length) return;
+        clearHighlights(current);
+        highlightRanges(ranges, current);
+        focusRange(current, ranges[0]);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        // 只有"当前这一单"才回传 onConsumed：切笔记后旧单的 finally 不能把新搜索清掉
+        if (seqRef.current === seq) consume();
+      });
+
+    return () => {
+      controller.abort();
+      if (abortRef.current === controller) abortRef.current = null;
+    };
+    // onConsumed 用 useCallback 稳定引用；这里显式列出其余依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locateQuery, openId, editorEpoch, onConsumed]);
 }
 
 export default function Knowledge(props: {
   openNoteId: Id | null;
   clearOpenNote: () => void;
   refreshCount: () => void;
+  /** 0.12.3：从搜索结果点进来时带上的原始 Query（只对这一次打开生效） */
+  locateQuery?: string | null;
+  onLocateConsumed?: () => void;
 }): ReactNode {
   const [cats, setCats] = useState<Category[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -165,6 +301,8 @@ export default function Knowledge(props: {
   /** 把一段 HTML 放进编辑器：换笔记、恢复草稿、回滚版本都走这里。 */
   const putIntoEditor = useCallback((html: string, nextTitle?: string) => {
     const clean = sanitizeHtml(html);
+    // 换文档前先把上一轮定位高亮清掉（mark 兜底路径尤其要清，别把标签抄进新正文）
+    clearHighlights();
     htmlRef.current = clean;
     setPreviewHtml(clean);
     setWordCount(countLocal(clean));
@@ -175,7 +313,11 @@ export default function Knowledge(props: {
   /** 正文被改动：标脏、排草稿、慢一点再更新字数（不整页重渲染）。 */
   const touchBody = useCallback(() => {
     const el = editorRef.current;
-    if (el) htmlRef.current = el.innerHTML;
+    if (el) {
+      // 0.12.3：<mark> 兜底高亮绝不能被 htmlRef 抄走 → 先拆标签再读 HTML
+      stripHighlights(el);
+      htmlRef.current = el.innerHTML;
+    }
     setSaveState('dirty');
     scheduleDraftRef.current?.();
     if (wordTimer.current) window.clearTimeout(wordTimer.current);
@@ -189,6 +331,16 @@ export default function Knowledge(props: {
     if (el.innerHTML !== htmlRef.current) el.innerHTML = htmlRef.current;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorEpoch, openId]);
+
+  /* 0.12.3 搜索直达：必须排在「把 HTML 推进编辑器」的 effect 之后，
+     这样本地定位拿到的一定是已经渲染完成的 DOM。 */
+  useLocateHighlight({
+    editor: editorRef,
+    locateQuery: props.locateQuery ?? null,
+    openId,
+    editorEpoch,
+    onConsumed: props.onLocateConsumed ?? noopLocateConsume
+  });
 
   /** 光标位置变了就更新工具栏状态（选中文字时加粗按钮亮不亮、光标在不在表格里）。 */
   useEffect(() => {
@@ -398,6 +550,8 @@ export default function Knowledge(props: {
     draftTimer.current = window.setTimeout(() => {
       const { id, title: t } = stateRef.current;
       if (id == null) return;
+      // 存草稿前再兜一道：降级路径的 <mark> 不允许进 draft_content
+      if (editorRef.current) stripHighlights(editorRef.current);
       void api.saveDraft(id, t, htmlRef.current).catch(() => undefined);
     }, TIMING.draftIdle);
   }, []);
@@ -406,6 +560,11 @@ export default function Knowledge(props: {
   const manualSave = useCallback(async () => {
     const id = stateRef.current.id;
     if (id == null) return;
+    // 0.12.3：保存前清场，保证 <mark class="jw-hit"> 永远进不了 SQLite
+    if (editorRef.current) {
+      stripHighlights(editorRef.current);
+      htmlRef.current = editorRef.current.innerHTML;
+    }
     setSaveState('saving');
     try {
       const res = await api.saveNote(
