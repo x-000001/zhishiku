@@ -467,7 +467,23 @@ class Cdp {
   }
 
   async shot(name) {
-    const res = await this.send('Page.captureScreenshot', { format: 'png' });
+    let res;
+    try {
+      // 窗口被遮挡 / 系统把 Chromium 判为后台时，captureScreenshot 可能永远不返回。
+      // 截图只是产物，没有任何断言依赖它：加超时兜底，超时就跳过，别让整轮自检挂死。
+      res = await Promise.race([
+        (async () => {
+          try {
+            await this.send('Page.bringToFront', {});
+          } catch {}
+          return this.send('Page.captureScreenshot', { format: 'png' });
+        })(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('captureScreenshot 超时')), 10000))
+      ]);
+    } catch (err) {
+      console.warn(`[e2e] 截图 ${name} 跳过：${err && err.message ? err.message : err}`);
+      return;
+    }
     const file = path.join(shotDir, `${name}.png`);
     // Windows 上偶发「文件被占用 / 杀毒扫描」导致的 UNKNOWN open 错误：重试几次，别让截图失败拖挂整轮自检
     for (let attempt = 0; ; attempt++) {
@@ -7270,6 +7286,127 @@ try {
     ok: aiMemoryAfterDelete.modal === true && !lastAiBodyAfterDelete.includes('<user_preferences>'),
     detail: '请求体长度=' + lastAiBodyAfterDelete.length
   });
+
+  // 标签数量：删除 / 还原后必须静默重新拉取，绝不允许前端本地算数或中途闪成空态
+  const tagCountRefresh = JSON.parse(
+    String(
+      await cdp.eval(`(async () => {
+    ${AI_PRELUDE}
+    const inv = (c, p) => window.api.invoke(c, p);
+    const treeItem = (name) => qa('.tree-item').find((el) => ((el.textContent) || '').includes(name));
+    const tagRow = () => qa('.tree-item').find((el) => ((el.textContent) || '').includes('刷新自检标签'));
+    const rows = () => qa('.kb-list-body .list-row');
+    const titleOf = (el) => (el ? ((el.querySelector('.title')?.textContent) || '').trim() : '');
+    const rowByTitle = (t) => rows().find((r) => titleOf(r) === t);
+    const dialog = () => q('.modal-backdrop');
+    const footBtn = (re) => {
+      const d = dialog();
+      if (!d) return null;
+      return qa('.modal-foot .btn').find((b) => re.test(((b.textContent) || '').trim())) || null;
+    };
+    const tagText = () => {
+      const r = tagRow();
+      return r ? ((r.textContent) || '').replace(/\\s+/g, ' ').trim() : '';
+    };
+
+    location.hash = '/knowledge';
+    await sleep(700);
+    const created = await inv('note:create', { title: '标签计数自检笔记', content: '标签计数自检正文，用来验证左侧标签数量同步刷新。' });
+    if (!created || created.id == null) {
+      return JSON.stringify([{ name: '标签数量：删除后平滑刷新（无闪烁）', ok: false, detail: '建笔记失败' }]);
+    }
+    await inv('tag:set', { noteId: created.id, names: ['刷新自检标签'] });
+    location.hash = '/';
+    await sleep(320);
+    location.hash = '/knowledge';
+    await sleep(750);
+
+    if (!treeItem('标签管理')) throw new Error('左侧没有标签管理入口');
+    if (!tagRow()) {
+      treeItem('标签管理').click();
+      await sleep(320);
+    }
+    if (!(await waitFor(() => tagRow(), 5000))) throw new Error('标签树里没出现 刷新自检标签');
+    const beforeText = tagText();
+
+    const openRow = rowByTitle('标签计数自检笔记');
+    if (!openRow) throw new Error('列表里没找到 标签计数自检笔记');
+    openRow.click();
+    await waitFor(() => {
+      const el = q('.rt-editor');
+      return el && ((el.textContent) || '').includes('标签计数自检正文') ? el : null;
+    }, 6000);
+
+    // 防闪烁探针：删除期间标签行不允许消失、也不允许闪成「还没有标签」空态
+    let missingTicks = 0;
+    let sawEmptyHint = false;
+    const timer = setInterval(() => {
+      if (!tagRow()) missingTicks += 1;
+      if (((q('.kb-tree')?.textContent) || '').includes('还没有标签，在笔记右下角添加')) sawEmptyHint = true;
+    }, 20);
+
+    const rowNow = rowByTitle('标签计数自检笔记');
+    const delBtn = rowNow ? rowNow.querySelector('.actions .icon-btn[title="删除到回收站"]') : null;
+    if (!delBtn) {
+      clearInterval(timer);
+      throw new Error('找不到行内删除按钮');
+    }
+    delBtn.click();
+    await sleep(320);
+    const okBtn = footBtn(/^移到回收站$/);
+    if (!okBtn) {
+      clearInterval(timer);
+      throw new Error('确认框没出现');
+    }
+    okBtn.click();
+    const zeroRow = await waitFor(() => {
+      const r = tagRow();
+      return r && /\\(0\\)/.test((r.textContent) || '') ? r : null;
+    }, 8000);
+    await sleep(260);
+    clearInterval(timer);
+    const afterText = tagText();
+    const deleteOk = !!zeroRow && afterText.includes('(0)') && missingTicks === 0 && !sawEmptyHint;
+
+    // 还原后同样必须静默刷新（回收站行的「↩」按钮）
+    const trashEntry = treeItem('回收站');
+    if (trashEntry) trashEntry.click();
+    await sleep(700);
+    const trashRow = rowByTitle('标签计数自检笔记');
+    const backBtn = trashRow ? trashRow.querySelector('.actions .icon-btn[title="还原"]') : null;
+    if (backBtn) backBtn.click();
+    const backRow = backBtn
+      ? await waitFor(() => {
+          const r = tagRow();
+          return r && /\\(1\\)/.test((r.textContent) || '') ? r : null;
+        }, 8000)
+      : null;
+    const backText = tagText();
+
+    // 清理：彻底删掉自检笔记与自检标签，避免污染后续用例
+    await inv('note:purge', { id: created.id });
+    const tagsNow = await inv('tag:list');
+    const tag = (tagsNow || []).find((t) => t.name === '刷新自检标签');
+    if (tag) await inv('tag:delete', { id: tag.id });
+    location.hash = '/';
+    await sleep(320);
+
+    return JSON.stringify([
+      {
+        name: '标签数量：删除笔记后平滑刷新（无闪烁、不本地算数）',
+        ok: beforeText.includes('(1)') && deleteOk,
+        detail: '前=' + beforeText + ' 后=' + afterText + ' 空态闪烁=' + sawEmptyHint + ' 行消失次数=' + missingTicks
+      },
+      {
+        name: '标签数量：回收站还原后实时回到 1',
+        ok: !!backBtn && !!backRow,
+        detail: '还原按钮=' + !!backBtn + ' 还原后=' + backText
+      }
+    ]);
+  })()`)
+    )
+  );
+  results.push(...tagCountRefresh);
 
   await cdp.eval("location.hash = '/'; true");
   await sleep(520);

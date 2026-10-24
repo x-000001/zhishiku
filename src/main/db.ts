@@ -115,6 +115,82 @@ function one<T>(sql: string, ...args: unknown[]): T | undefined {
 }
 
 /* ------------------------------------------------------------------ */
+/* 写操作统一入口：SQLITE_BUSY 自动重试 + 事务                          */
+/* ------------------------------------------------------------------ */
+
+/** 最多尝试 3 次（含第一次），两次之间等 50ms，避免后台备份/自动保存时 UI 直接报错。 */
+const BUSY_MAX_TRIES = 3;
+const BUSY_RETRY_DELAY_MS = 50;
+
+/** 判断一个异常是不是 SQLite 的「有人正占着写锁」。 */
+export function isSqliteBusyError(err: unknown): boolean {
+  const code =
+    err && typeof err === 'object' && 'code' in err ? String((err as { code?: unknown }).code ?? '') : '';
+  const text = `${err instanceof Error ? err.message : String(err ?? '')} ${code}`;
+  return /SQLITE_BUSY|database is locked|database table is locked/i.test(text);
+}
+
+/**
+ * 同步重试等待：这个模块全是同步 API，不能 await；用 50ms 的短阻塞换一次重试机会，
+ * 比让用户看到「数据库正忙」的报错更划算（阻塞上限 100ms，UI 感知不到）。
+ */
+function sleepSync(ms: number): void {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    /* 故意阻塞：同步 sqlite 的调用栈里没有别的等待方式 */
+  }
+}
+
+/**
+ * 执行一个写操作；遇到 SQLITE_BUSY 最多再试 2 次（总计 3 次），其它错误立即抛。
+ * 导出给单测直接验证重试次数与退避，不依赖真的制造锁竞争。
+ */
+export function withBusyRetry<T>(
+  task: () => T,
+  options: { tries?: number; delayMs?: number } = {}
+): T {
+  const tries = Math.max(1, Math.min(Number(options.tries ?? BUSY_MAX_TRIES) || BUSY_MAX_TRIES, 10));
+  const delayMs = Math.max(0, Number(options.delayMs ?? BUSY_RETRY_DELAY_MS) || 0);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= tries; attempt += 1) {
+    try {
+      return task();
+    } catch (err) {
+      lastError = err;
+      if (attempt >= tries || !isSqliteBusyError(err)) throw err;
+      sleepSync(delayMs);
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * 把整段写操作包进事务。
+ * 用 SAVEPOINT 而不是 BEGIN：调用方可能已经在事务里（比如测试的批量铺数据、
+ * 或者未来嵌套调用），BEGIN 嵌套会直接抛「cannot start a transaction within a transaction」。
+ * 外层没有事务时 SAVEPOINT 自己开一个；有事务时只是加一层保存点，互不干扰。
+ */
+function writeTransaction<T>(task: () => T): T {
+  return withBusyRetry(() => {
+    const database = requireDb();
+    database.exec('SAVEPOINT jw_write_tx');
+    try {
+      const result = task();
+      database.exec('RELEASE SAVEPOINT jw_write_tx');
+      return result;
+    } catch (err) {
+      try {
+        database.exec('ROLLBACK TO SAVEPOINT jw_write_tx');
+        database.exec('RELEASE SAVEPOINT jw_write_tx');
+      } catch {
+        /* 回滚失败就交给外层重试（重试前会重新建保存点） */
+      }
+      throw err;
+    }
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* 中文友好的全文检索                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -317,6 +393,13 @@ function migrate(): void {
     database.exec(AI_MEMORY_SCHEMA);
   } catch (err) {
     console.error('[迁移] 创建 ai_memory 表失败（长时记忆本次不生效，不影响启动）：', err);
+  }
+  // 标签数量一次性校准（0.12.4）：数量是实时 COUNT，这里洗的是 COUNT 依据的关联数据。
+  // 自身带 meta 版本键只跑一次；失败只打日志，绝不阻断启动。
+  try {
+    recalibrateTagCountsOnce();
+  } catch (err) {
+    console.error('[迁移] 标签数量校准失败（本次跳过，不影响启动）：', err);
   }
   if (current < SCHEMA_VERSION) {
     database.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
@@ -677,7 +760,7 @@ export function createExtractedNote(input: {
       title,
       html
     });
-    if (tagNames.length) setNoteTags(id, tagNames);
+    if (tagNames.length) setNoteTagsRows(id, tagNames);
     database.exec('COMMIT');
     begun = false;
     const created = getNote(id);
@@ -849,18 +932,19 @@ export function reorderNotes(orderedIds: Id[]): number {
 }
 
 export function togglePin(id: Id): void {
-  run('update note set is_pinned = 1 - is_pinned where id = ?', id);
+  withBusyRetry(() => run('update note set is_pinned = 1 - is_pinned where id = ?', id));
 }
 
 export function trashNote(id: Id): void {
-  run('update note set deleted_at = ? where id = ?', nowIso(), id);
+  withBusyRetry(() => run('update note set deleted_at = ? where id = ?', nowIso(), id));
 }
 
 export function restoreNote(id: Id): void {
-  run('update note set deleted_at = null where id = ?', id);
+  withBusyRetry(() => run('update note set deleted_at = null where id = ?', id));
 }
 
-export function purgeNote(id: Id): void {
+/** 彻底删除一篇笔记（FTS、版本、标签关联、附件记录与文件）。事务由调用方统一包。 */
+function purgeNoteRow(id: Id): void {
   run('delete from note_fts where rowid = ?', id);
   run('delete from note_version where note_id = ?', id);
   run('delete from note_tag where note_id = ?', id);
@@ -870,23 +954,31 @@ export function purgeNote(id: Id): void {
   run('delete from note where id = ?', id);
 }
 
-/** 回收站里超过 30 天的笔记彻底删除。 */
-export function purgeExpiredTrash(): number {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 30);
-  const rows = all<{ id: Id }>(
-    'select id from note where deleted_at is not null and deleted_at < ?',
-    isoLocal(cutoff)
-  );
-  for (const r of rows) purgeNote(r.id);
-  return rows.length;
+export function purgeNote(id: Id): void {
+  writeTransaction(() => purgeNoteRow(id));
 }
 
-/** 清空回收站：把当前在回收站里的笔记全部彻底删除，返回删掉的条数。 */
+/** 回收站里超过 30 天的笔记彻底删除。 */
+export function purgeExpiredTrash(): number {
+  return writeTransaction(() => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const rows = all<{ id: Id }>(
+      'select id from note where deleted_at is not null and deleted_at < ?',
+      isoLocal(cutoff)
+    );
+    for (const r of rows) purgeNoteRow(r.id);
+    return rows.length;
+  });
+}
+
+/** 清空回收站：整批一次事务，FTS / note_tag 和正文一起清，避免搜出幽灵数据。 */
 export function emptyTrash(): number {
-  const rows = all<{ id: Id }>('select id from note where deleted_at is not null');
-  for (const r of rows) purgeNote(r.id);
-  return rows.length;
+  return writeTransaction(() => {
+    const rows = all<{ id: Id }>('select id from note where deleted_at is not null');
+    for (const r of rows) purgeNoteRow(r.id);
+    return rows.length;
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1044,6 +1136,30 @@ function tagById(id: Id): Tag | undefined {
   return one<Tag>(`${TAG_SELECT} where t.id = ?`, id);
 }
 
+/** meta 里的一次性校准版本键；改校准逻辑时换新键，老库会再跑一次。 */
+const TAG_COUNT_CALIBRATION_KEY = 'tag.count.recalibrated.v1';
+
+/**
+ * 0.12.4 开机一次性校准（meta 记版本，只跑一次）。
+ * 标签数量本身是实时 COUNT（见 TAG_SELECT，已带 `note.deleted_at is null`），
+ * 数据库里没有冗余数字列，所以这里校准的是「COUNT 依据的关联数据」：
+ * - 清掉指向已不存在笔记 / 标签的幽灵 note_tag（老版本外键没开时可能留下）；
+ * - 清掉指向已删笔记的 note_fts 行（防止清空回收站后还搜出幽灵）；
+ * - 回收站里的笔记仍然保留 note_tag，这样还原时标签自动回到笔记上。
+ * 返回清理掉的行数；失败由调用方兜住，绝不阻断启动。
+ */
+export function recalibrateTagCountsOnce(): number {
+  if (one<{ value: string }>('select value from meta where key = ?', TAG_COUNT_CALIBRATION_KEY)) return 0;
+  return writeTransaction(() => {
+    const ghostLinks = run(
+      'delete from note_tag where note_id not in (select id from note) or tag_id not in (select id from tag)'
+    ).changes;
+    const ghostFts = run('delete from note_fts where rowid not in (select id from note)').changes;
+    run('insert or replace into meta(key, value) values(?, ?)', TAG_COUNT_CALIBRATION_KEY, nowIso());
+    return ghostLinks + ghostFts;
+  });
+}
+
 /** 标签名最长 40 字，和分类名同一量级。 */
 const TAG_NAME_MAX = 40;
 
@@ -1064,7 +1180,8 @@ function countTagNotes(id: Id): number {
   return Number(row?.c ?? 0);
 }
 
-export function setNoteTags(noteId: Id, names: string[]): void {
+/** 设置标签的原始行操作（不带事务，供已在事务里的调用方复用）。 */
+function setNoteTagsRows(noteId: Id, names: string[]): void {
   run('delete from note_tag where note_id = ?', noteId);
   for (const raw of names) {
     const name = raw.trim();
@@ -1073,6 +1190,10 @@ export function setNoteTags(noteId: Id, names: string[]): void {
     const tag = one<{ id: Id }>('select id from tag where name = ?', name);
     if (tag) run('insert or ignore into note_tag(note_id, tag_id) values(?, ?)', noteId, tag.id);
   }
+}
+
+export function setNoteTags(noteId: Id, names: string[]): void {
+  writeTransaction(() => setNoteTagsRows(noteId, names));
 }
 
 /**

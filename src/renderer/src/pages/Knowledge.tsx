@@ -237,6 +237,8 @@ export default function Knowledge(props: {
    */
   const [confirmTrash, setConfirmTrash] = useState<Id | null>(null);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
+  /** 正在删除 / 还原的那篇笔记：请求期间把对应按钮置灰，防止连点。 */
+  const [noteBusy, setNoteBusy] = useState<Id | null>(null);
   const [confirmCatDel, setConfirmCatDel] = useState<Category | null>(null);
   /** 改名 / 新建子分类的输入框（Electron 里没有 window.prompt，必须自己做） */
   const [promptFor, setPromptFor] = useState<{ kind: 'rename' | 'child'; cat: Category; value: string } | null>(
@@ -431,7 +433,8 @@ export default function Knowledge(props: {
   }, []);
 
   const loadTags = useCallback(() => {
-    api.listTags().then(setTags).catch(() => undefined);
+    // 防闪烁：不先清空旧列表，拿到新结果后再一次性 setState 覆盖。
+    return api.listTags().then(setTags).catch(() => undefined);
   }, []);
 
   const loadList = useCallback(() => {
@@ -848,21 +851,45 @@ export default function Knowledge(props: {
     }
   };
 
+  /** 标签引用数是实时 COUNT：删/还原之后必须重新拉标签，严禁前端自己加减数字。 */
   const trash = async (id: Id): Promise<void> => {
+    if (noteBusy === id) return;
+    setNoteBusy(id);
     try {
       await api.trashNote(id);
       if (openId === id) setOpenId(null);
-      await loadList();
-      await loadCats();
+      await Promise.all([loadList(), loadCats(), loadTags()]);
       toast('已放进回收站（保留 30 天）', {
         actionLabel: '撤销',
         onAction: async () => {
-          await api.restoreNote(id);
-          await loadList();
+          setNoteBusy(id);
+          try {
+            await api.restoreNote(id);
+            await Promise.all([loadList(), loadCats(), loadTags()]);
+          } finally {
+            setNoteBusy(null);
+          }
         }
       });
     } catch (err) {
       toastError('删除失败：', err);
+    } finally {
+      setNoteBusy(null);
+    }
+  };
+
+  /** 从回收站还原：分类与标签的计数都会变，同样走真实刷新；请求期间按钮置灰。 */
+  const restore = async (id: Id): Promise<void> => {
+    if (noteBusy === id) return;
+    setNoteBusy(id);
+    try {
+      await api.restoreNote(id);
+      await Promise.all([loadList(), loadCats(), loadTags()]);
+      toast('已还原');
+    } catch (err) {
+      toastError('还原失败：', err);
+    } finally {
+      setNoteBusy(null);
     }
   };
 
@@ -1462,12 +1489,7 @@ export default function Knowledge(props: {
                       ? [
                           {
                             label: '还原',
-                            onSelect: () => {
-                              void api.restoreNote(item.id).then(() => {
-                                void loadList();
-                                toast('已还原');
-                              });
-                            }
+                            onSelect: () => void restore(item.id)
                           }
                         ]
                       : [
@@ -1497,12 +1519,8 @@ export default function Knowledge(props: {
                       type="button"
                       className="icon-btn"
                       title="还原"
-                      onClick={() => {
-                        void api.restoreNote(item.id).then(() => {
-                          void loadList();
-                          toast('已还原');
-                        });
-                      }}
+                      disabled={noteBusy === item.id}
+                      onClick={() => void restore(item.id)}
                     >
                       ↩
                     </button>
@@ -1512,13 +1530,20 @@ export default function Knowledge(props: {
                         type="button"
                         className="icon-btn"
                         title={item.is_pinned ? '取消置顶' : '置顶'}
+                        disabled={noteBusy === item.id}
                         onClick={() => {
                           void api.togglePin(item.id).then(() => loadList());
                         }}
                       >
                         📌
                       </button>
-                      <button type="button" className="icon-btn" title="删除到回收站" onClick={() => setConfirmTrash(item.id)}>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="删除到回收站"
+                        disabled={noteBusy === item.id}
+                        onClick={() => setConfirmTrash(item.id)}
+                      >
                         🗑
                       </button>
                     </>
@@ -2155,8 +2180,7 @@ export default function Knowledge(props: {
             setConfirmEmpty(false);
             try {
               const n = await api.emptyTrash();
-              await loadList();
-              await loadCats();
+              await Promise.all([loadList(), loadCats(), loadTags()]);
               props.refreshCount();
               toast(`回收站已清空，删掉 ${n} 篇`);
             } catch (err) {
